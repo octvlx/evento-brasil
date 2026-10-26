@@ -12,6 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "db:status": "node scripts/db-status.mjs",
+    "db:reset": "node scripts/db-reset.mjs",
     "db:generate": "prisma generate",
     "cities:import": "tsx --conditions=react-server scripts/import-ibge-cities.ts",
     "test": "vitest run",

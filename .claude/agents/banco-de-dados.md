@@ -907,7 +907,7 @@ This section maps the generic spec above to the real repository. Where they diff
 
 Default dev URL: `postgresql://evento:…@localhost:5433/evento_brasil` (`.env.example`). Never commit `.env`.
 
-Commands (`package.json`): `db:start`, `db:migrate` (`prisma migrate dev`), `db:deploy` (`prisma migrate deploy`), `db:seed` (`prisma db seed`), `db:generate`, `cities:import` (`scripts/import-ibge-cities.ts`). Quick inspection: `npx tsx --conditions=react-server scripts/db-summary.ts`. There is no `db:stop`/`db:status`/`db:reset` script yet — if you add one, any reset must print the target host/database and refuse non-local hosts and `NODE_ENV=production`.
+Commands (`package.json`): `db:start`, `db:migrate` (`prisma migrate dev`), `db:deploy` (`prisma migrate deploy`), `db:seed` (`prisma db seed`), `db:status` (read-only: prints `user@host:port/db` without the password, checks connectivity, runs `prisma migrate status`), `db:reset -- --yes` (`scripts/db-reset.mjs`: `prisma migrate reset --force` + seed; refuses `NODE_ENV=production`, non-local hosts and a missing `--yes`), `db:generate`, `cities:import` (`scripts/import-ibge-cities.ts`). Quick inspection: `npx tsx --conditions=react-server scripts/db-summary.ts`. Full reference: `docs/database.md`.
 
 ### Test database
 - `vitest.config.mts` points `DATABASE_URL` at `TEST_DATABASE_URL` or `postgresql://evento_test:…@localhost:5434/evento_test` (`TEST_DB_PORT`, default 5434).
@@ -924,17 +924,18 @@ Migrations (applied — **never edit**):
 1. `20261026001221_init`
 2. `20261026001232_integrity_constraints` — hand-written SQL: CHECKs (no oversell `quantityReserved + quantitySold <= quantityTotal`, non-negative prices/amounts, refunds ≤ sold, event time order, commission bps/scope target, ledger amount > 0), the `FinancialLedgerEntry_immutable` trigger (blocks UPDATE/DELETE), and `Event_title_lower_idx`. Prisma does not model these; when you generate a new migration, check that the diff does not try to drop them.
 3. `20261026001710_processing_fee_bearer` — dropped/re-created `CommissionRule.processingFeeBearer`. Note for the future: prefer expand-and-contract instead of drop/re-create.
+4. `20261026150000_audit_log_append_only` — `AuditLog_immutable` trigger (`audit_log_block_mutation()`), blocks UPDATE/DELETE on `AuditLog`. Side effect: deleting a `User`/`Organization` referenced by audit rows fails (the FK `SET NULL` is an UPDATE).
 
 ### Seed (`prisma/seed.ts`)
 - Refuses `NODE_ENV=production`. Creates the 27 state capitals + Franca, categories, demo users (`…@demo.eventobrasil.test`, password `DEMO_PASSWORD`), organizations, events, orders, tickets, a check-in and a refund through the **real services** (simulated payment provider).
-- It is **not idempotent** (no upserts): run it only on a fresh database. Making it repeatable is an open task.
+- Safe to re-run: if `admin@demo.eventobrasil.test` exists it exits 0 without changes; if the database holds other users/organizations/orders it refuses (exit 1), because it starts by truncating every table. To recreate: `npm run db:reset -- --yes`.
 
 ### Known gaps (proposed priority)
-1. Append-only protection for `AuditLog` (same pattern as the ledger trigger) — coordinate with `admin`.
+1. ~~Append-only protection for `AuditLog`~~ — done (`20261026150000_audit_log_append_only`). Open with `admin`: LGPD policy (anonymize instead of delete).
 2. Schema for admin sub-roles/permissions and moderation cases — only when `admin` asks, with an approved design.
-3. Idempotent seed and a guarded `db:reset`/`db:status` for local/test only.
+3. ~~Idempotent seed and a guarded `db:reset`/`db:status`~~ — done.
 4. Query-plan review (`EXPLAIN ANALYZE`) for event discovery by city/date/category, organizer dashboards, audit search; add indexes only with evidence.
-5. `prisma/README.md` or `docs/database.md` with the ER overview, the hand-written SQL objects and the migration procedure.
+5. ~~`docs/database.md`~~ — done; keep it in sync with every migration.
 
 ### Domain owners to consult before changing models
 - Orders, reservations, payments, webhooks, refunds, ledger, commission, settlements → `pagamentos-financeiro` (`src/server/services/orders.ts`, `payments.ts`, `refunds.ts`, `ledger.ts`, `commission.ts`, `reconciliation.ts`, `cancellation.ts`).
