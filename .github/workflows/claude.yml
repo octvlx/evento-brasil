@@ -1,0 +1,65 @@
+# Claude no GitHub: mencione @claude em uma issue, em um comentário de issue ou
+# de pull request, ou em uma revisão. O Claude responde no próprio GitHub e,
+# quando pedido, cria uma branch com as alterações para você abrir/atualizar o PR.
+#
+# Requisitos (feitos uma vez pelo dono do repositório):
+#   1. Instalar o app: https://github.com/apps/claude  (selecionar este repositório)
+#   2. Criar o segredo ANTHROPIC_API_KEY em
+#      Settings → Secrets and variables → Actions → New repository secret
+#
+# Segurança: só responde a pessoas com acesso ao repositório (OWNER, MEMBER,
+# COLLABORATOR). Comentários de terceiros em um repositório público são ignorados.
+# O Claude nunca faz push direto na main: as mudanças passam por pull request,
+# pela verificação automática (CI) e por revisão humana.
+name: Claude
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    if: |
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+        (github.event_name == 'issues' &&
+          (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instalar dependências (para o Claude poder rodar lint e testes)
+        run: npm ci
+        env:
+          DATABASE_URL: postgresql://unused:unused@localhost:5432/unused
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
