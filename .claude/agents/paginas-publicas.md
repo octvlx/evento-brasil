@@ -567,7 +567,7 @@ Auth is the project's own system by design (ADR 0001): scrypt passwords and data
 
 ### Design system
 
-- Colors only through tokens defined in `src/app/globals.css`: `background`, `foreground`, `card`, `muted`, `muted-foreground`, `border`, `primary` (deep indigo), `secondary` (electric violet), `accent` (coral), `success`, `warning`, `destructive`. Light and dark themes are both required.
+- Colors only through tokens defined in `src/app/globals.css`: `background`, `foreground`, `card`, `muted`, `muted-foreground`, `border`, `primary` (deep indigo), `secondary` (electric violet), `accent` (coral), `success`, `warning`, `destructive`. The site uses a single light theme (white background) on every device; do not add a dark theme.
 - Fonts: `font-display` (Bricolage Grotesque) for headings, Plus Jakarta Sans for body.
 - Use `Button`/`buttonVariants` and the primitives in `src/components/ui/`. Event cards: `EventCard`/`EventGrid` in `src/components/site/event-card.tsx`.
 - Money: `formatBRL` (`src/lib/money.ts`). Dates: `src/lib/datetime.ts`, always in the event's timezone. Labels: `src/lib/labels.ts`.
