@@ -4,7 +4,16 @@ import { useActionState, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label, Select, Textarea } from "@/components/ui/primitives";
 import { ORG_ROLE } from "@/lib/labels";
-import { assignStaffAction, connectPaymentAction, inviteMemberAction, removeMemberAction, updateOrgProfileAction } from "./actions";
+import {
+  assignStaffAction,
+  changeMemberRoleAction,
+  connectPaymentAction,
+  inviteMemberAction,
+  removeMemberAction,
+  resendInvitationAction,
+  revokeInvitationAction,
+  updateOrgProfileAction,
+} from "./actions";
 
 export function ProfileSettingsForm({ description, websiteUrl, instagramHandle }: { description: string; websiteUrl: string; instagramHandle: string }) {
   const [state, action, pending] = useActionState(updateOrgProfileAction, undefined);
@@ -53,7 +62,9 @@ export function ConnectPaymentButton({ simulated }: { simulated: boolean }) {
   );
 }
 
-export function InviteForm({ events }: { events: { id: string; title: string }[] }) {
+const INVITABLE_ROLES = ["CHECKIN_STAFF", "EVENT_MANAGER", "FINANCE", "ADMIN"] as const;
+
+export function InviteForm({ events, roles }: { events: { id: string; title: string }[]; roles: string[] }) {
   const [state, action, pending] = useActionState(inviteMemberAction, undefined);
   const [role, setRole] = useState("CHECKIN_STAFF");
   return (
@@ -65,7 +76,7 @@ export function InviteForm({ events }: { events: { id: string; title: string }[]
       <div>
         <Label htmlFor="inv-role">Papel</Label>
         <Select id="inv-role" name="role" value={role} onChange={(e) => setRole(e.target.value)} className="mt-1.5">
-          {(["CHECKIN_STAFF", "EVENT_MANAGER", "FINANCE", "ADMIN"] as const).map((r) => (
+          {INVITABLE_ROLES.filter((r) => roles.includes(r)).map((r) => (
             <option key={r} value={r}>
               {ORG_ROLE[r]}
             </option>
@@ -101,6 +112,78 @@ export function StaffAssignmentToggle({ eventId, userId, assigned }: { eventId: 
       <input type="checkbox" defaultChecked={assigned} disabled={pending} onChange={(e) => start(async () => void (await assignStaffAction(eventId, userId, e.target.checked)))} />
       {pending ? "…" : ""}
     </label>
+  );
+}
+
+export function MemberRoleSelect({ userId, role, options }: { userId: string; role: string; options: string[] }) {
+  const [pending, start] = useTransition();
+  const [value, setValue] = useState(role);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <>
+      <Select
+        aria-label="Papel"
+        value={value}
+        disabled={pending}
+        className="h-9 w-auto py-1 text-xs"
+        onChange={(e) => {
+          const next = e.target.value;
+          setValue(next);
+          setErr(null);
+          start(async () => {
+            const r = await changeMemberRoleAction(userId, next);
+            if (!r.ok) {
+              setValue(role);
+              setErr(r.error);
+            }
+          });
+        }}
+      >
+        {options.map((r) => (
+          <option key={r} value={r}>
+            {ORG_ROLE[r]}
+          </option>
+        ))}
+      </Select>
+      {err && <span className="text-xs text-destructive">{err}</span>}
+    </>
+  );
+}
+
+export function PendingInvitationActions({ invitationId }: { invitationId: string }) {
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const r = await resendInvitationAction(invitationId);
+            setMsg(r.ok ? { ok: true, text: `Novo link (o anterior deixou de valer): ${r.data.link}` } : { ok: false, text: r.error });
+          })
+        }
+      >
+        Reenviar
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-destructive"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const r = await revokeInvitationAction(invitationId);
+            if (!r.ok) setMsg({ ok: false, text: r.error });
+          })
+        }
+      >
+        Revogar
+      </Button>
+      {msg && <span className={msg.ok ? "basis-full break-all text-xs text-muted-foreground" : "basis-full text-xs text-destructive"}>{msg.text}</span>}
+    </span>
   );
 }
 
