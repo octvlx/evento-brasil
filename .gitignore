@@ -47,3 +47,7 @@ next-env.d.ts
 /test-results
 /playwright-report
 /.devdb*.log
+
+# Claude: compartilha só os agentes; configurações locais ficam na máquina
+/.claude/launch.json
+/.claude/settings.local.json
