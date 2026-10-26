@@ -29,11 +29,23 @@ function verificationData(input: ReturnType<typeof organizerApplicationSchema.pa
   };
 }
 
-/** Cria a organização e envia para análise. O usuário vira OWNER. */
+/** Limite de cadastros aguardando análise por usuário (evita spam na fila do admin). */
+export const MAX_PENDING_APPLICATIONS = 3;
+
+/**
+ * Cria uma NOVA organização e envia para análise. O usuário vira OWNER.
+ * Serve tanto para o primeiro cadastro quanto para organizações adicionais.
+ */
 export async function submitOrganizerApplication(db: Db, actor: Actor, raw: OrganizerApplicationInput) {
   assertActive(actor);
   const input = organizerApplicationSchema.parse(raw);
   return db.$transaction(async (tx) => {
+    const pending = await tx.organizationMember.count({
+      where: { userId: actor.id, role: "OWNER", organization: { status: "PENDING_REVIEW" } },
+    });
+    if (pending >= MAX_PENDING_APPLICATIONS) {
+      throw new AppError("LIMIT_EXCEEDED", `Você já tem ${pending} cadastros aguardando análise. Aguarde a resposta antes de criar outra organização.`);
+    }
     const org = await tx.organization.create({
       data: {
         slug: await uniqueOrgSlug(tx, input.name),
@@ -53,6 +65,31 @@ export async function submitOrganizerApplication(db: Db, actor: Actor, raw: Orga
     await audit(tx, { actorUserId: actor.id, organizationId: org.id, action: "organization.submitted", entityType: "Organization", entityId: org.id });
     return org;
   });
+}
+
+/** Organizações das quais o usuário é membro (somente as dele), com o papel em cada uma. */
+export async function listMyOrganizations(db: Db, actor: Actor) {
+  assertActive(actor);
+  const memberships = await db.organizationMember.findMany({
+    where: { userId: actor.id },
+    include: {
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          status: true,
+          statusReason: true,
+          paymentAccountStatus: true,
+          createdAt: true,
+          city: { select: { name: true, state: true } },
+          _count: { select: { events: true, members: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  return memberships.map((m) => ({ role: m.role, joinedAt: m.createdAt, ...m.organization }));
 }
 
 /** Reenvio após rejeição (ou complemento de cadastro em rascunho). */

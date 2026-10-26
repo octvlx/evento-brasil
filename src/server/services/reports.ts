@@ -2,7 +2,7 @@
 import "server-only";
 import type { LedgerAccount } from "@/generated/prisma/client";
 import type { Db } from "../db";
-import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, roleHas, type Actor } from "../auth/permissions";
 
 export async function organizerOverview(db: Db, actor: Actor, organizationId: string) {
   await assertOrgPermission(db, actor, organizationId, "org:read");
@@ -19,6 +19,129 @@ export async function organizerOverview(db: Db, actor: Actor, organizationId: st
     ticketsRevoked: tk.REVOKED ?? 0,
     attendance: tk.CHECKED_IN ?? 0,
   };
+}
+
+export interface DashboardAlert {
+  tone: "info" | "warning" | "danger";
+  text: string;
+  href?: string;
+}
+
+const PAID_LIKE = ["PAID", "REFUND_PENDING", "REFUNDED", "DISPUTED"] as const;
+
+/**
+ * Dados do painel do organizador. Cada bloco respeita a permissão do papel:
+ * financeiro (pedidos recentes, receita por evento) só com `finance:read`;
+ * convites pendentes só com `members:manage`.
+ */
+export async function organizerDashboard(db: Db, actor: Actor, organizationId: string, now = new Date()) {
+  const membership = await assertOrgPermission(db, actor, organizationId, "org:read");
+  const canFinance = roleHas(membership.role, "finance:read");
+  const canManage = roleHas(membership.role, "org:manage");
+  const canMembers = roleHas(membership.role, "members:manage");
+  const canWrite = roleHas(membership.role, "event:write");
+
+  const [org, upcoming, pastCount, pendingReviewCount, invitesPending] = await Promise.all([
+    db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { status: true, statusReason: true, paymentAccountStatus: true } }),
+    db.event.findMany({
+      where: { organizationId, endsAt: { gte: now }, status: { in: ["DRAFT", "PENDING_REVIEW", "PUBLISHED"] } },
+      orderBy: { startsAt: "asc" },
+      take: 6,
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        status: true,
+        startsAt: true,
+        timezone: true,
+        capacity: true,
+        moderationNote: true,
+        _count: { select: { ticketTypes: true, staffAssignments: true } },
+      },
+    }),
+    db.event.count({ where: { organizationId, endsAt: { lt: now } } }),
+    db.event.count({ where: { organizationId, status: "PENDING_REVIEW" } }),
+    canMembers
+      ? db.organizationInvitation.count({ where: { organizationId, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } } })
+      : Promise.resolve(null),
+  ]);
+
+  const ticketRows = upcoming.length
+    ? await db.issuedTicket.groupBy({ by: ["eventId", "status"], where: { eventId: { in: upcoming.map((e) => e.id) } }, _count: true })
+    : [];
+  const tickets = (eventId: string, statuses: string[]) =>
+    ticketRows.filter((r) => r.eventId === eventId && statuses.includes(r.status)).reduce((s, r) => s + r._count, 0);
+
+  const upcomingEvents = upcoming.map((e) => ({
+    id: e.id,
+    title: e.title,
+    slug: e.slug,
+    status: e.status,
+    startsAt: e.startsAt,
+    timezone: e.timezone,
+    capacity: e.capacity,
+    sold: tickets(e.id, ["VALID", "CHECKED_IN"]),
+    checkedIn: tickets(e.id, ["CHECKED_IN"]),
+    ticketTypeCount: e._count.ticketTypes,
+  }));
+
+  // Pendências acionáveis, da mais grave para a mais leve.
+  const alerts: DashboardAlert[] = [];
+  if (org.status === "SUSPENDED") alerts.push({ tone: "danger", text: `Organização suspensa: ${org.statusReason ?? "fale com o suporte"}.` });
+  if (org.status === "REJECTED")
+    alerts.push({ tone: "danger", text: `Cadastro recusado: ${org.statusReason ?? "sem motivo informado"}.`, href: canManage ? "/organizador/cadastro" : undefined });
+  if (org.status === "PENDING_REVIEW") alerts.push({ tone: "warning", text: "Cadastro em análise. Você já pode criar rascunhos; a publicação é liberada após a aprovação." });
+  if (org.status === "APPROVED" && org.paymentAccountStatus === "NOT_CONNECTED" && canManage)
+    alerts.push({ tone: "warning", text: "Conecte a conta de recebimento para vender ingressos pagos.", href: "/organizador/configuracoes" });
+  for (const e of upcoming) {
+    const edit = canWrite ? `/organizador/eventos/${e.id}/editar` : undefined;
+    if (e.status === "DRAFT" && e.moderationNote) alerts.push({ tone: "danger", text: `"${e.title}" foi devolvido pela moderação: ${e.moderationNote}`, href: edit });
+    else if (e.status === "DRAFT" && e._count.ticketTypes === 0) alerts.push({ tone: "info", text: `"${e.title}" ainda não tem ingressos cadastrados.`, href: edit });
+    const startsInMs = e.startsAt.getTime() - now.getTime();
+    if (e.status === "PUBLISHED" && startsInMs < 7 * 86_400_000 && e._count.staffAssignments === 0 && canMembers)
+      alerts.push({ tone: "info", text: `"${e.title}" começa em breve e não tem equipe de check-in atribuída.`, href: "/organizador/configuracoes" });
+  }
+  if (pendingReviewCount > 0) alerts.push({ tone: "info", text: `${pendingReviewCount} evento(s) aguardando moderação da plataforma.` });
+  if (invitesPending) alerts.push({ tone: "info", text: `${invitesPending} convite(s) de equipe aguardando aceite.`, href: "/organizador/configuracoes" });
+
+  if (!canFinance) return { role: membership.role, upcomingEvents, pastCount, alerts, recentOrders: null, eventPerformance: null };
+
+  const [recentOrders, revenueRows, recentEvents] = await Promise.all([
+    db.order.findMany({
+      where: { organizationId, status: { in: [...PAID_LIKE] } },
+      orderBy: { paidAt: "desc" },
+      take: 8,
+      select: { id: true, publicCode: true, buyerName: true, totalCents: true, status: true, paidAt: true, isSimulated: true, event: { select: { title: true } } },
+    }),
+    db.$queryRaw<{ eventId: string; gross: number; refunds: number }[]>`
+      SELECT o."eventId" AS "eventId",
+        COALESCE(SUM(CASE WHEN l.type = 'SALE' AND l.account = 'CUSTOMER_FUNDS' AND l.direction = 'DEBIT' THEN l."amountCents" END), 0)::int AS gross,
+        COALESCE(SUM(CASE WHEN l.type IN ('REFUND', 'CHARGEBACK') AND l.account = 'CUSTOMER_FUNDS' AND l.direction = 'CREDIT' THEN l."amountCents" END), 0)::int AS refunds
+      FROM "FinancialLedgerEntry" l
+      JOIN "Order" o ON o.id = l."orderId"
+      WHERE l."organizationId" = ${organizationId}
+      GROUP BY o."eventId"`,
+    db.event.findMany({
+      where: { organizationId, status: { in: ["PUBLISHED", "COMPLETED", "CANCELLED"] } },
+      orderBy: { startsAt: "desc" },
+      take: 8,
+      select: { id: true, title: true, status: true, capacity: true },
+    }),
+  ]);
+  const soldRows = recentEvents.length
+    ? await db.issuedTicket.groupBy({ by: ["eventId"], where: { eventId: { in: recentEvents.map((e) => e.id) }, status: { in: ["VALID", "CHECKED_IN"] } }, _count: true })
+    : [];
+  const revenue = new Map(revenueRows.map((r) => [r.eventId, r]));
+  const eventPerformance = recentEvents.map((e) => ({
+    id: e.id,
+    title: e.title,
+    status: e.status,
+    capacity: e.capacity,
+    sold: soldRows.find((r) => r.eventId === e.id)?._count ?? 0,
+    grossCents: revenue.get(e.id)?.gross ?? 0,
+    refundCents: revenue.get(e.id)?.refunds ?? 0,
+  }));
+  return { role: membership.role, upcomingEvents, pastCount, alerts, recentOrders, eventPerformance };
 }
 
 /** Saldo por conta do razão (créditos − débitos), opcionalmente por evento. */

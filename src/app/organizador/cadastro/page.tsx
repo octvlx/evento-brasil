@@ -34,6 +34,7 @@ async function Content() {
       <Card className="p-6">
         <ApplicationForm
           cities={cities.map((c) => ({ id: c.id, label: `${c.name} – ${c.state}` }))}
+          resubmitOrganizationId={org && ["REJECTED", "DRAFT"].includes(org.status) ? org.id : undefined}
           defaults={
             org
               ? { name: org.name, legalType: org.legalType, contactEmail: org.contactEmail, cityId: org.cityId ?? undefined, description: org.description ?? undefined }
