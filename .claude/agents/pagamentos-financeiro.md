@@ -1000,6 +1000,8 @@ This section describes the actual codebase. Where it differs from the generic gu
 
 ### Invariants already enforced (keep them green)
 
+- Money is always **integer centavos**; per-unit commission rounds half-up via `applyBps` (`src/lib/money.ts`).
+- The checkout redirect never confirms payment: only `adapter.getPayment()` after a webhook with a verified signature, or active polling.
 - Lock order is always **Event → Order** (`lockEvent`, `lockOrder`); every stock change happens with the event row locked.
 - Card payment failure keeps the reservation for a retry until `expiresAt`; provider-side PIX expiry releases it.
 - Late payment: stock re-acquired if available (`acquireLateInventoryTx`), otherwise automatic full refund (`LATE_PAYMENT_NO_INVENTORY`) and no tickets.
