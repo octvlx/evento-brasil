@@ -7,6 +7,7 @@ import { assertActive, assertPlatformAdmin, type Actor } from "../auth/permissio
 import { env } from "../env";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import type { PaymentProviderAdapter } from "../payments/types";
+import { financeLog } from "./finance-log";
 import { postReversal } from "./ledger";
 import { lockEvent, lockOrder } from "./orders";
 
@@ -77,7 +78,10 @@ async function createRefundRequest(db: Db, orderId: string, reason: RefundReason
       const used = await tx.issuedTicket.count({ where: { orderId, status: "CHECKED_IN" } });
       if (used > 0) throw new AppError("VALIDATION", "Há ingressos já utilizados neste pedido.");
     }
-    const key = `refund:${orderId}:${reason.toLowerCase()}`;
+    // Um reembolso anterior com o mesmo motivo pode ter sido encerrado como
+    // REJECTED (admin restaurou os ingressos): o novo pedido precisa de chave própria.
+    const rejected = await tx.refund.count({ where: { orderId, reason, status: "REJECTED" } });
+    const key = `refund:${orderId}:${reason.toLowerCase()}${rejected ? `:${rejected + 1}` : ""}`;
     const refund = await tx.refund.upsert({
       where: { idempotencyKey: key },
       create: { orderId, paymentId: order.payments[0]?.id ?? null, amountCents: order.totalCents, reason, requestedById, note, idempotencyKey: key },
@@ -120,7 +124,7 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
   const order = await db.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { totalCents: true } });
   const others = await committedRefundCents(db, refund.orderId, ["PROCESSING", "SUCCEEDED"], refundId);
   if (others + refund.amountCents > order.totalCents) {
-    await db.refund.update({ where: { id: refundId }, data: { status: "FAILED", note: "OVER_REFUND_BLOCKED: soma de reembolsos excederia o valor pago." } });
+    await recordRefundFailure(db, refund, "OVER_REFUND_BLOCKED", "soma de reembolsos excederia o valor pago.");
     return db.refund.findUnique({ where: { id: refundId } });
   }
 
@@ -137,12 +141,281 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
     });
     await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });
     if (result.status === "SUCCEEDED") await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
-    else if (result.status === "FAILED") await db.refund.update({ where: { id: refundId }, data: { status: "FAILED", note: "Provedor recusou o estorno." } });
+    else if (result.status === "FAILED") await recordRefundFailure(db, refund, "PROVIDER_REFUSED", "Provedor recusou o estorno.");
     // PENDING: aguarda webhook do provedor.
   } catch (err) {
-    await db.refund.update({ where: { id: refundId }, data: { status: "FAILED", note: `Erro no provedor: ${String(err).slice(0, 300)}` } });
+    await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro no provedor: ${String(err).slice(0, 300)}`);
   }
   return db.refund.findUnique({ where: { id: refundId } });
+}
+
+// ───────────────────────────── Política para reembolso FAILED ─────────────────────────────
+//
+// Ao solicitar o reembolso os ingressos já são revogados (ver createRefundRequest).
+// Se o provedor recusar ou falhar, o comprador ficaria sem dinheiro e sem ingresso,
+// então a falha NUNCA é silenciosa:
+//   1. cada falha é registrada (auditoria `refund.attempt_failed` + log com o id do pedido);
+//   2. a manutenção (cron) reprocessa automaticamente, com a MESMA chave de
+//      idempotência, até `maxAutomaticAttempts` tentativas, com espera crescente;
+//   3. esgotadas as tentativas (ou bloqueio por estorno acima do pago), o reembolso
+//      fica aguardando decisão do admin: reprocessar (`adminRetryRefund`) ou
+//      restaurar os ingressos e voltar o pedido a PAID (`adminRestoreAfterFailedRefund`).
+// As tentativas são contadas pelos registros de auditoria (sem coluna no schema).
+
+export const REFUND_RETRY_POLICY = {
+  /** Tentativas no provedor (incluindo a primeira) antes de exigir decisão do admin. */
+  maxAutomaticAttempts: 4,
+  /** Espera após a 1ª, 2ª e 3ª falha. */
+  backoffMinutes: [5, 30, 120],
+} as const;
+
+type RefundFailureKind = "PROVIDER_REFUSED" | "PROVIDER_ERROR" | "OVER_REFUND_BLOCKED";
+
+const ATTEMPT_FAILED = "refund.attempt_failed";
+
+async function recordRefundFailure(db: Db, refund: { id: string; orderId: string }, kind: RefundFailureKind, message: string) {
+  // Bloqueio por estorno acima do pago não é tentativa no provedor e nunca é reprocessado sozinho.
+  const isAttempt = kind !== "OVER_REFUND_BLOCKED";
+  const max = REFUND_RETRY_POLICY.maxAutomaticAttempts;
+  const { attempt, awaitingDecision } = await db.$transaction(async (tx) => {
+    const order = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { organizationId: true } });
+    const previous = await tx.auditLog.count({ where: { entityType: "Refund", entityId: refund.id, action: ATTEMPT_FAILED } });
+    const attempt = previous + (isAttempt ? 1 : 0);
+    const awaitingDecision = !isAttempt || attempt >= max;
+    const note = isAttempt
+      ? `${kind}: ${message} (tentativa ${attempt}, limite automático ${max}${awaitingDecision ? "; aguardando decisão do admin" : ""})`
+      : `${kind}: ${message}`;
+    await tx.refund.update({ where: { id: refund.id }, data: { status: "FAILED", note } });
+    const base = { organizationId: order.organizationId, entityType: "Refund", entityId: refund.id };
+    await audit(tx, { ...base, action: isAttempt ? ATTEMPT_FAILED : "refund.blocked", metadata: { orderId: refund.orderId, kind, attempt, message } });
+    if (isAttempt && attempt === max) await audit(tx, { ...base, action: "refund.retry_exhausted", metadata: { orderId: refund.orderId, attempts: attempt } });
+    return { attempt, awaitingDecision };
+  }, TX_OPTIONS);
+  financeLog("error", awaitingDecision ? "refund.awaiting_admin_decision" : "refund.attempt_failed", { orderId: refund.orderId, refundId: refund.id }, { kind, attempt, message });
+}
+
+export interface RefundRetryState {
+  /** Falhas registradas no provedor (automáticas e manuais). */
+  attempts: number;
+  /** Quando a manutenção vai tentar de novo; nulo se aguarda o admin. */
+  nextRetryAt: Date | null;
+  awaitingAdminDecision: boolean;
+}
+
+/** Estado de retentativa de reembolsos FAILED, calculado a partir da auditoria. */
+export async function refundRetryStates(client: Db | Tx, refunds: { id: string; note: string | null; updatedAt: Date }[]) {
+  const rows = refunds.length
+    ? await client.auditLog.groupBy({
+        by: ["entityId"],
+        where: { entityType: "Refund", action: ATTEMPT_FAILED, entityId: { in: refunds.map((r) => r.id) } },
+        _count: { _all: true },
+        _max: { createdAt: true },
+      })
+    : [];
+  const byId = new Map(rows.map((r) => [r.entityId, r]));
+  const { maxAutomaticAttempts, backoffMinutes } = REFUND_RETRY_POLICY;
+  return new Map(
+    refunds.map((r): [string, RefundRetryState] => {
+      const row = byId.get(r.id);
+      const attempts = row?._count._all ?? 0;
+      const blocked = r.note?.startsWith("OVER_REFUND_BLOCKED") ?? false;
+      if (blocked || attempts >= maxAutomaticAttempts) return [r.id, { attempts, nextRetryAt: null, awaitingAdminDecision: true }];
+      const last = row?._max.createdAt ?? r.updatedAt;
+      const wait = backoffMinutes[Math.max(0, attempts - 1)] ?? backoffMinutes[backoffMinutes.length - 1];
+      return [r.id, { attempts, nextRetryAt: new Date(last.getTime() + wait * 60_000), awaitingAdminDecision: false }];
+    }),
+  );
+}
+
+/**
+ * Reprocessamento automático (chamado pela reconciliação/cron). Só toca reembolsos
+ * FAILED de pedidos em REFUND_PENDING cuja espera já passou; nunca os que aguardam o admin.
+ */
+export async function retryFailedRefunds(db: Db, adapter: PaymentProviderAdapter, now = new Date(), limit = 200) {
+  const failed = await db.refund.findMany({
+    where: { status: "FAILED", order: { status: "REFUND_PENDING" } },
+    select: { id: true, orderId: true, note: true, updatedAt: true },
+    orderBy: { updatedAt: "asc" },
+    take: limit,
+  });
+  const states = await refundRetryStates(db, failed);
+  const report = { retried: 0, succeeded: 0, awaitingAdminDecision: 0, errors: [] as { kind: string; id: string; orderId: string; message: string }[] };
+  for (const r of failed) {
+    const state = states.get(r.id)!;
+    if (state.awaitingAdminDecision) {
+      report.awaitingAdminDecision++;
+      continue;
+    }
+    if (state.nextRetryAt! > now) continue;
+    try {
+      const after = await processRefund(db, adapter, r.id);
+      report.retried++;
+      if (after?.status === "SUCCEEDED") report.succeeded++;
+      else if (after?.status === "FAILED" && (await refundRetryStates(db, [after])).get(r.id)!.awaitingAdminDecision) report.awaitingAdminDecision++;
+    } catch (err) {
+      report.errors.push({ kind: "refund-retry", id: r.id, orderId: r.orderId, message: String(err).slice(0, 300) });
+    }
+  }
+  return report;
+}
+
+const RESTORABLE_REASONS: RefundReason[] = ["CUSTOMER_REQUEST", "ADMIN"];
+
+/** Motivo pelo qual os ingressos NÃO podem ser restaurados; nulo se podem. */
+export function restoreBlockedReason(reason: RefundReason, event: { status: string; endsAt: Date }, now = new Date()): string | null {
+  if (!RESTORABLE_REASONS.includes(reason)) return "Este reembolso não pode ser desfeito (evento cancelado ou pagamento tardio sem estoque): só é possível reprocessar.";
+  if (event.status === "CANCELLED") return "O evento foi cancelado: só é possível reprocessar o reembolso.";
+  if (event.endsAt.getTime() <= now.getTime()) return "O evento já terminou: restaurar ingressos não teria efeito; reprocesse o reembolso.";
+  return null;
+}
+
+export interface FailedRefundView extends RefundRetryState {
+  refundId: string;
+  orderId: string;
+  orderPublicCode: string;
+  eventId: string;
+  eventTitle: string;
+  reason: RefundReason;
+  amountCents: number;
+  note: string | null;
+  failedAt: Date;
+  restoreBlockedReason: string | null;
+}
+
+/** Fila do admin: todos os reembolsos FAILED de pedidos aguardando reembolso. */
+export async function listFailedRefunds(db: Db, admin: Actor, now = new Date()): Promise<FailedRefundView[]> {
+  assertPlatformAdmin(admin);
+  const refunds = await db.refund.findMany({
+    where: { status: "FAILED", order: { status: "REFUND_PENDING" } },
+    include: { order: { select: { publicCode: true, event: { select: { id: true, title: true, status: true, endsAt: true } } } } },
+    orderBy: { updatedAt: "asc" },
+  });
+  const states = await refundRetryStates(db, refunds);
+  return refunds.map((r) => ({
+    ...states.get(r.id)!,
+    refundId: r.id,
+    orderId: r.orderId,
+    orderPublicCode: r.order.publicCode,
+    eventId: r.order.event.id,
+    eventTitle: r.order.event.title,
+    reason: r.reason,
+    amountCents: r.amountCents,
+    note: r.note,
+    failedAt: r.updatedAt,
+    restoreBlockedReason: restoreBlockedReason(r.reason, r.order.event, now),
+  }));
+}
+
+/** Decisão do admin: nova tentativa no provedor, com a mesma chave de idempotência. */
+export async function adminRetryRefund(db: Db, adapter: PaymentProviderAdapter, admin: Actor, refundId: string, note: string) {
+  assertPlatformAdmin(admin);
+  if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo do reprocessamento.");
+  const refund = await db.refund.findUnique({ where: { id: refundId }, include: { order: { select: { status: true, organizationId: true } } } });
+  if (!refund) throw notFound("Reembolso não encontrado.");
+  if (refund.status !== "FAILED") throw invalidState("Só reembolsos com falha podem ser reprocessados.");
+  if (refund.order.status !== "REFUND_PENDING") throw invalidState("O pedido não está aguardando reembolso.");
+  await audit(db, {
+    actorUserId: admin.id,
+    organizationId: refund.order.organizationId,
+    action: "refund.admin_retry",
+    entityType: "Refund",
+    entityId: refundId,
+    metadata: { orderId: refund.orderId, note },
+  });
+  financeLog("info", "refund.admin_retry", { orderId: refund.orderId, refundId }, { adminId: admin.id });
+  await processRefund(db, adapter, refundId);
+  return db.refund.findUniqueOrThrow({ where: { id: refundId } });
+}
+
+export type RestoreOutcome = "RESTORED" | "ALREADY_REFUNDED";
+
+/**
+ * Decisão do admin: desiste do reembolso FAILED, devolve os ingressos revogados
+ * por ele e volta o pedido a PAID. O reembolso fica REJECTED (terminal).
+ *
+ * Antes de restaurar, consulta o provedor: uma falha por erro de rede pode ter
+ * estornado de fato. Se o pagamento já consta estornado, o reembolso é
+ * CONFIRMADO em vez de desfeito (`ALREADY_REFUNDED`).
+ *
+ * Contadores e razão não mudam: a solicitação só revoga ingressos; `quantityRefunded`,
+ * o status do pagamento e o estorno no razão só são gravados na confirmação.
+ */
+export async function adminRestoreAfterFailedRefund(
+  db: Db,
+  adapter: PaymentProviderAdapter,
+  admin: Actor,
+  refundId: string,
+  note: string,
+  now = new Date(),
+): Promise<{ outcome: RestoreOutcome; restoredTickets: number }> {
+  assertPlatformAdmin(admin);
+  if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo da restauração.");
+  const refund = await db.refund.findUnique({ where: { id: refundId }, include: { payment: true, order: { include: { event: true } } } });
+  if (!refund) throw notFound("Reembolso não encontrado.");
+  if (refund.status !== "FAILED") throw invalidState("Só reembolsos com falha podem ser desfeitos.");
+  if (refund.order.status !== "REFUND_PENDING") throw invalidState("O pedido não está aguardando reembolso.");
+  const blocked = restoreBlockedReason(refund.reason, refund.order.event, now);
+  if (blocked) throw invalidState(blocked);
+
+  const p = refund.payment;
+  if (p && p.status !== "PAID") throw invalidState(`Pagamento está ${p.status}: restauração exige análise manual.`);
+  if (p?.providerPaymentId && p.method !== "FREE" && refund.amountCents > 0) {
+    let snapshot;
+    try {
+      snapshot = await adapter.getPayment(p.providerPaymentId);
+    } catch (err) {
+      financeLog("error", "refund.restore_provider_check_failed", { orderId: refund.orderId, refundId, paymentId: p.id }, { message: String(err).slice(0, 300) });
+      throw new AppError("PROVIDER_ERROR", "Não foi possível confirmar com o provedor que o estorno não ocorreu. Tente novamente.");
+    }
+    if (snapshot.status === "REFUNDED") {
+      // O dinheiro já voltou ao comprador: confirmar, nunca devolver os ingressos.
+      await db.$transaction(async (tx) => {
+        await lockEvent(tx, refund.order.eventId);
+        await lockOrder(tx, refund.orderId);
+        const current = await tx.refund.findUniqueOrThrow({ where: { id: refundId }, select: { status: true } });
+        if (current.status === "FAILED") await confirmRefundTx(tx, refundId, now);
+      }, TX_OPTIONS);
+      await audit(db, { actorUserId: admin.id, organizationId: refund.order.organizationId, action: "refund.restore_found_refunded", entityType: "Refund", entityId: refundId, metadata: { orderId: refund.orderId, note } });
+      financeLog("warn", "refund.restore_found_refunded", { orderId: refund.orderId, refundId }, { adminId: admin.id });
+      return { outcome: "ALREADY_REFUNDED", restoredTickets: 0 };
+    }
+    if (snapshot.status !== "PAID") throw invalidState(`Pagamento no provedor está ${snapshot.status}: restauração exige análise manual.`);
+  }
+
+  const restoredTickets = await db.$transaction(async (tx) => {
+    await lockEvent(tx, refund.order.eventId);
+    await lockOrder(tx, refund.orderId);
+    // Transição condicional: uma retentativa concorrente (FAILED → PROCESSING) ou a
+    // própria restauração repetida perdem aqui e nada é alterado.
+    const claimed = await tx.refund.updateMany({
+      where: { id: refundId, status: "FAILED" },
+      data: { status: "REJECTED", processedAt: now, note: `RESTORED_BY_ADMIN: ${note.trim().slice(0, 300)} | última falha: ${refund.note ?? "-"}`.slice(0, 1000) },
+    });
+    if (!claimed.count) throw invalidState("O reembolso mudou de estado; atualize a página.");
+    const [order, event] = await Promise.all([
+      tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { status: true } }),
+      tx.event.findUniqueOrThrow({ where: { id: refund.order.eventId }, select: { status: true, endsAt: true } }),
+    ]);
+    if (order.status !== "REFUND_PENDING") throw invalidState("O pedido não está aguardando reembolso.");
+    const late = restoreBlockedReason(refund.reason, event, now);
+    if (late) throw invalidState(late);
+    const tickets = await tx.issuedTicket.updateMany({
+      where: { orderId: refund.orderId, status: "REVOKED", revocationReason: "REFUNDED" },
+      data: { status: "VALID", revokedAt: null, revocationReason: null },
+    });
+    await tx.order.update({ where: { id: refund.orderId }, data: { status: "PAID" } });
+    await audit(tx, {
+      actorUserId: admin.id,
+      organizationId: refund.order.organizationId,
+      action: "refund.rejected_tickets_restored",
+      entityType: "Refund",
+      entityId: refundId,
+      metadata: { orderId: refund.orderId, note, restoredTickets: tickets.count },
+    });
+    return tickets.count;
+  }, TX_OPTIONS);
+  financeLog("info", "refund.tickets_restored", { orderId: refund.orderId, refundId }, { adminId: admin.id, restoredTickets });
+  return { outcome: "RESTORED", restoredTickets };
 }
 
 /**
@@ -159,14 +432,21 @@ export async function resumeRefund(db: Db, adapter: PaymentProviderAdapter, refu
     await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
     return "SUCCEEDED";
   }
-  const result = await adapter.refundPayment({
-    providerPaymentId: refund.payment.providerPaymentId,
-    amountCents: refund.amountCents,
-    idempotencyKey: refund.idempotencyKey,
-  });
+  let result;
+  try {
+    result = await adapter.refundPayment({
+      providerPaymentId: refund.payment.providerPaymentId,
+      amountCents: refund.amountCents,
+      idempotencyKey: refund.idempotencyKey,
+    });
+  } catch (err) {
+    // Entra na política de retentativas limitadas em vez de ficar preso em PROCESSING.
+    await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro no provedor (reconciliação): ${String(err).slice(0, 300)}`);
+    return "FAILED";
+  }
   await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });
   if (result.status === "SUCCEEDED") await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
-  else if (result.status === "FAILED") await db.refund.update({ where: { id: refundId }, data: { status: "FAILED", note: "Provedor recusou o estorno (reconciliação)." } });
+  else if (result.status === "FAILED") await recordRefundFailure(db, refund, "PROVIDER_REFUSED", "Provedor recusou o estorno (reconciliação).");
   return result.status;
 }
 
