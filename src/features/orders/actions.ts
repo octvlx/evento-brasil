@@ -6,11 +6,11 @@ import type { CreateOrderInput } from "@/features/schemas";
 import { db } from "@/server/db";
 import { env, isProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
-import { getCurrentUser, requireUser } from "@/server/auth/current";
+import { getCurrentUser, requireAdmin, requireUser } from "@/server/auth/current";
 import { getPaymentAdapter, getSimulatedAdapter } from "@/server/payments";
 import { cancelPendingOrder, createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/server/services/payments";
-import { requestCustomerRefund } from "@/server/services/refunds";
+import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
 
 export async function createOrderAction(input: CreateOrderInput): Promise<ActionResult<{ orderId: string }>> {
@@ -68,6 +68,23 @@ export async function cancelOrderAction(orderId: string) {
 export async function requestRefundAction(orderId: string): Promise<ActionResult<{ status: string }>> {
   const user = await requireUser(`/pedido/${orderId}`);
   const result = await toActionResult(async () => ({ status: (await requestCustomerRefund(db, getPaymentAdapter(), user, orderId)).status }));
+  if (result.ok) refresh();
+  return result;
+}
+
+// Decisões do admin sobre reembolsos FAILED (contrato em docs/areas/financeiro.md).
+// A tela fica em /admin (agente admin); a fila vem de `listFailedRefunds`.
+
+export async function adminRetryFailedRefundAction(refundId: string, note: string): Promise<ActionResult<{ status: string }>> {
+  const admin = await requireAdmin();
+  const result = await toActionResult(async () => ({ status: (await adminRetryRefund(db, getPaymentAdapter(), admin, refundId, note)).status }));
+  if (result.ok) refresh();
+  return result;
+}
+
+export async function adminRestoreFailedRefundAction(refundId: string, note: string): Promise<ActionResult<{ outcome: RestoreOutcome; restoredTickets: number }>> {
+  const admin = await requireAdmin();
+  const result = await toActionResult(() => adminRestoreAfterFailedRefund(db, getPaymentAdapter(), admin, refundId, note));
   if (result.ok) refresh();
   return result;
 }

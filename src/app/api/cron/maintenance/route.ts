@@ -7,6 +7,7 @@ import { safeEqual } from "@/server/crypto";
 import { getPaymentAdapter } from "@/server/payments";
 import { completeEndedEvents } from "@/server/services/events";
 import { expireStaleOrders } from "@/server/services/orders";
+import { financeLog } from "@/server/services/finance-log";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 
 export async function POST(req: Request) {
@@ -20,7 +21,9 @@ export async function POST(req: Request) {
     // Incidente: nunca corrigir automaticamente — registrar para análise humana.
     console.error("[financeiro] violações de invariantes:", JSON.stringify(violations));
   }
-  if (reconciliation.errors.length) console.error("[financeiro] erros na reconciliação:", JSON.stringify(reconciliation.errors));
+  for (const e of reconciliation.errors) {
+    financeLog("error", `reconciliation.${e.kind}_failed`, { orderId: e.orderId }, { entityId: e.id, message: e.message });
+  }
   return Response.json({
     expiredOrders,
     completedEvents,

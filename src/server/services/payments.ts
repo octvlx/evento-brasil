@@ -8,6 +8,7 @@ import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import type { PaymentProviderAdapter, ProviderPaymentSnapshot, WebhookRequest } from "../payments/types";
+import { financeLog } from "./finance-log";
 import { postProcessingFee, postReversal, postSale } from "./ledger";
 import { acquireLateInventoryTx, finalizePaidOrderTx, lockEvent, lockOrder, releaseOrderTx } from "./orders";
 import { notifyOrderPaid } from "./notifications";
@@ -297,6 +298,14 @@ export async function handlePaymentWebhook(db: Db, adapter: PaymentProviderAdapt
     return { status: 200, body: outcome };
   } catch (err) {
     await db.paymentWebhookEvent.update({ where: { id: record.id }, data: { error: String(err).slice(0, 1000) } });
+    const local = await db.payment
+      .findFirst({ where: { provider: adapter.id, providerPaymentId: verification.providerPaymentId }, select: { id: true, orderId: true } })
+      .catch(() => null);
+    financeLog("error", "webhook.processing_failed", { orderId: local?.orderId, paymentId: local?.id, providerPaymentId: verification.providerPaymentId }, {
+      provider: adapter.id,
+      webhookEventId: record.id,
+      message: String(err).slice(0, 300),
+    });
     // 500 faz o provedor reenviar; o processamento é idempotente.
     return { status: 500, body: "processing error" };
   }

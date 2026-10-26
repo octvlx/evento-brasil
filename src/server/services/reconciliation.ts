@@ -8,7 +8,7 @@ import "server-only";
 import type { Db } from "../db";
 import type { PaymentProviderAdapter } from "../payments/types";
 import { applyPaymentSnapshot, syncPaymentFromProvider } from "./payments";
-import { resumeRefund } from "./refunds";
+import { resumeRefund, retryFailedRefunds } from "./refunds";
 
 export interface ReconciliationReport {
   webhooksReprocessed: number;
@@ -17,7 +17,12 @@ export interface ReconciliationReport {
   paymentsClosedNotFound: number;
   paymentsNeedReview: number;
   refundsResumed: number;
-  errors: { kind: string; id: string; message: string }[];
+  /** Reembolsos FAILED reprocessados automaticamente nesta rodada (e quantos deram certo). */
+  refundsRetried: number;
+  refundsRetrySucceeded: number;
+  /** Reembolsos FAILED que esgotaram as tentativas ou foram bloqueados: exigem o admin. */
+  refundsAwaitingAdminDecision: number;
+  errors: { kind: string; id: string; orderId?: string; message: string }[];
 }
 
 const WEBHOOK_GRACE_MS = 2 * 60_000;
@@ -41,9 +46,12 @@ export async function reconcilePayments(
     paymentsClosedNotFound: 0,
     paymentsNeedReview: 0,
     refundsResumed: 0,
+    refundsRetried: 0,
+    refundsRetrySucceeded: 0,
+    refundsAwaitingAdminDecision: 0,
     errors: [],
   };
-  const fail = (kind: string, id: string, err: unknown) => report.errors.push({ kind, id, message: String(err).slice(0, 300) });
+  const fail = (kind: string, id: string, err: unknown, orderId?: string) => report.errors.push({ kind, id, orderId, message: String(err).slice(0, 300) });
 
   // 1. Webhooks registrados cujo processamento falhou (o provedor pode não reenviar).
   const hooks = await db.paymentWebhookEvent.findMany({
@@ -70,7 +78,7 @@ export async function reconcilePayments(
       await syncPaymentFromProvider(db, adapter, p.providerPaymentId!);
       report.paymentsSynced++;
     } catch (err) {
-      fail("payment", p.id, err);
+      fail("payment", p.id, err, p.orderId);
     }
   }
 
@@ -100,20 +108,27 @@ export async function reconcilePayments(
       await applyPaymentSnapshot(db, adapter, snapshot);
       report.paymentsLinked++;
     } catch (err) {
-      fail("payment-link", p.id, err);
+      fail("payment-link", p.id, err, p.orderId);
     }
   }
 
-  // 4. Reembolsos parados em REQUESTED/PROCESSING (FAILED fica para reprocessamento manual no admin).
+  // 4. Reembolsos parados em REQUESTED/PROCESSING.
   const refunds = await db.refund.findMany({ where: { status: { in: ["REQUESTED", "PROCESSING"] }, updatedAt: { lt: cutoff } }, take: limit });
   for (const r of refunds) {
     try {
       await resumeRefund(db, adapter, r.id);
       report.refundsResumed++;
     } catch (err) {
-      fail("refund", r.id, err);
+      fail("refund", r.id, err, r.orderId);
     }
   }
+
+  // 5. Reembolsos FAILED: retentativas limitadas; esgotadas, ficam para decisão do admin.
+  const retry = await retryFailedRefunds(db, adapter, now, limit);
+  report.refundsRetried = retry.retried;
+  report.refundsRetrySucceeded = retry.succeeded;
+  report.refundsAwaitingAdminDecision = retry.awaitingAdminDecision;
+  report.errors.push(...retry.errors);
   return report;
 }
 
@@ -196,6 +211,25 @@ export async function checkFinancialInvariants(db: Db): Promise<InvariantViolati
       db.$queryRaw`SELECT t.id FROM "IssuedTicket" t JOIN "Order" o ON o.id = t."orderId"
         JOIN "Event" e ON e.id = t."eventId"
         WHERE t.status = 'REVOKED' AND o.status = 'PAID' AND e.status <> 'CANCELLED'`,
+    ],
+    [
+      "REFUND_PENDING_WITHOUT_OPEN_REFUND",
+      "Pedido aguardando reembolso sem reembolso em aberto (REQUESTED/PROCESSING/FAILED)",
+      db.$queryRaw`SELECT o.id FROM "Order" o
+        WHERE o.status = 'REFUND_PENDING'
+          AND NOT EXISTS (SELECT 1 FROM "Refund" r WHERE r."orderId" = o.id AND r.status IN ('REQUESTED', 'PROCESSING', 'FAILED'))`,
+    ],
+    [
+      "OPEN_REFUND_ON_PAID_ORDER",
+      "Reembolso em aberto em pedido pago (seria reprocessado com os ingressos válidos)",
+      db.$queryRaw`SELECT r.id FROM "Refund" r JOIN "Order" o ON o.id = r."orderId"
+        WHERE r.status IN ('REQUESTED', 'PROCESSING', 'FAILED') AND o.status = 'PAID'`,
+    ],
+    [
+      "VALID_TICKET_ON_REFUND_PENDING_ORDER",
+      "Ingresso válido em pedido aguardando reembolso (entrada e estorno ao mesmo tempo)",
+      db.$queryRaw`SELECT t.id FROM "IssuedTicket" t JOIN "Order" o ON o.id = t."orderId"
+        WHERE t.status = 'VALID' AND o.status = 'REFUND_PENDING'`,
     ],
   ];
   const results = await Promise.all(checks.map(([, , q]) => q));
