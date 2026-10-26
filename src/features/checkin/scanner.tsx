@@ -1,0 +1,158 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import jsQR from "jsqr";
+import { Camera, CameraOff, Keyboard } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/primitives";
+import { cn } from "@/lib/utils";
+import type { CheckinResponse } from "@/server/services/checkin";
+import { checkInAction } from "./actions";
+
+const RESULT_STYLE: Record<string, string> = {
+  ADMITTED: "bg-emerald-600",
+  DUPLICATE: "bg-amber-500",
+  WRONG_EVENT: "bg-rose-600",
+  REVOKED: "bg-rose-600",
+  INVALID: "bg-rose-600",
+  EVENT_NOT_ACTIVE: "bg-zinc-700",
+};
+
+export function Scanner({ eventId, initialCounters }: { eventId: string; initialCounters: { admitted: number; total: number } }) {
+  const router = useRouter();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const busy = useRef(false);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [result, setResult] = useState<CheckinResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [counters, setCounters] = useState(initialCounters);
+  const [manual, setManual] = useState("");
+
+  const submit = useCallback(
+    async (payload: string) => {
+      if (busy.current) return;
+      busy.current = true;
+      const r = await checkInAction(eventId, payload);
+      if (r.ok) {
+        setResult(r.data);
+        setCounters(r.data.counters);
+        setError(null);
+        navigator.vibrate?.(r.data.result === "ADMITTED" ? 80 : [60, 60, 60, 60, 200]);
+      } else setError(r.error);
+      setTimeout(() => {
+        setResult(null);
+        busy.current = false;
+        router.refresh();
+      }, 2200);
+    },
+    [eventId, router],
+  );
+
+  useEffect(() => {
+    if (!cameraOn) return;
+    let stream: MediaStream | null = null;
+    let raf = 0;
+    let last = 0;
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        const video = videoRef.current!;
+        video.srcObject = stream;
+        await video.play();
+        const tick = (t: number) => {
+          raf = requestAnimationFrame(tick);
+          if (t - last < 200 || busy.current || video.readyState < 2) return;
+          last = t;
+          const canvas = canvasRef.current!;
+          const w = Math.min(640, video.videoWidth);
+          const h = Math.round((video.videoHeight / video.videoWidth) * w);
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+          ctx.drawImage(video, 0, 0, w, h);
+          const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
+          if (code?.data) submit(code.data);
+        };
+        raf = requestAnimationFrame(tick);
+      } catch {
+        setCameraError("Não foi possível acessar a câmera. Verifique a permissão do navegador ou use a digitação manual.");
+        setCameraOn(false);
+      }
+    })();
+    return () => {
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((tr) => tr.stop());
+    };
+  }, [cameraOn, submit]);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-2xl bg-muted p-4 text-center">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Entradas</p>
+          <p className="font-display text-3xl font-extrabold tabular-nums">{counters.admitted}</p>
+        </div>
+        <div className="rounded-2xl bg-muted p-4 text-center">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Ingressos válidos</p>
+          <p className="font-display text-3xl font-extrabold tabular-nums">{counters.total}</p>
+        </div>
+      </div>
+
+      <div className="relative aspect-square overflow-hidden rounded-3xl bg-black">
+        <video ref={videoRef} className={cn("h-full w-full object-cover", !cameraOn && "hidden")} muted playsInline />
+        <canvas ref={canvasRef} className="hidden" />
+        {!cameraOn && (
+          <div className="absolute inset-0 grid place-items-center p-6 text-center text-white/80">
+            <div>
+              <Camera className="mx-auto size-10" aria-hidden />
+              <p className="mt-2 text-sm">Toque em “Ativar câmera” e aponte para o QR code do ingresso.</p>
+            </div>
+          </div>
+        )}
+        {cameraOn && <div className="pointer-events-none absolute inset-[18%] rounded-3xl border-4 border-white/70" aria-hidden />}
+        {result && (
+          <div className={cn("absolute inset-0 flex flex-col items-center justify-center p-6 text-center text-white", RESULT_STYLE[result.result])} role="alert" aria-live="assertive">
+            <p className="font-display text-3xl font-extrabold">{result.message}</p>
+            {result.ticket && (
+              <>
+                <p className="mt-3 text-lg font-semibold">{result.ticket.holderName}</p>
+                <p className="text-sm opacity-90">
+                  {result.ticket.ticketTypeName} · {result.ticket.code}
+                </p>
+                {result.result === "DUPLICATE" && result.ticket.checkedInAt && (
+                  <p className="mt-2 text-sm">Entrada registrada às {new Date(result.ticket.checkedInAt).toLocaleTimeString("pt-BR")}</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      <Button size="lg" variant={cameraOn ? "outline" : "secondary"} className="w-full" onClick={() => setCameraOn((v) => !v)}>
+        {cameraOn ? <CameraOff aria-hidden /> : <Camera aria-hidden />} {cameraOn ? "Desativar câmera" : "Ativar câmera"}
+      </Button>
+      {cameraError && <p className="text-sm text-destructive">{cameraError}</p>}
+
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (manual.trim()) submit(manual.trim());
+          setManual("");
+        }}
+      >
+        <label className="sr-only" htmlFor="manual">
+          Conteúdo do QR code
+        </label>
+        <Input id="manual" value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Colar conteúdo do QR (EB1:…)" autoComplete="off" />
+        <Button type="submit" variant="outline">
+          <Keyboard aria-hidden /> Validar
+        </Button>
+      </form>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </div>
+  );
+}

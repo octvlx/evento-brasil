@@ -1,0 +1,845 @@
+// Evento Brasil — esquema relacional.
+// Valores monetários: inteiros em centavos de BRL. Datas: timestamptz (UTC).
+// Restrições adicionais (CHECKs, trigger do razão) ficam na migração
+// "integrity_constraints".
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Usuários e sessões ─────────────────────────────
+
+enum PlatformRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  name            String
+  phone           String?
+  passwordHash    String
+  platformRole    PlatformRole @default(USER)
+  status          UserStatus   @default(ACTIVE)
+  suspendedReason String?
+  // Contas de demonstração do seed: bloqueadas em produção.
+  isDemoAccount   Boolean      @default(false)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  sessions          Session[]
+  memberships       OrganizationMember[]
+  orders            Order[]
+  tickets           IssuedTicket[]
+  staffAssignments  EventStaffAssignment[] @relation("StaffAssignee")
+  checkins          TicketCheckin[]
+  auditLogs         AuditLog[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  expiresAt  DateTime @db.Timestamptz(3)
+  lastSeenAt DateTime @default(now()) @db.Timestamptz(3)
+  userAgent  String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ───────────────────────────── Organizações ─────────────────────────────
+
+enum OrganizationStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum OrganizerLegalType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum PaymentAccountStatus {
+  NOT_CONNECTED
+  PENDING
+  CONNECTED
+  SIMULATED
+  DISABLED
+}
+
+model Organization {
+  id                       String               @id @default(cuid())
+  slug                     String               @unique
+  name                     String
+  description              String?
+  legalType                OrganizerLegalType
+  contactEmail             String
+  contactPhone             String?
+  cityId                   String?
+  websiteUrl               String?
+  instagramHandle          String?
+  status                   OrganizationStatus   @default(DRAFT)
+  // Quando verdadeiro, eventos enviados são publicados sem moderação manual.
+  autoPublishEvents        Boolean              @default(false)
+  paymentProvider          String?
+  paymentAccountStatus     PaymentAccountStatus @default(NOT_CONNECTED)
+  paymentAccountExternalId String?
+  statusReason             String?
+  createdAt                DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime             @updatedAt @db.Timestamptz(3)
+
+  city            City?                    @relation(fields: [cityId], references: [id])
+  members         OrganizationMember[]
+  invitations     OrganizationInvitation[]
+  verifications   OrganizerVerification[]
+  events          Event[]
+  venues          Venue[]
+  orders          Order[]
+  commissionRules CommissionRule[]
+  ledgerEntries   FinancialLedgerEntry[]
+  settlements     OrganizerSettlement[]
+  auditLogs       AuditLog[]
+
+  @@index([status])
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  EVENT_MANAGER
+  FINANCE
+  CHECKIN_STAFF
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgRole
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model OrganizationInvitation {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String
+  role           OrgRole
+  // Evento atribuído automaticamente ao aceitar (equipe de check-in).
+  eventId        String?
+  tokenHash      String    @unique
+  invitedById    String
+  expiresAt      DateTime  @db.Timestamptz(3)
+  acceptedAt     DateTime? @db.Timestamptz(3)
+  acceptedById   String?
+  revokedAt      DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, email])
+}
+
+enum VerificationStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum DocumentType {
+  CPF
+  CNPJ
+}
+
+// Dados mínimos de verificação. O documento é cifrado (AES-256-GCM) e só os
+// últimos dígitos ficam em claro para exibição. Documentos de identidade
+// (imagens) NÃO são armazenados: ficam a cargo do onboarding do provedor.
+model OrganizerVerification {
+  id                String             @id @default(cuid())
+  organizationId    String
+  legalType         OrganizerLegalType
+  legalName         String
+  documentType      DocumentType
+  documentEncrypted String
+  documentLast4     String
+  status            VerificationStatus @default(SUBMITTED)
+  submittedById     String
+  reviewedById      String?
+  reviewedAt        DateTime?          @db.Timestamptz(3)
+  decisionNote      String?
+  createdAt         DateTime           @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([status])
+}
+
+// ───────────────────────────── Locais ─────────────────────────────
+
+model City {
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  name       String
+  state      String   @db.Char(2)
+  ibgeCode   String?  @unique
+  timezone   String
+  isFeatured Boolean  @default(false)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  venues        Venue[]
+  events        Event[]
+  organizations Organization[]
+
+  @@unique([name, state])
+  @@index([state])
+}
+
+model Venue {
+  id                String   @id @default(cuid())
+  organizationId    String?
+  cityId            String
+  name              String
+  slug              String
+  addressLine       String?
+  district          String?
+  postalCode        String?
+  capacity          Int?
+  accessibilityInfo String?
+  // Locais fictícios do seed não têm endereço real.
+  isFictional       Boolean  @default(false)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  city         City          @relation(fields: [cityId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  events       Event[]
+
+  @@unique([cityId, slug])
+  @@index([organizationId])
+}
+
+// ───────────────────────────── Eventos ─────────────────────────────
+
+enum EventStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+  ARCHIVED
+}
+
+enum LocationType {
+  VENUE
+  ONLINE
+}
+
+model EventCategory {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  name      String
+  sortOrder Int     @default(0)
+  events    Event[]
+}
+
+model Event {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  slug               String       @unique
+  title              String
+  summary            String?
+  description        String
+  categoryId         String
+  coverImageUrl      String?
+  locationType       LocationType @default(VENUE)
+  venueId            String?
+  onlineUrl          String?
+  cityId             String?
+  startsAt           DateTime     @db.Timestamptz(3)
+  endsAt             DateTime     @db.Timestamptz(3)
+  timezone           String
+  // 0 = livre; caso contrário idade mínima.
+  ageRestriction     Int          @default(0)
+  salesStartAt       DateTime     @db.Timestamptz(3)
+  salesEndAt         DateTime     @db.Timestamptz(3)
+  capacity           Int
+  // Cota de meia-entrada em pontos-base da capacidade (ex.: 4000 = 40%).
+  // Nulo = sem cota configurada. Requer revisão jurídica.
+  halfPriceQuotaBps  Int?
+  status             EventStatus  @default(DRAFT)
+  isFeatured         Boolean      @default(false)
+  refundPolicy       String
+  accessibilityInfo  String?
+  moderationNote     String?
+  publishedAt        DateTime?    @db.Timestamptz(3)
+  cancelledAt        DateTime?    @db.Timestamptz(3)
+  cancellationReason String?
+  createdAt          DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @db.Timestamptz(3)
+
+  organization     Organization           @relation(fields: [organizationId], references: [id])
+  category         EventCategory          @relation(fields: [categoryId], references: [id])
+  venue            Venue?                 @relation(fields: [venueId], references: [id])
+  city             City?                  @relation(fields: [cityId], references: [id])
+  images           EventImage[]
+  ticketTypes      TicketType[]
+  orders           Order[]
+  tickets          IssuedTicket[]
+  checkins         TicketCheckin[]
+  staffAssignments EventStaffAssignment[]
+  commissionRules  CommissionRule[]
+
+  @@index([status, startsAt])
+  @@index([cityId, status, startsAt])
+  @@index([organizationId, status])
+  @@index([categoryId, status])
+}
+
+model EventImage {
+  id         String   @id @default(cuid())
+  eventId    String
+  url        String
+  storageKey String?
+  alt        String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model EventStaffAssignment {
+  id           String   @id @default(cuid())
+  eventId      String
+  userId       String
+  assignedById String
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation("StaffAssignee", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([userId])
+}
+
+// ───────────────────────────── Ingressos e estoque ─────────────────────────────
+
+enum TicketKind {
+  GENERAL
+  VIP
+  PROMOTIONAL
+  EARLY_BIRD
+  HALF_PRICE
+  FREE
+}
+
+// Disponível = quantityTotal - quantityReserved - quantitySold.
+// quantitySold é monotônico (inclui reembolsados/cancelados); ingressos
+// reembolsados NÃO voltam ao estoque por padrão.
+model TicketType {
+  id                   String     @id @default(cuid())
+  eventId              String
+  name                 String
+  description          String?
+  kind                 TicketKind @default(GENERAL)
+  priceCents           Int
+  quantityTotal        Int
+  quantityReserved     Int        @default(0)
+  quantitySold         Int        @default(0)
+  quantityRefunded     Int        @default(0)
+  quantityCancelled    Int        @default(0)
+  minPerOrder          Int        @default(1)
+  maxPerOrder          Int        @default(10)
+  salesStartAt         DateTime?  @db.Timestamptz(3)
+  salesEndAt           DateTime?  @db.Timestamptz(3)
+  requiresAttendeeInfo Boolean    @default(false)
+  isHidden             Boolean    @default(false)
+  sortOrder            Int        @default(0)
+  createdAt            DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime   @updatedAt @db.Timestamptz(3)
+
+  event        Event                        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  reservations TicketInventoryReservation[]
+  orderItems   OrderItem[]
+  tickets      IssuedTicket[]
+
+  @@index([eventId, sortOrder])
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONVERTED
+  RELEASED
+}
+
+model TicketInventoryReservation {
+  id            String            @id @default(cuid())
+  orderId       String
+  ticketTypeId  String
+  quantity      Int
+  status        ReservationStatus @default(ACTIVE)
+  expiresAt     DateTime          @db.Timestamptz(3)
+  releasedAt    DateTime?         @db.Timestamptz(3)
+  releaseReason String?
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  @@unique([orderId, ticketTypeId])
+  @@index([status, expiresAt])
+}
+
+// ───────────────────────────── Pedidos ─────────────────────────────
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  PAYMENT_FAILED
+  EXPIRED
+  CANCELLED
+  REFUND_PENDING
+  REFUNDED
+  DISPUTED
+}
+
+model Order {
+  id               String      @id @default(cuid())
+  publicCode       String      @unique
+  userId           String
+  eventId          String
+  organizationId   String
+  status           OrderStatus @default(PENDING_PAYMENT)
+  currency         String      @default("BRL")
+  // Soma dos valores de face.
+  subtotalCents    Int
+  // Taxa de serviço cobrada do comprador (0 quando a comissão é do organizador).
+  serviceFeeCents  Int
+  totalCents       Int
+  // Comissão da plataforma (independente de quem paga).
+  commissionCents  Int
+  feePolicyVersion String
+  commissionRuleId String?
+  buyerName        String
+  buyerEmail       String
+  buyerPhone       String?
+  idempotencyKey   String
+  isSimulated      Boolean     @default(false)
+  expiresAt        DateTime    @db.Timestamptz(3)
+  paidAt           DateTime?   @db.Timestamptz(3)
+  cancelledAt      DateTime?   @db.Timestamptz(3)
+  createdAt        DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime    @updatedAt @db.Timestamptz(3)
+
+  user           User                         @relation(fields: [userId], references: [id])
+  event          Event                        @relation(fields: [eventId], references: [id])
+  organization   Organization                 @relation(fields: [organizationId], references: [id])
+  commissionRule CommissionRule?              @relation(fields: [commissionRuleId], references: [id])
+  items          OrderItem[]
+  reservations   TicketInventoryReservation[]
+  payments       Payment[]
+  tickets        IssuedTicket[]
+  refunds        Refund[]
+  ledgerEntries  FinancialLedgerEntry[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([eventId, status])
+  @@index([organizationId, status, createdAt])
+  @@index([status, expiresAt])
+  @@index([userId, createdAt])
+}
+
+model OrderItem {
+  id                     String     @id @default(cuid())
+  orderId                String
+  ticketTypeId           String
+  // Snapshots do momento da compra.
+  ticketTypeName         String
+  kind                   TicketKind
+  unitPriceCents         Int
+  commissionPerUnitCents Int
+  serviceFeePerUnitCents Int
+  quantity               Int
+  // [{ name, email?, document? }] quando o tipo exige dados do participante.
+  attendees              Json?
+
+  order      Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ticketType TicketType     @relation(fields: [ticketTypeId], references: [id])
+  tickets    IssuedTicket[]
+
+  @@unique([orderId, ticketTypeId])
+}
+
+// ───────────────────────────── Pagamentos ─────────────────────────────
+
+enum PaymentMethod {
+  PIX
+  CREDIT_CARD
+  FREE
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+  CANCELLED
+  REFUNDED
+  DISPUTED
+  CHARGED_BACK
+}
+
+model Payment {
+  id                 String        @id @default(cuid())
+  orderId            String
+  provider           String
+  providerPaymentId  String?
+  method             PaymentMethod
+  status             PaymentStatus @default(PENDING)
+  amountCents        Int
+  processingFeeCents Int?
+  pixCopyPaste       String?
+  pixQrCodeBase64    String?
+  checkoutUrl        String?
+  providerExpiresAt  DateTime?     @db.Timestamptz(3)
+  providerRawStatus  String?
+  failureReason      String?
+  isSimulated        Boolean       @default(false)
+  idempotencyKey     String        @unique
+  paidAt             DateTime?     @db.Timestamptz(3)
+  createdAt          DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime      @updatedAt @db.Timestamptz(3)
+
+  order         Order                  @relation(fields: [orderId], references: [id])
+  refunds       Refund[]
+  ledgerEntries FinancialLedgerEntry[]
+
+  @@unique([provider, providerPaymentId])
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+model PaymentWebhookEvent {
+  id                String    @id @default(cuid())
+  provider          String
+  externalEventId   String
+  eventType         String
+  providerPaymentId String?
+  payload           Json
+  receivedAt        DateTime  @default(now()) @db.Timestamptz(3)
+  processedAt       DateTime? @db.Timestamptz(3)
+  processingResult  String?
+  error             String?
+  attempts          Int       @default(1)
+
+  @@unique([provider, externalEventId])
+  @@index([providerPaymentId])
+}
+
+// Estado do provedor FICTÍCIO usado em desenvolvimento. Nunca representa
+// dinheiro real.
+enum SimulatedPaymentState {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  REFUNDED
+  CHARGED_BACK
+}
+
+model SimulatedProviderPayment {
+  id          String                @id @default(cuid())
+  externalRef String
+  method      PaymentMethod
+  amountCents Int
+  state       SimulatedPaymentState @default(PENDING)
+  expiresAt   DateTime              @db.Timestamptz(3)
+  refundedAt  DateTime?             @db.Timestamptz(3)
+  createdAt   DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime              @updatedAt @db.Timestamptz(3)
+}
+
+// ───────────────────────────── Ingressos emitidos e check-in ─────────────────────────────
+
+enum TicketStatus {
+  VALID
+  CHECKED_IN
+  REVOKED
+}
+
+enum TicketRevocationReason {
+  REFUNDED
+  EVENT_CANCELLED
+  CHARGEBACK
+  ADMIN
+}
+
+model IssuedTicket {
+  id               String                  @id @default(cuid())
+  code             String                  @unique
+  orderId          String
+  orderItemId      String
+  eventId          String
+  ticketTypeId     String
+  userId           String
+  sequence         Int
+  holderName       String?
+  holderEmail      String?
+  validationToken  String                  @unique
+  status           TicketStatus            @default(VALID)
+  revokedAt        DateTime?               @db.Timestamptz(3)
+  revocationReason TicketRevocationReason?
+  checkedInAt      DateTime?               @db.Timestamptz(3)
+  issuedAt         DateTime                @default(now()) @db.Timestamptz(3)
+
+  order      Order           @relation(fields: [orderId], references: [id])
+  orderItem  OrderItem       @relation(fields: [orderItemId], references: [id])
+  event      Event           @relation(fields: [eventId], references: [id])
+  ticketType TicketType      @relation(fields: [ticketTypeId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+  checkins   TicketCheckin[]
+
+  // Garante emissão única por unidade do item, mesmo com webhooks concorrentes.
+  @@unique([orderItemId, sequence])
+  @@index([eventId, status])
+  @@index([userId, issuedAt])
+  @@index([orderId])
+}
+
+enum CheckinResult {
+  ADMITTED
+  DUPLICATE
+  WRONG_EVENT
+  REVOKED
+  INVALID
+  EVENT_NOT_ACTIVE
+}
+
+model TicketCheckin {
+  id          String        @id @default(cuid())
+  ticketId    String?
+  eventId     String
+  scannedById String
+  result      CheckinResult
+  scannedAt   DateTime      @default(now()) @db.Timestamptz(3)
+
+  ticket    IssuedTicket? @relation(fields: [ticketId], references: [id])
+  event     Event         @relation(fields: [eventId], references: [id])
+  scannedBy User          @relation(fields: [scannedById], references: [id])
+
+  @@index([eventId, scannedAt])
+  @@index([ticketId])
+}
+
+// ───────────────────────────── Reembolsos ─────────────────────────────
+
+enum RefundStatus {
+  REQUESTED
+  PROCESSING
+  SUCCEEDED
+  REJECTED
+  FAILED
+}
+
+enum RefundReason {
+  CUSTOMER_REQUEST
+  EVENT_CANCELLED
+  LATE_PAYMENT_NO_INVENTORY
+  ADMIN
+}
+
+model Refund {
+  id               String       @id @default(cuid())
+  orderId          String
+  paymentId        String?
+  amountCents      Int
+  status           RefundStatus @default(REQUESTED)
+  reason           RefundReason
+  requestedById    String?
+  providerRefundId String?
+  note             String?
+  idempotencyKey   String       @unique
+  processedAt      DateTime?    @db.Timestamptz(3)
+  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
+
+  order         Order                  @relation(fields: [orderId], references: [id])
+  payment       Payment?               @relation(fields: [paymentId], references: [id])
+  ledgerEntries FinancialLedgerEntry[]
+
+  @@index([status, createdAt])
+  @@index([orderId])
+}
+
+// ───────────────────────────── Comissão e razão financeiro ─────────────────────────────
+
+enum CommissionScope {
+  PLATFORM
+  ORGANIZATION
+  EVENT
+}
+
+// Quem paga a comissão da plataforma.
+enum FeeBearer {
+  ORGANIZER
+  BUYER
+}
+
+// Quem absorve o custo do processador de pagamento.
+enum ProcessingFeeBearer {
+  ORGANIZER
+  PLATFORM
+}
+
+// Regras são imutáveis: alterar = encerrar (activeTo) e criar nova versão.
+model CommissionRule {
+  id                       String          @id @default(cuid())
+  scope                    CommissionScope
+  organizationId           String?
+  eventId                  String?
+  percentBps               Int
+  fixedCentsPerTicket      Int             @default(0)
+  bearer                   FeeBearer       @default(ORGANIZER)
+  processingFeeBearer      ProcessingFeeBearer @default(ORGANIZER)
+  refundCommissionOnRefund Boolean         @default(true)
+  policyVersion            String          @unique
+  activeFrom               DateTime        @default(now()) @db.Timestamptz(3)
+  activeTo                 DateTime?       @db.Timestamptz(3)
+  createdById              String?
+  createdAt                DateTime        @default(now()) @db.Timestamptz(3)
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  event        Event?        @relation(fields: [eventId], references: [id])
+  orders       Order[]
+
+  @@index([scope, organizationId, eventId, activeFrom])
+}
+
+enum LedgerAccount {
+  CUSTOMER_FUNDS
+  ORGANIZER_PAYABLE
+  PLATFORM_COMMISSION
+  PLATFORM_SERVICE_FEE
+  PROCESSING_FEES
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerEntryType {
+  SALE
+  PROCESSING_FEE
+  REFUND
+  CHARGEBACK
+  SETTLEMENT
+  ADJUSTMENT
+}
+
+// Somente inserção (trigger bloqueia UPDATE/DELETE). Cada transação contábil
+// (mesmo idempotencyKey) soma débitos = créditos.
+model FinancialLedgerEntry {
+  id               String          @id @default(cuid())
+  idempotencyKey   String
+  type             LedgerEntryType
+  account          LedgerAccount
+  direction        LedgerDirection
+  amountCents      Int
+  organizationId   String
+  orderId          String?
+  paymentId        String?
+  refundId         String?
+  settlementId     String?
+  feePolicyVersion String?
+  description      String
+  isSimulated      Boolean         @default(false)
+  createdAt        DateTime        @default(now()) @db.Timestamptz(3)
+
+  organization Organization         @relation(fields: [organizationId], references: [id])
+  order        Order?               @relation(fields: [orderId], references: [id])
+  payment      Payment?             @relation(fields: [paymentId], references: [id])
+  refund       Refund?              @relation(fields: [refundId], references: [id])
+  settlement   OrganizerSettlement? @relation(fields: [settlementId], references: [id])
+
+  @@unique([idempotencyKey, account, direction])
+  @@index([organizationId, createdAt])
+  @@index([orderId])
+}
+
+enum SettlementStatus {
+  NOT_CONFIGURED
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+}
+
+model OrganizerSettlement {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  provider           String
+  periodStart        DateTime         @db.Timestamptz(3)
+  periodEnd          DateTime         @db.Timestamptz(3)
+  grossCents         Int
+  commissionCents    Int
+  processingFeeCents Int
+  refundCents        Int
+  netCents           Int
+  status             SettlementStatus @default(NOT_CONFIGURED)
+  providerReference  String?
+  isSimulated        Boolean          @default(false)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(3)
+
+  organization  Organization           @relation(fields: [organizationId], references: [id])
+  ledgerEntries FinancialLedgerEntry[]
+
+  @@index([organizationId, periodStart])
+}
+
+// ───────────────────────────── Auditoria ─────────────────────────────
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  actorUserId    String?
+  organizationId String?
+  action         String
+  entityType     String
+  entityId       String
+  metadata       Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  actor        User?         @relation(fields: [actorUserId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([organizationId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([createdAt])
+}

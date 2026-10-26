@@ -1,0 +1,184 @@
+// Schemas Zod compartilhados entre formulários (cliente) e servidor.
+// O servidor SEMPRE revalida; nunca confia em preço/estoque vindos do cliente.
+import { z } from "zod";
+import { BR_TIMEZONES, isValidCNPJ, isValidCPF, isValidMobileBR, UF_CODES } from "@/lib/br";
+
+const trimmed = (min: number, max: number, msg = "Campo obrigatório") => z.string().trim().min(min, msg).max(max);
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .transform((v) => (v ? v : undefined));
+const email = z.string().trim().toLowerCase().email("E-mail inválido").max(200);
+const mobile = z
+  .string()
+  .trim()
+  .refine((v) => !v || isValidMobileBR(v), "Celular inválido. Use DDD + número, ex.: (11) 91234-5678");
+const localDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Data/hora inválida");
+
+// ── Contas ──
+export const registerSchema = z.object({
+  name: trimmed(2, 120, "Informe seu nome"),
+  email,
+  password: z.string().min(8, "A senha deve ter ao menos 8 caracteres").max(200),
+  phone: mobile.optional(),
+  acceptTerms: z.literal(true, { error: "É preciso aceitar os termos e a política de privacidade" }),
+});
+export type RegisterInput = z.input<typeof registerSchema>;
+
+export const loginSchema = z.object({ email, password: z.string().min(1, "Informe a senha").max(200) });
+
+export const profileSchema = z.object({ name: trimmed(2, 120), phone: mobile.optional() });
+
+// ── Organizador ──
+export const organizerApplicationSchema = z
+  .object({
+    name: trimmed(2, 120, "Informe o nome público"),
+    legalType: z.enum(["INDIVIDUAL", "COMPANY"]),
+    legalName: trimmed(2, 200, "Informe o nome/razão social"),
+    document: z.string().trim(),
+    contactEmail: email,
+    contactPhone: mobile.optional(),
+    cityId: z.string().optional(),
+    description: optionalText(2000),
+    websiteUrl: z
+      .string()
+      .trim()
+      .optional()
+      .refine((v) => !v || /^https:\/\/[^\s]+$/.test(v), "Use um endereço https://"),
+    instagramHandle: z
+      .string()
+      .trim()
+      .optional()
+      .refine((v) => !v || /^@?[A-Za-z0-9._]{1,30}$/.test(v), "Usuário do Instagram inválido"),
+  })
+  .superRefine((v, ctx) => {
+    const ok = v.legalType === "INDIVIDUAL" ? isValidCPF(v.document) : isValidCNPJ(v.document);
+    if (!ok) ctx.addIssue({ code: "custom", path: ["document"], message: v.legalType === "INDIVIDUAL" ? "CPF inválido" : "CNPJ inválido" });
+  });
+export type OrganizerApplicationInput = z.input<typeof organizerApplicationSchema>;
+
+export const inviteSchema = z.object({
+  email,
+  role: z.enum(["ADMIN", "EVENT_MANAGER", "FINANCE", "CHECKIN_STAFF"]),
+  eventId: z.string().optional(),
+});
+
+// ── Eventos ──
+export const venueInputSchema = z.object({
+  name: trimmed(2, 160, "Informe o nome do local"),
+  addressLine: trimmed(3, 200, "Informe o endereço"),
+  district: optionalText(120),
+  postalCode: z
+    .string()
+    .trim()
+    .optional()
+    .refine((v) => !v || /^\d{5}-?\d{3}$/.test(v), "CEP inválido"),
+  cityId: z.string().min(1, "Selecione a cidade"),
+  capacity: z.coerce.number().int().positive().optional(),
+  accessibilityInfo: optionalText(1000),
+});
+
+export const eventInputSchema = z
+  .object({
+    title: trimmed(3, 140, "Informe o título"),
+    summary: optionalText(240),
+    description: trimmed(20, 10_000, "Descreva o evento (mínimo 20 caracteres)"),
+    categoryId: z.string().min(1, "Selecione a categoria"),
+    locationType: z.enum(["VENUE", "ONLINE"]),
+    venueId: z.string().optional(),
+    newVenue: venueInputSchema.optional(),
+    onlineUrl: z
+      .string()
+      .trim()
+      .optional()
+      .refine((v) => !v || /^https:\/\/[^\s]+$/.test(v), "Use um link https://"),
+    cityId: z.string().optional(),
+    timezone: z.enum(BR_TIMEZONES),
+    startsAtLocal: localDateTime,
+    endsAtLocal: localDateTime,
+    salesStartLocal: localDateTime,
+    salesEndLocal: localDateTime,
+    ageRestriction: z.coerce.number().int().min(0).max(21),
+    capacity: z.coerce.number().int().positive("Capacidade deve ser positiva").max(1_000_000),
+    halfPriceQuotaPercent: z.coerce.number().min(0).max(100).optional(),
+    refundPolicy: trimmed(10, 4000, "Descreva a política de reembolso"),
+    accessibilityInfo: optionalText(2000),
+    coverImageUrl: z.string().trim().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.endsAtLocal <= v.startsAtLocal) ctx.addIssue({ code: "custom", path: ["endsAtLocal"], message: "Término deve ser após o início" });
+    if (v.salesEndLocal <= v.salesStartLocal)
+      ctx.addIssue({ code: "custom", path: ["salesEndLocal"], message: "Fim das vendas deve ser após o início" });
+    if (v.salesEndLocal > v.endsAtLocal)
+      ctx.addIssue({ code: "custom", path: ["salesEndLocal"], message: "As vendas devem terminar até o fim do evento" });
+    if (v.locationType === "VENUE" && !v.venueId && !v.newVenue)
+      ctx.addIssue({ code: "custom", path: ["venueId"], message: "Selecione ou cadastre o local" });
+    if (v.locationType === "ONLINE" && !v.onlineUrl)
+      ctx.addIssue({ code: "custom", path: ["onlineUrl"], message: "Informe o link de transmissão" });
+  });
+export type EventInput = z.input<typeof eventInputSchema>;
+
+export const TICKET_KINDS = ["GENERAL", "VIP", "PROMOTIONAL", "EARLY_BIRD", "HALF_PRICE", "FREE"] as const;
+
+export const ticketTypeInputSchema = z
+  .object({
+    id: z.string().optional(),
+    name: trimmed(2, 80, "Informe o nome do ingresso"),
+    description: optionalText(300),
+    kind: z.enum(TICKET_KINDS),
+    priceCents: z.coerce.number().int().min(0).max(100_000_00),
+    quantityTotal: z.coerce.number().int().min(1).max(1_000_000),
+    minPerOrder: z.coerce.number().int().min(1).max(50).default(1),
+    maxPerOrder: z.coerce.number().int().min(1).max(50).default(10),
+    salesStartLocal: localDateTime.optional().or(z.literal("")),
+    salesEndLocal: localDateTime.optional().or(z.literal("")),
+    requiresAttendeeInfo: z.coerce.boolean().default(false),
+    isHidden: z.coerce.boolean().default(false),
+  })
+  .superRefine((v, ctx) => {
+    if (v.maxPerOrder < v.minPerOrder) ctx.addIssue({ code: "custom", path: ["maxPerOrder"], message: "Máximo menor que o mínimo" });
+    if (v.kind === "FREE" && v.priceCents !== 0) ctx.addIssue({ code: "custom", path: ["priceCents"], message: "Ingresso gratuito deve ter preço zero" });
+    if (v.kind !== "FREE" && v.priceCents === 0)
+      ctx.addIssue({ code: "custom", path: ["priceCents"], message: "Use o tipo 'Gratuito' para ingressos sem custo" });
+  });
+export type TicketTypeInput = z.input<typeof ticketTypeInputSchema>;
+
+// ── Pedidos ──
+export const attendeeSchema = z.object({ name: trimmed(2, 120, "Nome do participante"), email: email.optional() });
+
+export const createOrderSchema = z.object({
+  eventId: z.string().min(1),
+  items: z
+    .array(
+      z.object({
+        ticketTypeId: z.string().min(1),
+        quantity: z.number().int().min(1).max(50),
+        attendees: z.array(attendeeSchema).optional(),
+      }),
+    )
+    .min(1, "Selecione ao menos um ingresso")
+    .max(10),
+  buyerName: trimmed(2, 120, "Informe o nome do comprador"),
+  buyerEmail: email,
+  buyerPhone: mobile.optional(),
+  // Declaração de elegibilidade à meia-entrada (comprovação exigida na entrada).
+  halfPriceDeclaration: z.boolean().default(false),
+  idempotencyKey: z.string().uuid(),
+});
+export type CreateOrderInput = z.input<typeof createOrderSchema>;
+
+export const commissionRuleInputSchema = z.object({
+  scope: z.enum(["PLATFORM", "ORGANIZATION", "EVENT"]),
+  organizationId: z.string().optional(),
+  eventId: z.string().optional(),
+  percent: z.coerce.number().min(0).max(100),
+  fixedCentsPerTicket: z.coerce.number().int().min(0).max(100_00).default(0),
+  bearer: z.enum(["ORGANIZER", "BUYER"]),
+  processingFeeBearer: z.enum(["ORGANIZER", "PLATFORM"]),
+  refundCommissionOnRefund: z.coerce.boolean().default(true),
+});
+
+export const ufSchema = z.enum(UF_CODES);

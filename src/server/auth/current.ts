@@ -1,0 +1,63 @@
+import "server-only";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { cache } from "react";
+import { db } from "../db";
+import { resolveSession } from "./sessions";
+
+export const SESSION_COOKIE = "eb_session";
+export const ACTIVE_ORG_COOKIE = "eb_org";
+
+export const getCurrentUser = cache(async () => {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const session = await resolveSession(db, token);
+  return session?.user ?? null;
+});
+
+export type CurrentUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>;
+
+export async function requireUser(next?: string): Promise<CurrentUser> {
+  const user = await getCurrentUser();
+  if (!user) redirect(`/entrar${next ? `?next=${encodeURIComponent(next)}` : ""}`);
+  return user;
+}
+
+export async function requireAdmin(): Promise<CurrentUser> {
+  const user = await requireUser("/admin");
+  if (user.platformRole !== "ADMIN") redirect("/");
+  return user;
+}
+
+export async function setSessionCookie(token: string, expiresAt: Date) {
+  (await cookies()).set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    expires: expiresAt,
+  });
+}
+
+export async function clearSessionCookie() {
+  (await cookies()).delete(SESSION_COOKIE);
+}
+
+/** Organização ativa do usuário (cookie validado contra as associações). */
+export const getActiveMembership = cache(async (userId: string) => {
+  const memberships = await db.organizationMember.findMany({
+    where: { userId },
+    include: { organization: { select: { id: true, name: true, slug: true, status: true, paymentAccountStatus: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!memberships.length) return { active: null, memberships };
+  const wanted = (await cookies()).get(ACTIVE_ORG_COOKIE)?.value;
+  const active = memberships.find((m) => m.organizationId === wanted) ?? memberships[0];
+  return { active, memberships };
+});
+
+/** Rota segura para redirect pós-login (somente caminhos internos). */
+export function safeNext(next: string | null | undefined, fallback = "/"): string {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return fallback;
+  return next;
+}

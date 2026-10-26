@@ -1,0 +1,66 @@
+import "server-only";
+import { z } from "zod";
+
+const bool = z
+  .enum(["true", "false", ""])
+  .optional()
+  .transform((v) => v === "true");
+const int = (def: number) => z.coerce.number().int().positive().default(def);
+
+const schema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  DATABASE_URL: z.string().min(1),
+  APP_URL: z.string().url().default("http://localhost:3000"),
+  AUTH_SECRET: z.string().min(16),
+  DATA_ENCRYPTION_KEY: z.string().min(16),
+  CRON_SECRET: z.string().min(8),
+  PAYMENT_PROVIDER: z.enum(["simulated", "mercadopago"]).default("simulated"),
+  SIMULATED_WEBHOOK_SECRET: z.string().min(8).default("dev-only-simulated-webhook-secret"),
+  ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION: bool,
+  MERCADO_PAGO_ACCESS_TOKEN: z.string().optional(),
+  MERCADO_PAGO_CLIENT_ID: z.string().optional(),
+  MERCADO_PAGO_CLIENT_SECRET: z.string().optional(),
+  MERCADO_PAGO_WEBHOOK_SECRET: z.string().optional(),
+  SETTLEMENT_ENABLED: bool,
+  RESERVATION_MINUTES: int(15),
+  REFUND_WINDOW_DAYS: int(7),
+  REFUND_MIN_HOURS_BEFORE_EVENT: int(48),
+  EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
+  EMAIL_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().default("Evento Brasil <nao-responda@example.com>"),
+  STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
+  OBJECT_STORAGE_ENDPOINT: z.string().optional(),
+  OBJECT_STORAGE_REGION: z.string().default("auto"),
+  OBJECT_STORAGE_BUCKET: z.string().optional(),
+  OBJECT_STORAGE_ACCESS_KEY: z.string().optional(),
+  OBJECT_STORAGE_SECRET_KEY: z.string().optional(),
+  OBJECT_STORAGE_PUBLIC_URL: z.string().optional(),
+});
+
+export type Env = z.infer<typeof schema>;
+
+let cached: Env | undefined;
+
+export function env(): Env {
+  if (cached) return cached;
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    throw new Error(`Variáveis de ambiente inválidas: ${parsed.error.issues.map((i) => i.path.join(".")).join(", ")}`);
+  }
+  const e = parsed.data;
+  if (e.NODE_ENV === "production") {
+    const devOnly = (["AUTH_SECRET", "DATA_ENCRYPTION_KEY", "CRON_SECRET", "SIMULATED_WEBHOOK_SECRET"] as const).filter((k) =>
+      e[k].startsWith("dev-only"),
+    );
+    if (devOnly.length && !(devOnly.length === 1 && devOnly[0] === "SIMULATED_WEBHOOK_SECRET" && e.PAYMENT_PROVIDER !== "simulated")) {
+      throw new Error(`Segredos de desenvolvimento usados em produção: ${devOnly.join(", ")}`);
+    }
+    if (e.PAYMENT_PROVIDER === "simulated" && !e.ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION) {
+      throw new Error("PAYMENT_PROVIDER=simulated não é permitido em produção.");
+    }
+  }
+  cached = e;
+  return e;
+}
+
+export const isProduction = () => env().NODE_ENV === "production";

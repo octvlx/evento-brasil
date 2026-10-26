@@ -1,0 +1,78 @@
+# Verificação automática de cada pull request e de cada push na main.
+# Roda lint, typecheck, testes unitários, testes de integração (PostgreSQL real)
+# e o build de produção. Os testes E2E (Playwright) rodam localmente.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: evento_test
+          POSTGRES_PASSWORD: evento_test_pw
+          POSTGRES_DB: evento_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evento_test -d evento_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Valores exclusivos de CI (não são segredos reais).
+      DATABASE_URL: postgresql://evento_test:evento_test_pw@localhost:5432/evento_test
+      TEST_DATABASE_URL: postgresql://evento_test:evento_test_pw@localhost:5432/evento_test
+      APP_URL: http://localhost:3000
+      AUTH_SECRET: ci-only-auth-secret-0123456789
+      DATA_ENCRYPTION_KEY: Y2ktb25seS1rZXktMDEyMzQ1Njc4OWFiY2RlZjAxMjM=
+      CRON_SECRET: ci-only-cron-secret
+      PAYMENT_PROVIDER: simulated
+      SIMULATED_WEBHOOK_SECRET: ci-only-webhook-secret
+      VITE_CONFIG_NATIVE_IGNORE_WARNING: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tipos de rotas do Next
+        run: npx next typegen
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Testes unitários
+        run: npm run test:unit
+
+      - name: Testes de integração
+        run: npm run test:integration
+
+      - name: Migrações (para o build)
+        run: npx prisma migrate deploy
+
+      - name: Build de produção
+        run: npm run build

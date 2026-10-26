@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+/* Evento Brasil — tokens de design.
+   Primária: índigo profundo · Secundária: violeta elétrico · Destaque: coral/magenta. */
+
+:root {
+  --background: #ffffff;
+  --foreground: #14112b;
+  --card: #ffffff;
+  --card-foreground: #14112b;
+  --muted: #f4f3fa;
+  --muted-foreground: #5f5a7a;
+  --border: #e5e2f0;
+  --input: #d9d5ea;
+  --ring: #7c3aed;
+  --primary: #312e81;
+  --primary-foreground: #ffffff;
+  --secondary: #7c3aed;
+  --secondary-foreground: #ffffff;
+  --accent: #f43f5e;
+  --accent-foreground: #ffffff;
+  --success: #047857;
+  --success-soft: #d1fae5;
+  --warning: #b45309;
+  --warning-soft: #fef3c7;
+  --destructive: #be123c;
+  --destructive-soft: #ffe4e6;
+  --hero-from: #1e1b4b;
+  --hero-via: #4c1d95;
+  --hero-to: #be185d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b0a14;
+    --foreground: #f1effa;
+    --card: #14121f;
+    --card-foreground: #f1effa;
+    --muted: #1c1a2b;
+    --muted-foreground: #a7a2c0;
+    --border: #2a2640;
+    --input: #3a3554;
+    --ring: #a78bfa;
+    --primary: #8b5cf6;
+    --primary-foreground: #ffffff;
+    --secondary: #a78bfa;
+    --secondary-foreground: #14112b;
+    --accent: #fb7185;
+    --accent-foreground: #14112b;
+    --success: #34d399;
+    --success-soft: #052e22;
+    --warning: #fbbf24;
+    --warning-soft: #2d1f05;
+    --destructive: #fb7185;
+    --destructive-soft: #3b0a17;
+    --hero-from: #0f0c2e;
+    --hero-via: #3b0f7a;
+    --hero-to: #9d174d;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.375rem;
+}
+
+html {
+  color-scheme: light dark;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.bg-hero {
+  background:
+    radial-gradient(60rem 30rem at 85% -10%, color-mix(in oklab, var(--hero-to) 70%, transparent), transparent 60%),
+    radial-gradient(50rem 30rem at 0% 110%, color-mix(in oklab, var(--hero-via) 80%, transparent), transparent 60%),
+    linear-gradient(135deg, var(--hero-from), var(--hero-via) 55%, var(--hero-to));
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, #c4b5fd, #f9a8d4 60%, #fda4af);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
