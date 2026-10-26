@@ -119,23 +119,34 @@ export async function resubmitOrganizerApplication(db: Db, actor: Actor, organiz
   });
 }
 
+/**
+ * Trava a linha da organização até o fim da transação. Decisões do admin
+ * (aprovar, rejeitar, suspender, reativar) leem o status DEPOIS da trava, então
+ * duas decisões simultâneas são serializadas e a segunda vê o resultado da primeira.
+ */
+async function lockOrganization(tx: Tx, organizationId: string) {
+  await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`;
+  return tx.organization.findUnique({ where: { id: organizationId } });
+}
+
 export async function reviewOrganization(db: Db, admin: Actor, organizationId: string, decision: "APPROVE" | "REJECT", note?: string) {
   assertPlatformAdmin(admin);
   if (decision === "REJECT" && !note?.trim()) throw new AppError("VALIDATION", "Informe o motivo da rejeição.");
   return db.$transaction(async (tx) => {
-    const org = await tx.organization.findUnique({ where: { id: organizationId } });
+    const org = await lockOrganization(tx, organizationId);
     if (!org) throw notFound();
     if (org.status !== "PENDING_REVIEW") throw invalidState("A organização não está em análise.");
+    const newStatus = decision === "APPROVE" ? "APPROVED" : "REJECTED";
     const latest = await tx.organizerVerification.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
     if (latest) {
       await tx.organizerVerification.update({
         where: { id: latest.id },
-        data: { status: decision === "APPROVE" ? "APPROVED" : "REJECTED", reviewedById: admin.id, reviewedAt: new Date(), decisionNote: note ?? null },
+        data: { status: newStatus, reviewedById: admin.id, reviewedAt: new Date(), decisionNote: note ?? null },
       });
     }
     const updated = await tx.organization.update({
       where: { id: organizationId },
-      data: { status: decision === "APPROVE" ? "APPROVED" : "REJECTED", statusReason: note ?? null },
+      data: { status: newStatus, statusReason: note ?? null },
     });
     await audit(tx, {
       actorUserId: admin.id,
@@ -143,7 +154,7 @@ export async function reviewOrganization(db: Db, admin: Actor, organizationId: s
       action: decision === "APPROVE" ? "organization.approved" : "organization.rejected",
       entityType: "Organization",
       entityId: organizationId,
-      metadata: { note: note ?? null },
+      metadata: { previousStatus: org.status, newStatus, note: note ?? null },
     });
     return updated;
   });
@@ -151,22 +162,26 @@ export async function reviewOrganization(db: Db, admin: Actor, organizationId: s
 
 export async function setOrganizationSuspended(db: Db, admin: Actor, organizationId: string, suspended: boolean, reason?: string) {
   assertPlatformAdmin(admin);
-  const org = await db.organization.findUniqueOrThrow({ where: { id: organizationId } });
-  if (suspended === (org.status === "SUSPENDED")) return org;
-  if (!suspended && org.status !== "SUSPENDED") throw invalidState("Organização não está suspensa.");
-  const updated = await db.organization.update({
-    where: { id: organizationId },
-    data: { status: suspended ? "SUSPENDED" : "APPROVED", statusReason: suspended ? (reason ?? "Suspensa pela plataforma") : null },
+  return db.$transaction(async (tx) => {
+    const org = await lockOrganization(tx, organizationId);
+    if (!org) throw notFound();
+    if (suspended === (org.status === "SUSPENDED")) return org;
+    if (!suspended && org.status !== "SUSPENDED") throw invalidState("Organização não está suspensa.");
+    const newStatus = suspended ? "SUSPENDED" : "APPROVED";
+    const updated = await tx.organization.update({
+      where: { id: organizationId },
+      data: { status: newStatus, statusReason: suspended ? (reason ?? "Suspensa pela plataforma") : null },
+    });
+    await audit(tx, {
+      actorUserId: admin.id,
+      organizationId,
+      action: suspended ? "organization.suspended" : "organization.reinstated",
+      entityType: "Organization",
+      entityId: organizationId,
+      metadata: { previousStatus: org.status, newStatus, reason: reason ?? null },
+    });
+    return updated;
   });
-  await audit(db, {
-    actorUserId: admin.id,
-    organizationId,
-    action: suspended ? "organization.suspended" : "organization.reinstated",
-    entityType: "Organization",
-    entityId: organizationId,
-    metadata: { reason: reason ?? null },
-  });
-  return updated;
 }
 
 export async function setAutoPublish(db: Db, admin: Actor, organizationId: string, value: boolean) {
