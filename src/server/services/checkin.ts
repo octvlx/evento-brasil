@@ -33,9 +33,9 @@ async function counters(db: Db, eventId: string) {
 // (nem UPDATEs que não mexem na chave), mas espera quem segura FOR UPDATE — ou seja,
 // cancelamento, reembolso e chargeback — e impede que eles comecem no meio da leitura.
 async function lockEventForCheckin(tx: Tx, eventId: string) {
-  const rows = await tx.$queryRaw<{ status: EventStatus; endsAt: Date }[]>`SELECT status, "endsAt" FROM "Event" WHERE id = ${eventId} FOR KEY SHARE`;
+  const rows = await tx.$queryRaw<{ status: EventStatus; endsAt: Date; organizationId: string }[]>`SELECT status, "endsAt", "organizationId" FROM "Event" WHERE id = ${eventId} FOR KEY SHARE`;
   if (!rows[0]) throw notFound("Evento não encontrado.");
-  return { status: rows[0].status, endsAt: new Date(rows[0].endsAt) };
+  return { status: rows[0].status, endsAt: new Date(rows[0].endsAt), organizationId: rows[0].organizationId };
 }
 
 async function lockOrderForCheckin(tx: Tx, orderId: string) {
@@ -65,7 +65,7 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
       // 2. QR → ingresso (busca pelo token; o código precisa bater).
       const parsed = parseQrPayload(rawPayload);
       const ticket = parsed
-        ? await tx.issuedTicket.findUnique({ where: { validationToken: parsed.token }, include: { ticketType: { select: { name: true } } } })
+        ? await tx.issuedTicket.findUnique({ where: { validationToken: parsed.token }, include: { ticketType: { select: { name: true } }, event: { select: { organizationId: true } } } })
         : null;
       if (!parsed || !ticket || ticket.code !== parsed.code) {
         await record("INVALID", null);
@@ -74,6 +74,12 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
       const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, checkedInAt });
 
       if (ticket.eventId !== eventId) {
+        // Ingresso de outra organização: a leitura não é vinculada ao ingresso nem revela
+        // o titular (o histórico desta organização não pode expor dados de compradores alheios).
+        if (ticket.event.organizationId !== event.organizationId) {
+          await record("WRONG_EVENT", null);
+          return { result: "WRONG_EVENT" };
+        }
         await record("WRONG_EVENT", ticket.id);
         return { result: "WRONG_EVENT", ticket: view(null) };
       }

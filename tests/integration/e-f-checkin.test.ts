@@ -145,6 +145,35 @@ describe("E/F — check-in", () => {
     expect((await checkInTicket(db, staff, event.id, mixed)).result).toBe("INVALID");
   });
 
+  it("evento errado de outra organização não revela o titular nem vincula a leitura ao ingresso", async () => {
+    const { owner, event, otherEvent, tickets } = await setup();
+    // Mesma organização: a portaria vê de quem é o ingresso para orientar o cliente.
+    const sameOrg = await checkInTicket(db, owner, otherEvent.id, qrPayload(tickets[0]));
+    expect(sameOrg.result).toBe("WRONG_EVENT");
+    expect(sameOrg.ticket?.code).toBe(tickets[0].code);
+
+    const rivalOwner = await makeUser();
+    const rivalStaff = await makeUser();
+    const rivalOrg = await makeOrg(rivalOwner, { extraMembers: [{ userId: rivalStaff.id, role: "CHECKIN_STAFF" }] });
+    const rivalEvent = await makeEvent(rivalOrg);
+    await db.eventStaffAssignment.create({ data: { eventId: rivalEvent.id, userId: rivalStaff.id, assignedById: rivalOwner.id } });
+
+    for (const actor of [rivalOwner, rivalStaff]) {
+      const r = await checkInTicket(db, actor, rivalEvent.id, qrPayload(tickets[1]));
+      expect(r.result).toBe("WRONG_EVENT");
+      expect(r.ticket).toBeUndefined();
+      expect(r.counters).toEqual({ admitted: 0, total: 0 });
+    }
+    const rows = await db.ticketCheckin.findMany({ where: { eventId: rivalEvent.id } });
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.result === "WRONG_EVENT" && r.ticketId === null)).toBe(true);
+    const history = await checkinHistory(db, rivalOwner, rivalEvent.id);
+    expect(history.map((h) => h.ticket)).toEqual([null, null]);
+    // O ingresso continua válido no evento certo.
+    expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[1].id } })).status).toBe("VALID");
+    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[1]))).result).toBe("ADMITTED");
+  });
+
   it("equipe só acessa eventos atribuídos; clientes não acessam", async () => {
     const { staff, unassignedStaff, customer, event, otherEvent, tickets } = await setup();
     await expect(checkInTicket(db, unassignedStaff, event.id, qrPayload(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
