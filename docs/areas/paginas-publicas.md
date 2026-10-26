@@ -55,6 +55,41 @@ Testes: unidade em `tests/unit/order-status-view.test.ts`; E2E em
    `/meus-pedidos` dedicado se o negócio quiser.
 9. **Cupom no checkout** (depende do financeiro).
 
+## Comparação com a Duoticket (duoticket.com.br)
+
+Observação das páginas públicas em 26/10/2026 (home, uma página de evento com o
+seletor de ingressos, uma página de produtor). Sem login, sem compra; um evento,
+um momento — o app e a área do produtor não foram vistos. Lista apenas
+funcionalidades; nada de texto, código ou visual deve ser copiado.
+
+**O que eles têm e nós não**
+
+| Funcionalidade | Situação aqui | Quem |
+| --- | --- | --- |
+| Transferência de ingresso em "Meus Ingressos" e troca do titular 1× até 48h antes | Titular só na compra | `check-in` + `pagamentos-financeiro` (novo dono, novo QR) |
+| Links "Abrir Waze" / "Abrir Maps" com endereço completo | Local sem links de mapa | Esta área (esconder quando não houver endereço) |
+| Ingressos agrupados por setor (ex.: Backstage/Frontstage), com lotes e preços por gênero | Lista plana de tipos | `area-organizador` + `banco-de-dados` (campo de setor) |
+| "Lote especial": código que libera lote oculto | Tipos ocultos existem, sem código | `pagamentos-financeiro` + `area-organizador` |
+| Mapa do evento (imagem clicável) | Não existe | `area-organizador` (upload) + esta área |
+| Bloco de orientações gerais (documento, menores, cashless) | Só a política de reembolso | `area-organizador` (campo de regras) |
+| App nativo | Web + service worker | Fora do escopo |
+
+**Onde estamos à frente:** busca com categoria, data, preço, paginação e
+contagem (eles: texto + cidade e uma lista única); JSON-LD e OpenGraph corretos
+(a página de evento deles não tem JSON-LD e aponta `og:url` para a home);
+reembolso pela própria página do pedido com status (eles: por e-mail); taxa de
+serviço e total visíveis antes do pagamento (eles mostram só "+ Taxa Adm." antes
+de finalizar).
+
+**Igual:** preço por lote, meia-entrada, regra de reembolso de 7 dias / 48h,
+página do produtor com próximos eventos, aviso de que a plataforma não organiza
+o evento.
+
+**Candidatos à lista de lacunas:** (a) links Waze/Maps na página do evento — desta
+área, pequeno; (b) transferência de ingresso — maior lacuna de funcionalidade,
+depende de `check-in` e `pagamentos-financeiro`; (c) setores e códigos de lote —
+dependem de schema (`banco-de-dados`).
+
 ## Dependências de outros agentes
 
 | Agente | O que precisamos |
