@@ -7,9 +7,18 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Alert, FieldError, Input, Label, Select, Textarea } from "@/components/ui/primitives";
 import { organizerApplicationSchema, type OrganizerApplicationInput } from "@/features/schemas";
-import { submitApplicationAction } from "./actions";
+import { createOrganizationAction, resubmitApplicationAction } from "./actions";
 
-export function ApplicationForm({ cities, defaults }: { cities: { id: string; label: string }[]; defaults?: Partial<OrganizerApplicationInput> }) {
+/** `resubmitOrganizationId` presente = reenvio de cadastro recusado; ausente = nova organização. */
+export function ApplicationForm({
+  cities,
+  defaults,
+  resubmitOrganizationId,
+}: {
+  cities: { id: string; label: string }[];
+  defaults?: Partial<OrganizerApplicationInput>;
+  resubmitOrganizationId?: string;
+}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -22,7 +31,7 @@ export function ApplicationForm({ cities, defaults }: { cities: { id: string; la
 
   const onSubmit = form.handleSubmit((values) =>
     start(async () => {
-      const res = await submitApplicationAction(values);
+      const res = resubmitOrganizationId ? await resubmitApplicationAction(resubmitOrganizationId, values) : await createOrganizationAction(values);
       if (res.ok) {
         router.push("/organizador");
         router.refresh();

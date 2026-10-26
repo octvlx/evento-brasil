@@ -9,6 +9,7 @@ import { env } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { ACTIVE_ORG_COOKIE, getActiveMembership, requireUser } from "@/server/auth/current";
 import { assertOrgPermission } from "@/server/auth/permissions";
+import { rateLimit } from "@/server/rate-limit";
 import { getPaymentAdapter } from "@/server/payments";
 import { getEmailAdapter, escapeHtml } from "@/server/email";
 import { storeEventImage } from "@/server/storage";
@@ -31,15 +32,27 @@ async function activeOrgId(userId: string) {
   return active.organizationId;
 }
 
-export async function submitApplicationAction(input: OrganizerApplicationInput): Promise<ActionResult<{ id: string }>> {
+async function setActiveOrg(organizationId: string) {
+  (await cookies()).set(ACTIVE_ORG_COOKIE, organizationId, { path: "/", httpOnly: true, sameSite: "lax", secure: env().NODE_ENV === "production" });
+}
+
+/** Cria uma NOVA organização (primeira ou adicional) e a torna ativa. */
+export async function createOrganizationAction(input: OrganizerApplicationInput): Promise<ActionResult<{ id: string }>> {
+  const user = await requireUser("/organizador/organizacoes/nova");
+  return toActionResult(async () => {
+    rateLimit(`org-create:${user.id}`, 5, 60 * 60_000);
+    const org = await submitOrganizerApplication(db, user, input);
+    await setActiveOrg(org.id);
+    return { id: org.id };
+  });
+}
+
+/** Reenvia o cadastro de uma organização recusada. O serviço exige `org:manage` nela. */
+export async function resubmitApplicationAction(organizationId: string, input: OrganizerApplicationInput): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser("/organizador/cadastro");
   return toActionResult(async () => {
-    const { active } = await getActiveMembership(user.id);
-    const org =
-      active && (active.organization.status === "REJECTED" || active.organization.status === "DRAFT")
-        ? await resubmitOrganizerApplication(db, user, active.organizationId, input)
-        : await submitOrganizerApplication(db, user, input);
-    (await cookies()).set(ACTIVE_ORG_COOKIE, org.id, { path: "/", httpOnly: true, sameSite: "lax", secure: env().NODE_ENV === "production" });
+    const org = await resubmitOrganizerApplication(db, user, organizationId, input);
+    await setActiveOrg(org.id);
     return { id: org.id };
   });
 }
@@ -48,9 +61,8 @@ export async function switchOrganizationAction(formData: FormData) {
   const user = await requireUser("/organizador");
   const id = String(formData.get("organizationId") ?? "");
   const { memberships } = await getActiveMembership(user.id);
-  if (memberships.some((m) => m.organizationId === id)) {
-    (await cookies()).set(ACTIVE_ORG_COOKIE, id, { path: "/", httpOnly: true, sameSite: "lax", secure: env().NODE_ENV === "production" });
-  }
+  // Só troca para uma organização da qual o usuário é membro (validação no servidor).
+  if (memberships.some((m) => m.organizationId === id)) await setActiveOrg(id);
   redirect("/organizador");
 }
 

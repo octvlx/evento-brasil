@@ -10,6 +10,7 @@ const NAV: [string, string][] = [
   ["/organizador/vendas", "Vendas e repasses"],
   ["/organizador/participantes", "Participantes"],
   ["/organizador/configuracoes", "Configurações"],
+  ["/organizador/organizacoes", "Organizações"],
   ["/check-in", "Check-in"],
 ];
 
