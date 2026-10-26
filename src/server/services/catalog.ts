@@ -37,6 +37,7 @@ export interface EventCard {
   state: string | null;
   isOnline: boolean;
   categoryName: string;
+  categorySlug: string;
   minPriceCents: number | null;
   availability: Availability;
 }
@@ -70,6 +71,7 @@ function toCard(e: CardRow, now: Date): EventCard {
     state: city?.state ?? null,
     isOnline: e.locationType === "ONLINE",
     categoryName: e.category.name,
+    categorySlug: e.category.slug,
     minPriceCents: e.ticketTypes.length ? Math.min(...e.ticketTypes.map((t) => t.priceCents)) : null,
     availability: availabilityOf(e, e.ticketTypes, now),
   };
@@ -143,6 +145,37 @@ export async function featuredEvents(db: Db, limit = 6, now = new Date()) {
 
 export async function eventsInCity(db: Db, citySlug: string, limit = 8, now = new Date()) {
   return (await searchEvents(db, { citySlug }, now)).events.slice(0, limit);
+}
+
+export interface CityShelf {
+  category: { slug: string; name: string };
+  total: number;
+  events: EventCard[];
+}
+
+/**
+ * Vitrine da cidade: destaques e uma faixa por categoria (na ordem das
+ * categorias), com os próximos eventos de cada uma.
+ */
+export async function cityShowcase(db: Db, citySlug: string, perShelf = 10, now = new Date()) {
+  const rows = await db.event.findMany({
+    where: { AND: [publicEventWhere(now), { OR: [{ city: { slug: citySlug } }, { venue: { city: { slug: citySlug } } }] }] },
+    include: { ...cardInclude, category: { select: { name: true, slug: true, sortOrder: true } } },
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+    take: 300,
+  });
+  const byCategory = new Map<string, { sortOrder: number; shelf: CityShelf }>();
+  for (const r of rows) {
+    const entry = byCategory.get(r.category.slug) ?? { sortOrder: r.category.sortOrder, shelf: { category: { slug: r.category.slug, name: r.category.name }, total: 0, events: [] } };
+    entry.shelf.total++;
+    if (entry.shelf.events.length < perShelf) entry.shelf.events.push(toCard(r, now));
+    byCategory.set(r.category.slug, entry);
+  }
+  return {
+    total: rows.length,
+    featured: rows.filter((r) => r.isFeatured).slice(0, 5).map((r) => toCard(r, now)),
+    shelves: [...byCategory.values()].sort((a, b) => a.sortOrder - b.sortOrder).map((e) => e.shelf),
+  };
 }
 
 export async function weekendEvents(db: Db, limit = 8, now = new Date()) {
