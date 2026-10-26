@@ -10,6 +10,7 @@ import { requireUser } from "@/server/auth/current";
 import { qrPayload } from "@/server/services/tickets";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { TICKET_STATUS } from "@/lib/labels";
+import { revocationText } from "@/features/orders/status-view";
 
 export const metadata: Metadata = { title: "Ingresso", robots: { index: false } };
 
@@ -55,7 +56,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
           <div className="mx-auto w-64 rounded-2xl bg-white p-3 [&_svg]:h-auto [&_svg]:w-full" role="img" aria-label="QR code do ingresso" dangerouslySetInnerHTML={{ __html: svg }} />
         ) : (
           <div className="mx-auto grid size-64 place-items-center rounded-2xl bg-muted text-sm text-muted-foreground">
-            {t.status === "CHECKED_IN" ? "Ingresso já utilizado" : "Ingresso cancelado"}
+            {t.status === "CHECKED_IN" ? "Ingresso já utilizado" : revocationText(t.revocationReason)}
           </div>
         )}
         <p className="mt-4 font-mono text-lg font-bold tracking-[0.2em]">{t.code}</p>
