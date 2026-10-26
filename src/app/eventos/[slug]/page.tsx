@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { connection } from "next/server";
-import { Accessibility, CalendarDays, Clock, MapPin, Share2, ShieldAlert, Users } from "lucide-react";
+import { Accessibility, CalendarDays, ChevronRight, Clock, MapPin, Share2, ShieldAlert, Users } from "lucide-react";
 import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
@@ -61,7 +61,8 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   const now = new Date();
   const city = event.venue?.city ?? event.city;
   const tz = event.timezone;
-  const url = `${process.env.APP_URL ?? "http://localhost:3000"}/eventos/${event.slug}`;
+  const base = process.env.APP_URL ?? "http://localhost:3000";
+  const url = `${base}/eventos/${event.slug}`;
   const av = AVAILABILITY[availability];
 
   const tickets = event.ticketTypes.map((t) => ({
@@ -94,9 +95,37 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
     offers: event.ticketTypes.map((t) => ({ "@type": "Offer", name: t.name, price: (t.priceCents / 100).toFixed(2), priceCurrency: "BRL", url })),
   };
 
+  // Trilha: Início › cidade › categoria na cidade (ou na busca, para eventos online).
+  const trail = [
+    { name: "Início", href: "/" },
+    ...(city ? [{ name: city.name, href: `/cidades/${city.slug}` }] : []),
+    { name: event.category.name, href: city ? `/cidades/${city.slug}?categoria=${event.category.slug}` : `/eventos?categoria=${event.category.slug}` },
+  ];
+  const breadcrumbLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [...trail, { name: event.title, href: `/eventos/${event.slug}` }].map((t, i) => ({ "@type": "ListItem", position: i + 1, name: t.name, item: `${base}${t.href}` })),
+  };
+
   return (
     <article className="mx-auto max-w-7xl px-4 pb-10 pt-6 sm:px-6">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd).replace(/</g, "\\u003c") }} />
+      <nav aria-label="Trilha de navegação" className="mb-4">
+        <ol className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+          {trail.map((t) => (
+            <li key={t.href} className="flex items-center gap-1">
+              <Link href={t.href} className="rounded hover:text-foreground hover:underline">
+                {t.name}
+              </Link>
+              <ChevronRight className="size-3.5" aria-hidden />
+            </li>
+          ))}
+          <li aria-current="page" className="max-w-[16rem] truncate font-medium text-foreground sm:max-w-md">
+            {event.title}
+          </li>
+        </ol>
+      </nav>
       <div className="relative aspect-[16/9] overflow-hidden rounded-3xl sm:aspect-[21/9]">
         <EventCover src={event.coverImageUrl} alt={`Imagem do evento ${event.title}`} priority />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />

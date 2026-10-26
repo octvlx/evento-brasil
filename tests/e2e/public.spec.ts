@@ -16,6 +16,12 @@ test("busca por cidade e abre o detalhe do evento", async ({ page }) => {
   await expect(page.getByText(/eventos? encontrados?/)).toBeVisible();
   await page.getByRole("link", { name: /Axé de Rua/ }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Axé de Rua/);
+  // Trilha Início › cidade › categoria, com o título como página atual.
+  const trail = page.getByRole("navigation", { name: "Trilha de navegação" });
+  await expect(trail.getByRole("link", { name: "Salvador" })).toHaveAttribute("href", "/cidades/salvador-ba");
+  await expect(trail.locator('[aria-current="page"]')).toHaveText(/Axé de Rua/);
+  const ldTypes = await page.locator('script[type="application/ld+json"]').evaluateAll((els) => els.map((e) => JSON.parse(e.textContent ?? "{}")["@type"]));
+  expect(ldTypes).toEqual(expect.arrayContaining(["Event", "BreadcrumbList"]));
   await expect(page.getByText("Entrada gratuita")).toBeVisible();
   await expect(page.getByText("Sem taxa para o comprador")).toBeVisible();
   await expect(page.getByRole("link", { name: /WhatsApp/ })).toHaveAttribute("href", /wa\.me/);
@@ -25,6 +31,12 @@ test("página de cidade e 404 para evento inexistente", async ({ page }) => {
   await page.goto("/cidades/franca-sp");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eventos em Franca");
   await expect(page.getByText(/Corrida Noturna/)).toBeVisible();
+  // Vitrine: uma faixa por categoria; as abas de data filtram e mantêm a URL.
+  await expect(page.getByRole("heading", { level: 2, name: /Esportes/ })).toBeVisible();
+  await page.getByRole("navigation", { name: "Quando" }).getByRole("link", { name: "Fim de semana" }).click();
+  await expect(page).toHaveURL(/\/cidades\/franca-sp\?data=fim-de-semana/);
+  await expect(page.getByRole("link", { name: "Fim de semana" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByText(/eventos? encontrados?/)).toBeVisible();
   // Com streaming (Cache Components), notFound() dentro de Suspense ocorre após o
   // envio dos cabeçalhos: o status fica 200, mas a UI de 404 e o noindex são aplicados.
   await page.goto("/eventos/nao-existe-xyz");
