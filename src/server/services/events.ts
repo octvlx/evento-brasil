@@ -192,9 +192,17 @@ export async function moderateEvent(db: Db, admin: Actor, eventId: string, decis
   assertPlatformAdmin(admin);
   if (decision === "REJECT" && !note?.trim()) throw new AppError("VALIDATION", "Informe o motivo para o organizador.");
   return db.$transaction(async (tx) => {
-    const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, include: { organization: true } });
+    // Trava o evento antes de ler o status: dois moderadores simultâneos são
+    // serializados e o segundo recebe "não está aguardando moderação".
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
+    const event = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
     if (event.status !== "PENDING_REVIEW") throw invalidState("O evento não está aguardando moderação.");
-    if (decision === "APPROVE" && event.organization.status !== "APPROVED") throw invalidState("A organização não está aprovada.");
+    if (decision === "APPROVE") {
+      // FOR SHARE: uma suspensão concorrente da organização espera esta aprovação
+      // terminar (ou a aprovação vê a organização já suspensa).
+      const [organization] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "Organization" WHERE id = ${event.organizationId} FOR SHARE`;
+      if (organization?.status !== "APPROVED") throw invalidState("A organização não está aprovada.");
+    }
     const target: EventStatus = decision === "APPROVE" ? "PUBLISHED" : "DRAFT";
     const updated = await tx.event.update({
       where: { id: eventId },
@@ -206,7 +214,7 @@ export async function moderateEvent(db: Db, admin: Actor, eventId: string, decis
       action: decision === "APPROVE" ? "event.approved" : "event.rejected",
       entityType: "Event",
       entityId: eventId,
-      metadata: { note: note ?? null },
+      metadata: { previousStatus: event.status, newStatus: target, note: note ?? null },
     });
     return updated;
   });
