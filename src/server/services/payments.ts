@@ -22,34 +22,51 @@ export async function startPayment(
   opts: { simulatedCardOutcome?: "approve" | "decline" } = {},
 ) {
   assertActive(actor);
-  const order = await db.order.findUnique({ where: { id: orderId }, include: { event: { select: { title: true } }, organization: true } });
-  if (!order) throw notFound("Pedido não encontrado.");
-  if (order.userId !== actor.id) throw forbidden();
-  if (order.status !== "PENDING_PAYMENT") throw invalidState("Este pedido não está aguardando pagamento.");
-  if (order.expiresAt <= new Date()) throw new AppError("SALES_CLOSED", "A reserva expirou. Faça um novo pedido.");
-  if (order.totalCents === 0) throw invalidState("Pedido gratuito não requer pagamento.");
   if (!adapter.supportedMethods.includes(method)) throw new AppError("VALIDATION", "Forma de pagamento indisponível.");
-  if (order.isSimulated !== adapter.isSimulated) throw invalidState("Pedido criado com outro provedor de pagamento.");
 
-  // PIX pendente é reaproveitado (mesmo QR); evita pagamentos duplicados.
-  const pending = await db.payment.findFirst({ where: { orderId, status: "PENDING", method, provider: adapter.id } });
-  if (pending && method === "PIX") return pending;
-  const otherPending = await db.payment.findFirst({ where: { orderId, status: "PENDING", provider: adapter.id, NOT: { method } } });
-  if (otherPending?.method === "PIX") {
-    throw invalidState("Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva.");
-  }
+  // Decisão sob trava da linha do pedido: no máximo UMA tentativa ativa por pedido.
+  // Sem a trava, cliques simultâneos criavam duas cobranças (PIX ou cartão).
+  const decision = await db.$transaction(async (tx) => {
+    const exists = await tx.order.findUnique({ where: { id: orderId }, select: { userId: true } });
+    if (!exists) throw notFound("Pedido não encontrado.");
+    if (exists.userId !== actor.id) throw forbidden();
+    await lockOrder(tx, orderId);
+    const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { event: { select: { title: true } }, organization: true } });
+    if (order.status !== "PENDING_PAYMENT") throw invalidState("Este pedido não está aguardando pagamento.");
+    if (order.expiresAt <= new Date()) throw new AppError("SALES_CLOSED", "A reserva expirou. Faça um novo pedido.");
+    if (order.totalCents === 0) throw invalidState("Pedido gratuito não requer pagamento.");
+    if (order.isSimulated !== adapter.isSimulated) throw invalidState("Pedido criado com outro provedor de pagamento.");
 
-  const attempts = await db.payment.count({ where: { orderId } });
-  const payment = await db.payment.create({
-    data: {
-      orderId,
-      provider: adapter.id,
-      method,
-      amountCents: order.totalCents,
-      isSimulated: adapter.isSimulated,
-      idempotencyKey: `${orderId}:${method}:${attempts + 1}`,
-    },
-  });
+    const active = await tx.payment.findMany({ where: { orderId, status: { in: ["PENDING", "PAID"] } }, orderBy: { createdAt: "asc" } });
+    if (active.some((p) => p.status === "PAID")) throw invalidState("Este pedido já foi pago.");
+    const pending = active.find((p) => p.status === "PENDING");
+    if (pending) {
+      // PIX pendente é reaproveitado (mesmo QR). Qualquer outra combinação aguardaria
+      // uma tentativa em andamento — recusada para não gerar cobrança dupla.
+      if (pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id) return { kind: "reuse", payment: pending } as const;
+      throw invalidState(
+        pending.method === "PIX"
+          ? "Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva."
+          : "Já há um pagamento com cartão em processamento para este pedido. Aguarde o resultado.",
+      );
+    }
+    const attempts = await tx.payment.count({ where: { orderId } });
+    const payment = await tx.payment.create({
+      data: {
+        orderId,
+        provider: adapter.id,
+        method,
+        amountCents: order.totalCents,
+        isSimulated: adapter.isSimulated,
+        idempotencyKey: `${orderId}:${method}:${attempts + 1}`,
+      },
+    });
+    return { kind: "new", payment, order } as const;
+  }, TX_OPTIONS);
+  if (decision.kind === "reuse") return decision.payment;
+  const { payment, order } = decision;
+
+  // Chamada externa FORA da transação; a chave de idempotência torna a repetição segura.
   let created;
   try {
     created = await adapter.createPayment({

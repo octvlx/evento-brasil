@@ -79,6 +79,11 @@ export class SimulatedPaymentAdapter implements PaymentProviderAdapter {
     };
   }
 
+  async findPaymentByReference(idempotencyKey: string): Promise<ProviderPaymentSnapshot | null> {
+    const row = await this.db.simulatedProviderPayment.findFirst({ where: { externalRef: idempotencyKey } });
+    return row ? this.getPayment(row.id) : null;
+  }
+
   async refundPayment(input: { providerPaymentId: string; amountCents: number; idempotencyKey: string }): Promise<RefundResult> {
     const row = await this.db.simulatedProviderPayment.findUniqueOrThrow({ where: { id: input.providerPaymentId } });
     if (row.state === "REFUNDED") return { providerRefundId: `sim-refund-${row.id}`, status: "SUCCEEDED" };

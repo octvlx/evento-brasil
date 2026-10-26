@@ -1,6 +1,6 @@
 // Reembolsos integrais (MVP). Reembolso parcial não é suportado.
 import "server-only";
-import type { RefundReason } from "@/generated/prisma/client";
+import type { RefundReason, RefundStatus } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, assertPlatformAdmin, type Actor } from "../auth/permissions";
@@ -42,6 +42,20 @@ export function refundEligibility(
   return { eligible: true };
 }
 
+/**
+ * Soma dos reembolsos do pedido que já comprometem o valor pago (exceto `excludeId`).
+ * Invariante: reembolsos bem-sucedidos/em curso ≤ valor pago do pedido.
+ */
+async function committedRefundCents(client: Db | Tx, orderId: string, statuses: RefundStatus[], excludeId?: string) {
+  const agg = await client.refund.aggregate({
+    where: { orderId, status: { in: statuses }, ...(excludeId ? { NOT: { id: excludeId } } : {}) },
+    _sum: { amountCents: true },
+  });
+  return agg._sum.amountCents ?? 0;
+}
+
+export class OverRefundError extends Error {}
+
 async function createRefundRequest(db: Db, orderId: string, reason: RefundReason, requestedById: string | null, note?: string) {
   return db.$transaction(async (tx) => {
     const ref = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { eventId: true } });
@@ -49,6 +63,20 @@ async function createRefundRequest(db: Db, orderId: string, reason: RefundReason
     await lockOrder(tx, orderId);
     const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: { where: { status: "PAID" } } } });
     if (order.status !== "PAID") throw invalidState("Pedido não está pago.");
+    // Reembolsos são integrais (MVP): qualquer outro em aberto ou concluído impede um novo.
+    if ((await committedRefundCents(tx, orderId, ["REQUESTED", "PROCESSING", "SUCCEEDED"])) > 0) {
+      throw invalidState("Este pedido já tem um reembolso em andamento.");
+    }
+    // Revoga os ingressos AGORA, sob as travas: um check-in concorrente
+    // (UPDATE … WHERE status='VALID') não consegue mais usar o ingresso, e um
+    // check-in que chegou antes é detectado abaixo. Antes, a verificação era
+    // feita fora da trava e o comprador podia entrar E ser reembolsado.
+    const now = new Date();
+    await tx.issuedTicket.updateMany({ where: { orderId, status: "VALID" }, data: { status: "REVOKED", revokedAt: now, revocationReason: "REFUNDED" } });
+    if (reason === "CUSTOMER_REQUEST") {
+      const used = await tx.issuedTicket.count({ where: { orderId, status: "CHECKED_IN" } });
+      if (used > 0) throw new AppError("VALIDATION", "Há ingressos já utilizados neste pedido.");
+    }
     const key = `refund:${orderId}:${reason.toLowerCase()}`;
     const refund = await tx.refund.upsert({
       where: { idempotencyKey: key },
@@ -88,6 +116,14 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
   const claimed = await db.refund.updateMany({ where: { id: refundId, status: { in: ["REQUESTED", "FAILED"] } }, data: { status: "PROCESSING" } });
   if (!claimed.count) return refund;
 
+  // Guarda contra estorno acima do valor pago, ANTES de chamar o provedor.
+  const order = await db.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { totalCents: true } });
+  const others = await committedRefundCents(db, refund.orderId, ["PROCESSING", "SUCCEEDED"], refundId);
+  if (others + refund.amountCents > order.totalCents) {
+    await db.refund.update({ where: { id: refundId }, data: { status: "FAILED", note: "OVER_REFUND_BLOCKED: soma de reembolsos excederia o valor pago." } });
+    return db.refund.findUnique({ where: { id: refundId } });
+  }
+
   // Pedido gratuito ou sem pagamento no provedor: nada a estornar externamente.
   if (refund.amountCents === 0 || !refund.payment?.providerPaymentId || refund.payment.method === "FREE") {
     await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
@@ -109,6 +145,31 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
   return db.refund.findUnique({ where: { id: refundId } });
 }
 
+/**
+ * Retoma um reembolso parado em PROCESSING (ex.: o processo caiu entre "reivindicar"
+ * e chamar o provedor). Reenvia ao provedor com a MESMA chave de idempotência, então
+ * nunca estorna duas vezes. Usado pela reconciliação.
+ */
+export async function resumeRefund(db: Db, adapter: PaymentProviderAdapter, refundId: string) {
+  const refund = await db.refund.findUnique({ where: { id: refundId }, include: { payment: true } });
+  if (!refund) return null;
+  if (refund.status === "REQUESTED") return (await processRefund(db, adapter, refundId))?.status ?? null;
+  if (refund.status !== "PROCESSING") return refund.status;
+  if (refund.amountCents === 0 || !refund.payment?.providerPaymentId || refund.payment.method === "FREE") {
+    await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
+    return "SUCCEEDED";
+  }
+  const result = await adapter.refundPayment({
+    providerPaymentId: refund.payment.providerPaymentId,
+    amountCents: refund.amountCents,
+    idempotencyKey: refund.idempotencyKey,
+  });
+  await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });
+  if (result.status === "SUCCEEDED") await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
+  else if (result.status === "FAILED") await db.refund.update({ where: { id: refundId }, data: { status: "FAILED", note: "Provedor recusou o estorno (reconciliação)." } });
+  return result.status;
+}
+
 async function confirmRefundTxWithLocks(tx: Tx, refundId: string) {
   const r = await tx.refund.findUniqueOrThrow({ where: { id: refundId }, select: { order: { select: { id: true, eventId: true } } } });
   await lockEvent(tx, r.order.eventId);
@@ -124,6 +185,10 @@ export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()
   const refund = await tx.refund.findUniqueOrThrow({ where: { id: refundId } });
   if (refund.status === "SUCCEEDED") return false;
   const order = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, include: { commissionRule: true, tickets: true } });
+  // Última linha de defesa: nunca registrar estorno acima do valor pago.
+  if ((await committedRefundCents(tx, order.id, ["SUCCEEDED"], refundId)) + refund.amountCents > order.totalCents) {
+    throw new OverRefundError(`Reembolso ${refundId} excederia o valor pago do pedido ${order.publicCode}.`);
+  }
 
   await tx.refund.update({ where: { id: refundId }, data: { status: "SUCCEEDED", processedAt: now } });
   const reason = refund.reason === "EVENT_CANCELLED" ? "EVENT_CANCELLED" : "REFUNDED";

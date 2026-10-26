@@ -67,4 +67,10 @@ export interface PaymentProviderAdapter {
   getPayment(providerPaymentId: string): Promise<ProviderPaymentSnapshot>;
   refundPayment(input: { providerPaymentId: string; amountCents: number; idempotencyKey: string }): Promise<RefundResult>;
   verifyWebhook(req: WebhookRequest): Promise<WebhookVerification>;
+  /**
+   * Opcional: localiza no provedor um pagamento pela nossa chave de idempotência
+   * (referência externa). Usado na reconciliação quando o processo caiu entre a
+   * criação no provedor e o registro do id localmente.
+   */
+  findPaymentByReference?(idempotencyKey: string): Promise<ProviderPaymentSnapshot | null>;
 }

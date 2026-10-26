@@ -48,6 +48,11 @@ o provedor para esse contrato.
 10. **Chargebacks/disputas** — notificações e responsabilidade financeira.
 11. **Sandbox** — contas de teste de comprador e vendedor; criar testes de
     contrato do adaptador contra o sandbox.
+12. **Busca por referência externa** — como localizar um pagamento pela nossa
+    chave de idempotência / `external_reference`, para implementar
+    `findPaymentByReference` (usado pela reconciliação quando o processo cai
+    entre criar a cobrança e salvar o id). Sem isso, esses casos ficam marcados
+    `PROVIDER_LINK_MISSING` para revisão manual.
 
 ## Passos de habilitação
 

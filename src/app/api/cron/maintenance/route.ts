@@ -1,14 +1,31 @@
-// Job agendado (ex.: a cada minuto): expira reservas vencidas e encerra
-// eventos finalizados. Protegido por segredo no header x-cron-secret.
+// Job agendado (ex.: a cada minuto): expira reservas vencidas, encerra eventos
+// finalizados, reconcilia pagamentos/reembolsos com o provedor e verifica os
+// invariantes financeiros. Protegido por segredo no header x-cron-secret.
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { safeEqual } from "@/server/crypto";
+import { getPaymentAdapter } from "@/server/payments";
 import { completeEndedEvents } from "@/server/services/events";
 import { expireStaleOrders } from "@/server/services/orders";
+import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 
 export async function POST(req: Request) {
   const secret = req.headers.get("x-cron-secret") ?? "";
   if (!safeEqual(secret, env().CRON_SECRET)) return new Response("forbidden", { status: 403 });
-  const [expiredOrders, completedEvents] = [await expireStaleOrders(db), await completeEndedEvents(db)];
-  return Response.json({ expiredOrders, completedEvents, at: new Date().toISOString() });
+  const expiredOrders = await expireStaleOrders(db);
+  const completedEvents = await completeEndedEvents(db);
+  const reconciliation = await reconcilePayments(db, getPaymentAdapter());
+  const violations = await checkFinancialInvariants(db);
+  if (violations.length) {
+    // Incidente: nunca corrigir automaticamente — registrar para análise humana.
+    console.error("[financeiro] violações de invariantes:", JSON.stringify(violations));
+  }
+  if (reconciliation.errors.length) console.error("[financeiro] erros na reconciliação:", JSON.stringify(reconciliation.errors));
+  return Response.json({
+    expiredOrders,
+    completedEvents,
+    reconciliation: { ...reconciliation, errors: reconciliation.errors.length },
+    invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
+    at: new Date().toISOString(),
+  });
 }
