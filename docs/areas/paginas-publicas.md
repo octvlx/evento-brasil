@@ -90,6 +90,53 @@ o evento.
 depende de `check-in` e `pagamentos-financeiro`; (c) setores e códigos de lote —
 dependem de schema (`banco-de-dados`).
 
+## Comparação com o Rausgegangen (rausgegangen.de)
+
+Observação das páginas públicas em 26/10/2026: página da cidade
+(`/cologne/`), uma página de evento e a busca (`/eventsearch/`). Sem login; uma
+cidade, um evento, um momento — o app não foi visto. Lista apenas
+funcionalidades; nada de texto, código ou visual deve ser copiado.
+
+É um guia de cidade com curadoria editorial, não só uma bilheteria: a página da
+cidade funciona como um portal, enquanto a nossa `/cidades/[slug]` é uma lista
+filtrada. Essa é a maior diferença.
+
+**Página da cidade**
+
+| Funcionalidade | Situação aqui | Quem |
+| --- | --- | --- |
+| Abas Hoje / Amanhã / Fim de semana, cada uma com URL própria | Só filtro de categoria | Esta área (`catalog.ts`), sem schema |
+| Uma faixa horizontal por categoria, cada uma com link para sua página | Uma lista única | Esta área |
+| Dicas do dia da redação (com nota do editor), blog da cidade, sorteios, coleções sazonais | Nada editorial | Decisão de produto; conteúdo depende de `admin` |
+| "Recomendados para você" e "Mitgegangen" (o que amigos vão), com login | Não existe | Depende de dados de interesse/seguidores (`banco-de-dados`) |
+| Seção de locais da cidade com tipo (museu, bar, praça) e botão "Seguir" | Não há páginas de local | `banco-de-dados` + esta área |
+| Texto de SEO sobre a cidade, JSON-LD `WebPage` + `ItemList`, canonical, versões de/en | Só metadados; sem `/cidades` | Esta área |
+
+**Página do evento**
+
+| Funcionalidade | Situação aqui | Quem |
+| --- | --- | --- |
+| Blocos separados: texto da redação e texto do organizador | Só o do organizador | Decisão de produto |
+| "Salvar evento", botão de calendário (aparentemente "adicionar à agenda"; não foi clicado) e "Seguir" artista/organizador | Não existe | Calendário (.ics): esta área; salvar/seguir: `banco-de-dados` |
+| Seção "Acessibilidade" (vazia neste evento, mas o campo existe) | Não existe | `area-organizador` + `banco-de-dados` |
+| Outras datas do mesmo evento/turnê e eventos relacionados | Não existe (relacionados já é a lacuna nº 4) | Esta área |
+| Breadcrumb (cidade › categoria) com JSON-LD `BreadcrumbList`, além do `Event` | Temos `Event`, sem breadcrumb | Esta área |
+| Preço exibido já com taxas ("inkl. Gebühren") | Mostramos taxa e total separados no checkout | — |
+| Ingressos muitas vezes de terceiros (este evento abria a Eventim em nova aba); alguns vendidos por eles | Vendemos todos os ingressos | — |
+
+**Busca:** cidade, intervalo de datas livre ("Von – Bis"), categoria, "entrada
+grátis", sorteios e "perto de mim" (por localização). Não vimos filtro de faixa
+de preço nem ordenação. Comparado conosco: eles têm intervalo de datas livre e
+busca por proximidade; nós temos faixas de preço; nenhum dos dois ordena.
+
+**Candidatos à lista de lacunas:** (a) abas Hoje/Amanhã/Fim de semana com URL
+própria e faixas por categoria na página da cidade — desta área, sem schema;
+(b) adicionar à agenda (.ics) e outras datas do mesmo evento; (c) breadcrumb com
+JSON-LD; (d) intervalo de datas e "perto de mim" na busca — proximidade depende
+de coordenadas no banco; (e) salvar/seguir, campo de acessibilidade e páginas de
+local — dependem de `banco-de-dados`; (f) curadoria editorial/blog — decisão de
+produto.
+
 ## Dependências de outros agentes
 
 | Agente | O que precisamos |
