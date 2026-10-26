@@ -9,7 +9,7 @@ test("áreas restritas exigem login e papel adequado", async ({ page }) => {
 
   await login(page, USERS.customer);
   await page.goto("/admin");
-  await expect(page).toHaveURL("http://localhost:3000/");
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/); // redirecionado para a home (qualquer host/porta)
   // Cliente sem organização vai para o onboarding.
   await page.goto("/organizador");
   await expect(page).toHaveURL(/\/organizador\/cadastro/);
