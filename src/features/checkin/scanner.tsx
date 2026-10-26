@@ -35,18 +35,25 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     async (payload: string) => {
       if (busy.current) return;
       busy.current = true;
-      const r = await checkInAction(eventId, payload);
-      if (r.ok) {
-        setResult(r.data);
-        setCounters(r.data.counters);
-        setError(null);
-        navigator.vibrate?.(r.data.result === "ADMITTED" ? 80 : [60, 60, 60, 60, 200]);
-      } else setError(r.error);
-      setTimeout(() => {
-        setResult(null);
-        busy.current = false;
-        router.refresh();
-      }, 2200);
+      try {
+        const r = await checkInAction(eventId, payload);
+        if (r.ok) {
+          setResult(r.data);
+          setCounters(r.data.counters);
+          setError(null);
+          navigator.vibrate?.(r.data.result === "ADMITTED" ? 80 : [60, 60, 60, 60, 200]);
+        } else setError(r.error);
+      } catch {
+        // Falha de rede ou do servidor: avisa e libera o leitor (sem nova tentativa automática).
+        setError("Não foi possível validar o ingresso. Verifique a conexão e leia o QR novamente.");
+        navigator.vibrate?.([60, 60, 60, 60, 200]);
+      } finally {
+        setTimeout(() => {
+          setResult(null);
+          busy.current = false;
+          router.refresh();
+        }, 2200);
+      }
     },
     [eventId, router],
   );
