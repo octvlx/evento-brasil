@@ -7,18 +7,18 @@
 *                                   @SEU-USUARIO-GITHUB
 
 # Dinheiro, estoque e permissões: sempre revisão sênior
-/prisma/                            @SEU-USUARIO-GITHUB
-/src/server/services/payments.ts    @SEU-USUARIO-GITHUB
-/src/server/services/ledger.ts      @SEU-USUARIO-GITHUB
-/src/server/services/refunds.ts     @SEU-USUARIO-GITHUB
-/src/server/services/orders.ts      @SEU-USUARIO-GITHUB
-/src/server/payments/               @SEU-USUARIO-GITHUB
-/src/server/auth/                   @SEU-USUARIO-GITHUB
-/src/features/fees/                 @SEU-USUARIO-GITHUB
+/prisma/                            @octvlx  
+/src/server/services/payments.ts    @octvlx
+/src/server/services/ledger.ts      @octvlx
+/src/server/services/refunds.ts     @octvlx
+/src/server/services/orders.ts      @octvlx
+/src/server/payments/               @octvlx
+/src/server/auth/                   @octvlx
+/src/features/fees/                 @octvlx
 
 # Interface pública e design
-/src/components/                    @SEU-USUARIO-GITHUB
-/src/app/globals.css                @SEU-USUARIO-GITHUB
+/src/components/                    @octvlx
+/src/app/globals.css                @octvlx
 
 # Automação e configuração
-/.github/                           @SEU-USUARIO-GITHUB
+/.github/                           @octvlx
