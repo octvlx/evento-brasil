@@ -9,6 +9,7 @@ import { CheckoutPanel } from "@/features/orders/checkout-panel";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
+import { checkoutStep } from "@/features/orders/status-view";
 import { formatEventDateTime } from "@/lib/datetime";
 
 export const metadata: Metadata = { title: "Pagamento", robots: { index: false } };
@@ -29,7 +30,8 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
   const user = await requireUser(`/checkout/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
   if (order.status !== "PENDING_PAYMENT") redirect(`/pedido/${orderId}`);
-  const pix = order.payments.find((p) => p.status === "PENDING" && p.method === "PIX");
+  const step = checkoutStep(order.payments);
+  const pix = step === "pix" ? order.payments.find((p) => p.status === "PENDING" && p.method === "PIX") : undefined;
   // Para PIX real o provedor envia o QR; no simulado geramos o QR do texto "SIMULADO".
   const qrDataUrl = pix?.pixQrCodeBase64
     ? `data:image/png;base64,${pix.pixQrCodeBase64}`
@@ -52,6 +54,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
           expiresAt={order.expiresAt.toISOString()}
           isSimulated={order.isSimulated}
           pendingPix={pix ? { copyPaste: pix.pixCopyPaste, qrDataUrl } : null}
+          cardProcessing={step === "card-processing"}
         />
       </div>
       <Card className="h-fit p-5">

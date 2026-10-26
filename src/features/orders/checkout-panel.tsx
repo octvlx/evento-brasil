@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { Copy, CreditCard, FlaskConical, QrCode, TimerReset } from "lucide-react";
+import { Copy, CreditCard, FlaskConical, Loader2, QrCode, TimerReset } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,8 @@ interface Props {
   expiresAt: string;
   isSimulated: boolean;
   pendingPix: { copyPaste: string | null; qrDataUrl: string | null } | null;
+  /** Há uma tentativa com cartão pendente no provedor: não oferecer nova tentativa. */
+  cardProcessing: boolean;
 }
 
 function useCountdown(target: string) {
@@ -24,7 +26,7 @@ function useCountdown(target: string) {
   return Math.max(0, left);
 }
 
-export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix }: Props) {
+export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, cardProcessing }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<"PIX" | "CREDIT_CARD">("PIX");
   const [cardOutcome, setCardOutcome] = useState<"approve" | "decline">("approve");
@@ -40,7 +42,13 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix }: P
     start(async () => {
       setError(null);
       const res = await startPaymentAction(orderId, method, method === "CREDIT_CARD" && isSimulated ? cardOutcome : undefined);
-      if (!res.ok) return setError(res.error);
+      if (!res.ok) {
+        setError(res.error);
+        // O pedido mudou de estado (pago, expirado ou tentativa em andamento): a página
+        // recarregada mostra o estado real ou leva ao pedido.
+        if (res.code === "INVALID_STATE") router.refresh();
+        return;
+      }
       if (method === "CREDIT_CARD") {
         if (res.data.status === "FAILED") setError("Pagamento recusado. Tente outro cartão ou pague com PIX.");
         else router.push(`/pedido/${orderId}`);
@@ -63,7 +71,19 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix }: P
         {expired ? "Reserva expirada. Volte ao evento para tentar novamente." : <span>Ingressos reservados por <span className="tabular-nums">{mm}:{ss}</span></span>}
       </div>
 
-      {pendingPix ? (
+      {cardProcessing ? (
+        <div className="space-y-4 rounded-2xl border border-border p-5">
+          <h2 className="flex items-center gap-2 font-display text-lg font-bold">
+            <Loader2 className="size-5 animate-spin text-secondary motion-reduce:animate-none" aria-hidden /> Pagamento com cartão em processamento
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Estamos aguardando a resposta da operadora do cartão. Não tente pagar de novo: assim que houver confirmação, seus ingressos são emitidos e você recebe um e-mail.
+          </p>
+          <Button variant="outline" className="w-full" onClick={() => router.push(`/pedido/${orderId}`)}>
+            Acompanhar pedido
+          </Button>
+        </div>
+      ) : pendingPix ? (
         <div className="space-y-4 rounded-2xl border border-border p-5">
           <h2 className="flex items-center gap-2 font-display text-lg font-bold">
             <QrCode className="size-5 text-secondary" aria-hidden /> Pague com PIX

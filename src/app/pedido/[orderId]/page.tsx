@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { CheckCircle2, Clock, Ticket, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, RotateCcw, Ticket, XCircle } from "lucide-react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { OrderSummary } from "@/components/site/order-summary";
 import { PendingPoller, RefundButton } from "@/features/orders/order-actions";
+import { refundView, revocationText } from "@/features/orders/status-view";
 import { cancelOrderAction } from "@/features/orders/actions";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
 import { refundEligibility, refundPolicyFromEnv } from "@/server/services/refunds";
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
+import { formatBRL } from "@/lib/money";
 import { ORDER_STATUS, REFUND_REASON, REFUND_STATUS, TICKET_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Pedido", robots: { index: false } };
@@ -32,13 +34,15 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
   const order = await getOrderForBuyer(db, user, orderId);
   const st = ORDER_STATUS[order.status];
   const eligibility = refundEligibility(order, order.event, order.tickets, new Date(), refundPolicyFromEnv());
-  const Icon = order.status === "PAID" ? CheckCircle2 : order.status === "PENDING_PAYMENT" ? Clock : XCircle;
+  const refund = refundView(order.status, order.refunds);
+  const isRefund = order.status === "REFUND_PENDING" || order.status === "REFUNDED";
+  const Icon = order.status === "PAID" ? CheckCircle2 : order.status === "PENDING_PAYMENT" ? Clock : isRefund ? RotateCcw : XCircle;
 
   return (
     <>
       {order.status === "PENDING_PAYMENT" && <PendingPoller orderId={order.id} />}
       <div className="flex items-start gap-4">
-        <Icon className={`size-10 shrink-0 ${order.status === "PAID" ? "text-success" : order.status === "PENDING_PAYMENT" ? "text-warning" : "text-muted-foreground"}`} aria-hidden />
+        <Icon className={`size-10 shrink-0 ${order.status === "PAID" ? "text-success" : order.status === "PENDING_PAYMENT" || order.status === "REFUND_PENDING" ? "text-warning" : "text-muted-foreground"}`} aria-hidden />
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pedido {order.publicCode}</p>
           <h1 className="font-display text-3xl font-extrabold tracking-tight">
@@ -53,6 +57,12 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
       {order.isSimulated && (
         <Alert variant="warning" className="mt-6">
           Pedido de <strong>ambiente de testes</strong> com pagamento simulado — não representa uma compra real.
+        </Alert>
+      )}
+
+      {refund && isRefund && (
+        <Alert variant={refund.tone} className="mt-6">
+          <strong>{refund.title}.</strong> {refund.detail}
         </Alert>
       )}
 
@@ -86,6 +96,7 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">{t.ticketType.name}</p>
                       <p className="truncate text-sm text-muted-foreground">{t.holderName}</p>
+                      {t.status === "REVOKED" && <p className="text-xs text-muted-foreground">{revocationText(t.revocationReason)}</p>}
                     </div>
                     <Badge variant={ts.tone === "success" ? "success" : ts.tone === "danger" ? "danger" : "default"}>{ts.label}</Badge>
                   </Link>
@@ -103,11 +114,26 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
         </Card>
         <Card className="space-y-3 p-5">
           <h2 className="font-display text-lg font-bold">Reembolso</h2>
-          {order.refunds.map((r) => (
-            <p key={r.id} className="text-sm">
-              {REFUND_REASON[r.reason]}: <strong>{REFUND_STATUS[r.status]}</strong>
-            </p>
-          ))}
+          {refund && !isRefund && (
+            <div>
+              <p className="font-semibold">{refund.title}</p>
+              <p className="text-sm text-muted-foreground">{refund.detail}</p>
+            </div>
+          )}
+          {order.refunds.length > 0 && (
+            <ul className="space-y-1 text-sm">
+              {order.refunds.map((r) => (
+                <li key={r.id} className="flex flex-wrap justify-between gap-x-3">
+                  <span>
+                    {REFUND_REASON[r.reason]} · {formatDateTimeShort(r.createdAt)}
+                  </span>
+                  <span>
+                    <span className="tabular-nums">{formatBRL(r.amountCents)}</span> · <strong>{REFUND_STATUS[r.status]}</strong>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           {eligibility.eligible ? <RefundButton orderId={order.id} /> : !order.refunds.length && <p className="text-sm text-muted-foreground">{eligibility.reason}</p>}
           <p className="text-xs text-muted-foreground">Política do evento: {order.event.refundPolicy}</p>
         </Card>

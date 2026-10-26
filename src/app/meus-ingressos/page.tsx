@@ -116,7 +116,11 @@ async function Content() {
                   <td className="p-3">{o.event.title}</td>
                   <td className="p-3">{formatDateShort(o.createdAt)}</td>
                   <td className="p-3 tabular-nums">{formatBRL(o.totalCents)}</td>
-                  <td className="p-3">{ORDER_STATUS[o.status].label}</td>
+                  <td className="p-3">
+                    <Badge variant={ORDER_STATUS[o.status].tone}>
+                      {ORDER_STATUS[o.status].label}
+                    </Badge>
+                  </td>
                 </tr>
               ))}
             </tbody>
