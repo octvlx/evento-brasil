@@ -1,7 +1,7 @@
 # ADR 0002 — Cupons de desconto e links de venda rastreados
 
-- Status: **proposto** — revisão de `pagamentos-financeiro` incorporada;
-  revisão de `banco-de-dados` (comentário no PR #14) ainda não incorporada
+- Status: **proposto** — revisões de `pagamentos-financeiro` e
+  `banco-de-dados` (comentários no PR #14) incorporadas
 - Data: 2026-10-26
 - Autor: agente `area-organizador`
 
@@ -80,8 +80,9 @@ arredonda o **desconto** meia-para-cima: o comprador ganha no meio centavo.
 - Código: `[A-Z0-9_-]{3,32}`, armazenado em maiúsculas, único por organização
   (comparação sem diferenciar maiúsculas).
 - Validade (`validFrom`/`validUntil`), limite total de usos (`maxUses`),
-  limite por comprador (`maxUsesPerUser`), ativo/desativado (`disabledAt`;
-  nunca apagar cupom já usado).
+  limite por comprador (`maxUsesPerUser`), ativo/desativado (`disabledAt`).
+  Cupom já usado nunca é apagado: o banco impede (`onDelete: Restrict`), e
+  desativar é o único caminho.
 - Um cupom por pedido. Um **uso = um pedido**, não um ingresso.
 - **Meia-entrada:** por padrão o cupom **não** se aplica a `HALF_PRICE`.
   Pendência jurídica: a legislação de meia-entrada se refere ao valor cobrado
@@ -154,7 +155,8 @@ com ele em todos os eventos da organização.
 ### D5. Link rastreado = registro + redirecionamento + atribuição no pedido
 
 - `TrackingLink` por evento: nome interno, código curto público, UTMs
-  (`source`, `medium`, `campaign`, `content`) e contador de cliques.
+  (`source`, `medium`, `campaign`, `content`, `term`) e contador de cliques.
+  Valores de UTM são truncados ao tamanho da coluna (200) antes de gravar.
 - Rota pública `GET /r/[code]`: incrementa cliques, grava cookie
   primário `eb_attr` (id do link + UTMs, `httpOnly`, `sameSite=lax`,
   7 dias, último clique vence) e redireciona para `/eventos/[slug]`.
@@ -177,6 +179,31 @@ com ele em todos os eventos da organização.
 ## Proposta de schema (para `banco-de-dados`)
 
 Somente proposta; `prisma/schema.prisma` e migrações são do `banco-de-dados`.
+Revisada por `banco-de-dados` (comentário no PR #14); `prisma validate` será
+rodado na implementação.
+
+**Regras de exclusão.** Onde há histórico, `onDelete: Restrict`: o banco
+impede apagar cupom ou link já usado, e a desativação (`disabledAt` /
+`archivedAt`) é o único caminho. `Event → Order` já é `Restrict` e organização
+nunca é excluída, então `Cascade` em cupom/link não traria ganho. Exceções:
+`CouponTicketType` (junção sem histórico próprio) fica `Cascade`, e
+`TrackingLink.couponId` fica `SetNull` (o pedido guarda a cópia do cupom).
+
+**Mesmo tenant no banco.** FKs compostas, declaradas no `schema.prisma` (uma
+FK escrita só no SQL seria removida pelo próximo `migrate dev`):
+
+- `Event @@unique([id, organizationId])`; `Coupon(eventId, organizationId)` e
+  `TrackingLink(eventId, organizationId)` referenciam `Event(id, organizationId)`.
+- `Coupon @@unique([id, organizationId])`; `Order(couponId, organizationId)`
+  referencia `Coupon(id, organizationId)`.
+- Com `organizationId` obrigatório, `SetNull` numa FK composta tentaria anular a
+  organização; por isso essas FKs são `Restrict`.
+- Fica no serviço (e na reconciliação): `TrackingLink.couponId` da mesma
+  organização (FK simples por causa do `SetNull`), `Order.trackingLinkId` do
+  mesmo evento do pedido e `CouponTicketType` com tipos do evento do cupom.
+
+**Textos não confiáveis.** UTMs vêm de URL/cookie; nomes e códigos vêm de
+formulário. Todos com tamanho máximo (`VarChar`).
 
 ```prisma
 enum DiscountType {
@@ -184,19 +211,21 @@ enum DiscountType {
   FIXED_PER_TICKET
 }
 
+// Event (acréscimo): @@unique([id, organizationId]) — alvo das FKs compostas.
+
 model Coupon {
   id             String       @id @default(cuid())
   organizationId String
   eventId        String?      // null = todos os eventos da organização
-  code           String       // maiúsculas
-  description    String?
+  code           String       @db.VarChar(32) // ^[A-Z0-9_-]{3,32}$
+  description    String?      @db.VarChar(200)
   discountType   DiscountType
   percentBps     Int?         // PERCENT
   amountCents    Int?         // FIXED_PER_TICKET
   validFrom      DateTime?    @db.Timestamptz(3)
   validUntil     DateTime?    @db.Timestamptz(3)
   maxUses        Int?         // null = ilimitado
-  maxUsesPerUser Int?         @default(1)
+  maxUsesPerUser Int?         @default(1) // null = ilimitado; default é decisão de produto
   timesReserved  Int          @default(0)
   timesRedeemed  Int          @default(0)
   disabledAt     DateTime?    @db.Timestamptz(3)
@@ -204,13 +233,14 @@ model Coupon {
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
-  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  event        Event?             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  event        Event?             @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
   ticketTypes  CouponTicketType[]
   orders       Order[]
   links        TrackingLink[]
 
   @@unique([organizationId, code])
+  @@unique([id, organizationId]) // alvo de Order(couponId, organizationId)
   @@index([eventId])
 }
 
@@ -228,20 +258,21 @@ model TrackingLink {
   id             String    @id @default(cuid())
   organizationId String
   eventId        String
-  code           String    @unique // curto, público, aleatório
-  name           String
-  utmSource      String?
-  utmMedium      String?
-  utmCampaign    String?
-  utmContent     String?
-  couponId       String?   // pré-aplica um cupom (opcional)
+  code           String    @unique @db.VarChar(16) // curto, público, aleatório
+  name           String    @db.VarChar(120)
+  utmSource      String?   @db.VarChar(200)
+  utmMedium      String?   @db.VarChar(200)
+  utmCampaign    String?   @db.VarChar(200)
+  utmContent     String?   @db.VarChar(200)
+  utmTerm        String?   @db.VarChar(200)
+  couponId       String?   // pré-aplica um cupom (opcional); organização checada no serviço
   clicks         Int       @default(0)
   archivedAt     DateTime? @db.Timestamptz(3)
   createdById    String
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  event        Event        @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
   coupon       Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
   orders       Order[]
 
@@ -250,11 +281,16 @@ model TrackingLink {
 
 // Order (novas colunas — instantâneos imutáveis da compra)
 //   couponId        String?
-//   couponCode      String?   // cópia do código usado
-//   discountCents   Int       @default(0)   // Σ desconto × quantidade
+//   couponCode      String?  @db.VarChar(32)   // cópia do código usado
+//   discountCents   Int      @default(0)       // Σ desconto × quantidade
 //   trackingLinkId  String?
-//   utmSource / utmMedium / utmCampaign / utmContent / utmTerm  String?
-//   @@index([couponId]) @@index([trackingLinkId]) @@index([eventId, utmSource])
+//   utmSource / utmMedium / utmCampaign / utmContent / utmTerm  String? @db.VarChar(200)
+//   coupon        Coupon?       @relation(fields: [couponId, organizationId], references: [id, organizationId], onDelete: Restrict)
+//   trackingLink  TrackingLink? @relation(fields: [trackingLinkId], references: [id], onDelete: Restrict)
+//   @@index([couponId, userId])   // limite por comprador; cobre consultas só por couponId
+//   @@index([trackingLinkId])
+//   (sem índice por utmSource até o relatório existir e um EXPLAIN ANALYZE pedir;
+//    o índice [eventId, status] existente já filtra por evento)
 //
 // OrderItem (novas colunas)
 //   listUnitPriceCents    Int   // preço de tabela; = unitPriceCents quando sem cupom
@@ -263,20 +299,52 @@ model TrackingLink {
 
 `CHECK`s propostos:
 
-- `Coupon`: `timesReserved >= 0 AND timesRedeemed >= 0`;
+- `Coupon`: `timesReserved >= 0 AND timesRedeemed >= 0` (pegam decremento
+  duplo em `releaseOrderTx`/`finalizePaidOrderTx`);
   `maxUses IS NULL OR maxUses > 0`; `maxUsesPerUser IS NULL OR maxUsesPerUser > 0`;
   `(discountType = 'PERCENT' AND percentBps BETWEEN 1 AND 10000 AND amountCents IS NULL) OR (discountType = 'FIXED_PER_TICKET' AND amountCents > 0 AND percentBps IS NULL)`;
   `validUntil IS NULL OR validFrom IS NULL OR validUntil > validFrom`;
-  `code = upper(code)`.
-- `OrderItem`: `discountPerUnitCents >= 0 AND unitPriceCents = listUnitPriceCents - discountPerUnitCents`.
+  `code ~ '^[A-Z0-9_-]{3,32}$'` (cobre maiúsculas e formato).
+  Sem `CHECK` de `maxUses` contra os contadores (D4); reduzir `maxUses` abaixo
+  do uso atual é aceito e só bloqueia novos usos.
+- `TrackingLink`: `clicks >= 0`; formato do `code` (ex.: `code ~ '^[A-Za-z0-9]{6,16}$'`).
+- `OrderItem` (novo `OrderItem_discount`): `discountPerUnitCents >= 0 AND unitPriceCents = listUnitPriceCents - discountPerUnitCents`.
+  Com o `unitPriceCents >= 0` já existente, implica desconto ≤ preço de tabela.
 - `Order`: `discountCents >= 0 AND (couponCode IS NOT NULL OR discountCents = 0)`
-  (desconto só com cupom; `couponId` pode virar nulo se o cupom for apagado,
-  por isso a regra usa o código copiado).
+  e `("couponId" IS NULL) = ("couponCode" IS NULL)` (código copiado se e só se
+  houver cupom; com `Restrict`, `couponId` nunca vira nulo).
+- `discountCents = Σ discountPerUnitCents × quantity` envolve duas tabelas e
+  fica na reconciliação (`ORDER_DISCOUNT_MISMATCH`).
 
-Migração de dados: `listUnitPriceCents = unitPriceCents` e
-`discountPerUnitCents = 0` para itens existentes (backfill na mesma migração,
-antes do `CHECK`). Seed: um cupom `DEMO10` (10%) e um link de exemplo na
-Sonora Produções (demo).
+**Migração escrita à mão** (`migrate dev --create-only` e edição). O SQL gerado
+pelo Prisma (`ADD COLUMN "listUnitPriceCents" INTEGER NOT NULL` sem default)
+falha em tabela com linhas. Ordem:
+
+```sql
+ALTER TABLE "OrderItem" ADD COLUMN "discountPerUnitCents" INTEGER NOT NULL DEFAULT 0; -- só metadados (PG 11+)
+ALTER TABLE "OrderItem" ADD COLUMN "listUnitPriceCents" INTEGER;
+UPDATE "OrderItem" SET "listUnitPriceCents" = "unitPriceCents";
+ALTER TABLE "OrderItem" ALTER COLUMN "listUnitPriceCents" SET NOT NULL;
+ALTER TABLE "OrderItem" ADD CONSTRAINT "OrderItem_discount" CHECK (...);
+```
+
+`Order.discountCents INTEGER NOT NULL DEFAULT 0` dispensa backfill. O `UPDATE`
+mexe só em `OrderItem`; os gatilhos do razão e da auditoria não são afetados.
+Em tabelas grandes no futuro: `ADD CONSTRAINT … NOT VALID` + `VALIDATE
+CONSTRAINT`, para não segurar `ACCESS EXCLUSIVE` durante a varredura.
+
+**Ordem de deploy (opção a).** Com `listUnitPriceCents` obrigatório e sem
+default, o cliente gerado exige o campo no `create`, então a etapa 1 não
+compila sozinha. A etapa 1 já inclui a linha mínima em `createOrder`
+(`listUnitPriceCents: unitPriceCents`), revisada por `pagamentos-financeiro`.
+Descartada a opção (b), `DEFAULT` temporário: um INSERT que esquecesse o campo
+gravaria preço de tabela 0 e violaria o `CHECK` só em produção.
+
+**Seed.** Cupom `DEMO10` (10%) ligado por `CouponTicketType` só aos tipos que
+não são `HALF_PRICE` (D3) e um link de exemplo num evento da Sonora Produções
+(demo). O seed já detecta banco populado (#13). Quando `coupons.ts` existir, o
+seed cria o cupom pelo serviço, como faz com pedidos. `banco-de-dados`
+atualiza `docs/database.md` com os novos objetos e `CHECK`s na mesma migração.
 
 ## Mudanças de preço (para `pagamentos-financeiro`)
 
@@ -321,6 +389,9 @@ Sonora Produções (demo).
    as definições de D4 (`timesReserved` = pedidos `PENDING_PAYMENT` com o
    cupom; `timesRedeemed` = pedidos com o cupom e ≥ 1 `IssuedTicket`) e
    `ORDER_DISCOUNT_MISMATCH` (`discountCents = Σ discountPerUnitCents × quantity`).
+   Também `COUPON_TENANT_MISMATCH`, para o que a FK não garante: link com
+   cupom de outra organização, pedido com link de outro evento e
+   `CouponTicketType` com tipo de outro evento.
 6. Rate limit de tentativas de cupom: `rateLimit("coupon:<userId>", 10, 10 min)`
    na Server Action, contra força bruta de códigos.
 
@@ -329,7 +400,7 @@ Sonora Produções (demo).
 | Etapa | Agente | Entrega |
 |---|---|---|
 | 0 | `pagamentos-financeiro` | Correção separada, antes do pacote: guarda B1 em `createOrder` (comissão por unidade > preço com bearer `ORGANIZER`), que já pode ocorrer sem cupom |
-| 1 | `banco-de-dados` | Migração (modelos, colunas, `CHECK`s, backfill), seed `DEMO10` + link demo |
+| 1 | `banco-de-dados` | Migração escrita à mão (modelos, colunas, FKs compostas, `CHECK`s, backfill), seed `DEMO10` + link demo, `docs/database.md`; inclui a linha mínima `listUnitPriceCents: unitPriceCents` em `createOrder`, revisada por `pagamentos-financeiro` (ordem de deploy, opção a) |
 | 2 | `pagamentos-financeiro` | `computeFees` + `discountPerUnit`, cupom em `createOrder`, contadores no ciclo do pedido, reconciliação, testes de integração (incl. concorrência no último uso) |
 | 3 | `area-organizador` | Serviços `coupons.ts` e `tracking-links.ts` (CRUD com `event:write` + auditoria); telas em `/organizador/eventos/[id]/editar` (abas Cupons e Links) ; relatórios "uso de cupons" e "vendas por origem" em `/organizador/vendas` (`finance:read`); testes de autorização |
 | 4 | `paginas-publicas` | Campo de cupom no checkout com resumo (preço de tabela, desconto, total); `OrderSummary` com linha de desconto; rota `/r/[code]` e captura de UTMs na página do evento; Server Action lê o cookie de atribuição |
