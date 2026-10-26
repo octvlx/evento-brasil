@@ -3,10 +3,20 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
-import { ConnectPaymentButton, InviteForm, ProfileSettingsForm, RemoveMemberButton, StaffAssignmentToggle } from "@/features/organizer/settings-forms";
+import {
+  ConnectPaymentButton,
+  InviteForm,
+  MemberRoleSelect,
+  PendingInvitationActions,
+  ProfileSettingsForm,
+  RemoveMemberButton,
+  StaffAssignmentToggle,
+} from "@/features/organizer/settings-forms";
 import { db } from "@/server/db";
 import { getPaymentAdapter } from "@/server/payments";
 import { requireOrganizer } from "@/server/auth/organizer-context";
+import { assignableRoles, listPendingInvitations } from "@/server/services/organizers";
+import { formatDateTimeShort } from "@/lib/datetime";
 import { ORG_ROLE, ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Configurações", robots: { index: false } };
@@ -20,16 +30,17 @@ export default function SettingsPage() {
 }
 
 async function Content() {
-  const { org: activeOrg, can } = await requireOrganizer("/organizador/configuracoes");
+  const { user, membership, org: activeOrg, can } = await requireOrganizer("/organizador/configuracoes");
   if (!can("org:manage")) redirect("/organizador");
   const org = await db.organization.findUniqueOrThrow({
     where: { id: activeOrg.id },
     include: {
       members: { include: { user: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: "asc" } },
       verifications: { orderBy: { createdAt: "desc" }, take: 1 },
-      invitations: { where: { acceptedAt: null, revokedAt: null }, orderBy: { createdAt: "desc" } },
     },
   });
+  const invitations = can("members:manage") ? await listPendingInvitations(db, user, org.id) : [];
+  const roles = assignableRoles(membership.role);
   const events = await db.event.findMany({
     where: { organizationId: org.id, status: { in: ["DRAFT", "PENDING_REVIEW", "PUBLISHED"] } },
     select: { id: true, title: true, staffAssignments: { select: { userId: true } } },
@@ -73,21 +84,44 @@ async function Content() {
             <h2 className="font-display text-lg font-bold">Equipe</h2>
             <ul className="divide-y divide-border rounded-2xl border border-border">
               {org.members.map((m) => (
-                <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+                <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm" data-testid="team-member">
                   <span>
                     <strong>{m.user.name}</strong> <span className="text-muted-foreground">{m.user.email}</span>
                   </span>
-                  <span className="flex items-center gap-2">
-                    <Badge>{ORG_ROLE[m.role]}</Badge>
-                    {m.role !== "OWNER" && <RemoveMemberButton userId={m.user.id} />}
+                  <span className="flex flex-wrap items-center gap-2">
+                    {/* Só mostra controles para quem o ator pode gerenciar; o servidor revalida. */}
+                    {roles.includes(m.role) ? <MemberRoleSelect userId={m.user.id} role={m.role} options={roles} /> : <Badge>{ORG_ROLE[m.role]}</Badge>}
+                    {roles.includes(m.role) && m.user.id !== user.id && <RemoveMemberButton userId={m.user.id} />}
                   </span>
                 </li>
               ))}
             </ul>
-            {org.invitations.length > 0 && (
-              <p className="text-xs text-muted-foreground">Convites pendentes: {org.invitations.map((i) => `${i.email} (${ORG_ROLE[i.role]})`).join(", ")}</p>
-            )}
-            <InviteForm events={events.map((e) => ({ id: e.id, title: e.title }))} />
+
+            <div>
+              <h3 className="mb-2 text-sm font-bold">Convites pendentes</h3>
+              {invitations.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nenhum convite pendente.</p>
+              ) : (
+                <ul className="divide-y divide-border rounded-2xl border border-border">
+                  {invitations.map((i) => (
+                    <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm" data-testid="pending-invitation">
+                      <span className="space-y-0.5">
+                        <span className="block">
+                          <strong>{i.email}</strong> <Badge>{ORG_ROLE[i.role]}</Badge> {i.expired && <Badge variant="warning">Expirado</Badge>}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {i.eventTitle ? `${i.eventTitle} · ` : ""}
+                          {i.invitedByName ? `convidado por ${i.invitedByName} · ` : ""}
+                          {i.expired ? "venceu em" : "válido até"} {formatDateTimeShort(i.expiresAt)}
+                        </span>
+                      </span>
+                      {roles.includes(i.role) && <PendingInvitationActions invitationId={i.id} />}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <InviteForm events={events.map((e) => ({ id: e.id, title: e.title }))} roles={roles} />
 
             {staff.length > 0 && events.length > 0 && (
               <div>

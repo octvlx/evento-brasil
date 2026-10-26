@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
+import type { OrgRole } from "@/generated/prisma/client";
 import type { EventInput, OrganizerApplicationInput, TicketTypeInput } from "@/features/schemas";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
@@ -18,10 +19,14 @@ import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, 
 import {
   acceptInvitation,
   assignStaffToEvent,
+  changeMemberRole,
   connectPaymentAccount,
+  declineInvitation,
   inviteMember,
   removeMember,
+  resendInvitation,
   resubmitOrganizerApplication,
+  revokeInvitation,
   submitOrganizerApplication,
   updateOrganizationProfile,
 } from "@/server/services/organizers";
@@ -141,6 +146,18 @@ export async function updateOrgProfileAction(_prev: ActionResult | undefined, fo
   });
 }
 
+async function sendInvitationEmail(orgId: string, email: string, token: string) {
+  const link = `${env().APP_URL}/convite/${token}`;
+  const org = await db.organization.findUniqueOrThrow({ where: { id: orgId }, select: { name: true } });
+  await getEmailAdapter().send({
+    to: email,
+    subject: `Convite para a equipe de ${org.name}`,
+    html: `<p>Você foi convidado(a) para a equipe de <strong>${escapeHtml(org.name)}</strong> no Evento Brasil.</p><p><a href="${link}">Aceitar convite</a> (válido por 7 dias)</p>`,
+    text: `Aceite o convite: ${link}`,
+  });
+  return link;
+}
+
 export async function inviteMemberAction(_prev: ActionResult<{ link: string }> | undefined, formData: FormData): Promise<ActionResult<{ link: string }>> {
   const user = await requireUser("/organizador/configuracoes");
   const res = await toActionResult(async () => {
@@ -150,15 +167,30 @@ export async function inviteMemberAction(_prev: ActionResult<{ link: string }> |
       role: formData.get("role"),
       eventId: formData.get("eventId") || undefined,
     });
-    const link = `${env().APP_URL}/convite/${token}`;
-    const org = await db.organization.findUniqueOrThrow({ where: { id: orgId }, select: { name: true } });
-    await getEmailAdapter().send({
-      to: invitation.email,
-      subject: `Convite para a equipe de ${org.name}`,
-      html: `<p>Você foi convidado(a) para a equipe de <strong>${escapeHtml(org.name)}</strong> no Evento Brasil.</p><p><a href="${link}">Aceitar convite</a> (válido por 7 dias)</p>`,
-      text: `Aceite o convite: ${link}`,
-    });
-    return { link };
+    return { link: await sendInvitationEmail(orgId, invitation.email, token) };
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+/** Gera um novo link (o anterior para de funcionar) e reenvia o e-mail. */
+export async function resendInvitationAction(invitationId: string): Promise<ActionResult<{ link: string }>> {
+  const user = await requireUser("/organizador/configuracoes");
+  const res = await toActionResult(async () => {
+    rateLimit(`invite-resend:${user.id}`, 20, 60 * 60_000);
+    const orgId = await activeOrgId(user.id);
+    const { invitation, token } = await resendInvitation(db, user, orgId, invitationId);
+    return { link: await sendInvitationEmail(orgId, invitation.email, token) };
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function revokeInvitationAction(invitationId: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/configuracoes");
+  const res = await toActionResult(async () => {
+    await revokeInvitation(db, user, await activeOrgId(user.id), invitationId);
+    return undefined;
   });
   if (res.ok) refresh();
   return res;
@@ -171,6 +203,25 @@ export async function acceptInvitationAction(token: string): Promise<ActionResul
     (await cookies()).set(ACTIVE_ORG_COOKIE, inv.organizationId, { path: "/", httpOnly: true, sameSite: "lax", secure: env().NODE_ENV === "production" });
     return undefined;
   });
+}
+
+export async function declineInvitationAction(token: string): Promise<ActionResult> {
+  const user = await requireUser(`/convite/${token}`);
+  return toActionResult(async () => {
+    await declineInvitation(db, user, token);
+    return undefined;
+  });
+}
+
+export async function changeMemberRoleAction(userId: string, role: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/configuracoes");
+  const res = await toActionResult(async () => {
+    // O serviço valida o papel recebido do cliente.
+    await changeMemberRole(db, user, await activeOrgId(user.id), userId, role as OrgRole);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
 }
 
 export async function assignStaffAction(eventId: string, userId: string, assign: boolean): Promise<ActionResult> {

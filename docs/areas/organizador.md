@@ -1,7 +1,7 @@
 # Área do organizador — inventário e dependências
 
-Responsável: agente `area-organizador`. Última revisão: implementação do painel
-e do fluxo de criação de organizações.
+Responsável: agente `area-organizador`. Última revisão: convites (revogar,
+reenviar, recusar, lista de pendentes) e alteração de papel na equipe.
 
 ## O que existe
 
@@ -17,18 +17,42 @@ e do fluxo de criação de organizações.
 | Vendas, repasses e cota de meia-entrada | `/organizador/vendas` | Pronto |
 | Participantes + CSV auditado | `/organizador/participantes`, `/api/organizador/eventos/[id]/participantes` | Pronto |
 | Perfil, conta de recebimento (simulada), equipe, convites, atribuição de check-in | `/organizador/configuracoes`, `/convite/[token]` | Pronto |
+| Convites: lista de pendentes (com vencidos), revogar, reenviar (novo token; o anterior deixa de valer), recusar pelo convidado | `/organizador/configuracoes`, `/convite/[token]`, `listPendingInvitations`, `revokeInvitation`, `resendInvitation`, `declineInvitation` | Pronto |
+| Alterar papel de membro | `/organizador/configuracoes`, `changeMemberRole` | Pronto |
+
+### Regras da equipe (aplicadas no servidor)
+
+- Gerenciar equipe exige `members:manage` (OWNER/ADMIN), verificado dentro da
+  transação. Hierarquia: OWNER > ADMIN > EVENT_MANAGER = FINANCE > CHECKIN_STAFF.
+- Ninguém convida, promove, rebaixa ou remove alguém com papel acima do próprio,
+  nem concede papel acima do próprio — só OWNER cria ou altera OWNER. A interface
+  só oferece os papéis permitidos (`assignableRoles`), mas o serviço revalida.
+- A organização nunca fica sem OWNER (rebaixar ou remover). Mudanças de equipe
+  travam a linha da organização (`FOR NO KEY UPDATE`), então dois OWNERs se
+  rebaixando ao mesmo tempo não zeram os responsáveis.
+- Convite: aceitar reivindica o convite com `UPDATE` condicional (não aceito, não
+  revogado, não vencido, mesmo token) e cria a associação com
+  `ON CONFLICT DO NOTHING` — aceites simultâneos geram uma única associação; quem
+  já é membro mantém o papel. Revogar/reenviar perdem para um aceite concorrente.
+- Recusar marca `revokedAt` (não há coluna própria); a diferença entre revogado e
+  recusado fica no `AuditLog` (`member.invitation_revoked` × `member.invitation_declined`).
+- Sair de CHECKIN_STAFF apaga as atribuições de check-in do membro na organização.
+- Auditoria na mesma transação: `member.invited`, `member.invitation_revoked`,
+  `member.invitation_resent`, `member.invitation_declined`, `member.joined`,
+  `member.role_changed` (`{ userId, from, to }`), `member.removed`.
 
 Autorização: todo serviço chama `assertOrgPermission`/`assertEventPermission`;
 testes em `tests/integration/a-organizer-flow.test.ts`,
-`i-j-authz-concurrency.test.ts` e `k-organizer-dashboard.test.ts`; E2E em
-`tests/e2e/organizer-onboarding.spec.ts` e `organizer-dashboard.spec.ts`.
+`i-j-authz-concurrency.test.ts`, `k-organizer-dashboard.test.ts` e
+`n-organizer-team.test.ts` (equipe/convites, autorização negada e concorrência);
+E2E em `tests/e2e/organizer-onboarding.spec.ts`, `organizer-dashboard.spec.ts`
+e `organizer-team.spec.ts` (convites e papéis).
 
 ## O que falta (por prioridade)
 
-1. **Convites:** revogar, reenviar (invalidando o token anterior), recusar e
-   página de convites pendentes. O campo `revokedAt` já existe.
-2. **Equipe:** alterar o papel de um membro (com proteção contra escalada de
-   privilégio e contra remover o último OWNER, que já existe).
+1. **Convites (complementos):** transferir a propriedade com confirmação por
+   e-mail; limitar convites pendentes por organização.
+2. ~~Convites: revogar, reenviar, recusar, pendentes~~ e ~~Equipe: alterar papel~~ — feitos.
 3. **Página do evento no painel** (`/organizador/eventos/[id]`) com resumo de
    vendas do evento (`eventSalesSummary` já existe) e atalhos.
 4. **Relatórios:** filtros de período/evento, vendas por tipo de ingresso, ticket
@@ -42,7 +66,7 @@ testes em `tests/integration/a-organizer-flow.test.ts`,
 
 | Agente | O que precisamos |
 | --- | --- |
-| `banco-de-dados` | `Organization.logoUrl` e `coverUrl`; (opcional) enum de status do convite ou manter derivado de `acceptedAt`/`revokedAt`/`expiresAt`; papel "Analista" só se o negócio quiser um papel diferente de `FINANCE`. |
+| `banco-de-dados` | `Organization.logoUrl` e `coverUrl`; (opcional) `OrganizationInvitation.declinedAt` para separar recusa de revogação sem consultar a auditoria (hoje ambos usam `revokedAt`), e índice parcial `(organizationId) WHERE acceptedAt IS NULL AND revokedAt IS NULL` se a lista de pendentes crescer; papel "Analista" só se o negócio quiser um papel diferente de `FINANCE`. |
 | `pagamentos-financeiro` | Relatórios usam o razão (`FinancialLedgerEntry`) e `Order` — qualquer mudança de contas/tipos do razão precisa avisar esta área. Venda por tipo de ingresso e ticket médio dependem de `OrderItem`. Liquidação real (`OrganizerSettlement`) segue desabilitada até o provedor real. |
 | `paginas-publicas` | Perfil público do organizador (`/organizadores/[slug]`) deve exibir logo/capa quando existirem e o selo "verificado" conforme a verificação aprovada; dados de evento publicados vêm de `events.ts`/`catalog.ts`. |
 | `check-in` | Atribuição de equipe a eventos é feita aqui (`assignStaffToEvent`); o leitor e o histórico são do check-in. |

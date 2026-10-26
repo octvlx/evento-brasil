@@ -2,11 +2,12 @@ import "server-only";
 import { inviteSchema, organizerApplicationSchema, type OrganizerApplicationInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
 import { slugify } from "@/lib/utils";
+import type { OrgRole } from "@/generated/prisma/client";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, assertOrgPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
 import { encryptPII, hashToken, randomToken } from "../crypto";
-import { AppError, invalidState, notFound } from "../errors";
+import { AppError, forbidden, invalidState, notFound } from "../errors";
 
 async function uniqueOrgSlug(client: Db | Tx, name: string): Promise<string> {
   const base = slugify(name) || "organizador";
@@ -205,57 +206,214 @@ export async function updateOrganizationProfile(
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Hierarquia de papéis para impedir escalada de privilégio (EVENT_MANAGER e FINANCE no mesmo nível). */
+const ROLE_RANK: Record<OrgRole, number> = { OWNER: 4, ADMIN: 3, EVENT_MANAGER: 2, FINANCE: 2, CHECKIN_STAFF: 1 };
+
+/** Quem gerencia a equipe não concede nem altera um papel acima do próprio; só OWNER mexe em OWNER. */
+function assertCanManageRole(actorRole: OrgRole, role: OrgRole) {
+  if (ROLE_RANK[role] > ROLE_RANK[actorRole]) throw forbidden("Você não pode conceder ou alterar um papel acima do seu.");
+}
+
+/** Papéis que `actorRole` pode conceder (a interface usa para montar as opções; o servidor revalida). */
+export function assignableRoles(actorRole: OrgRole): OrgRole[] {
+  return (Object.keys(ROLE_RANK) as OrgRole[]).filter((r) => ROLE_RANK[r] <= ROLE_RANK[actorRole]);
+}
+
+/**
+ * Serializa as mudanças de equipe de uma organização: sem isso, dois OWNERs
+ * rebaixando um ao outro ao mesmo tempo deixariam a organização sem responsável.
+ * FOR NO KEY UPDATE não bloqueia inserções que só referenciam a organização.
+ */
+async function lockOrganizationTeam(tx: Tx, organizationId: string) {
+  await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR NO KEY UPDATE`;
+}
+
+async function assertNotLastOwner(tx: Tx, organizationId: string) {
+  const owners = await tx.organizationMember.count({ where: { organizationId, role: "OWNER" } });
+  if (owners <= 1) throw new AppError("VALIDATION", "A organização precisa de ao menos um responsável (OWNER).");
+}
+
+const invitationInvalid = () => new AppError("NOT_FOUND", "Convite inválido ou expirado.");
+
+/** Convite ainda utilizável: nem aceito, nem revogado/recusado, nem vencido. */
+const usableInvitation = () => ({ acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } });
+
 export async function inviteMember(db: Db, actor: Actor, organizationId: string, raw: unknown) {
-  await assertOrgPermission(db, actor, organizationId, "members:manage");
   const input = inviteSchema.parse(raw);
-  if (input.eventId) {
-    const ev = await db.event.findFirst({ where: { id: input.eventId, organizationId }, select: { id: true } });
-    if (!ev) throw notFound("Evento não encontrado nesta organização.");
-  }
   const token = randomToken(32);
-  const invitation = await db.organizationInvitation.create({
-    data: {
+  return db.$transaction(async (tx) => {
+    const { role: actorRole } = await assertOrgPermission(tx, actor, organizationId, "members:manage");
+    assertCanManageRole(actorRole, input.role);
+    if (input.eventId) {
+      const ev = await tx.event.findFirst({ where: { id: input.eventId, organizationId }, select: { id: true } });
+      if (!ev) throw notFound("Evento não encontrado nesta organização.");
+    }
+    const invitation = await tx.organizationInvitation.create({
+      data: {
+        organizationId,
+        email: input.email,
+        role: input.role,
+        eventId: input.eventId ?? null,
+        tokenHash: hashToken(token),
+        invitedById: actor.id,
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+      },
+    });
+    await audit(tx, {
+      actorUserId: actor.id,
       organizationId,
-      email: input.email,
-      role: input.role,
-      eventId: input.eventId ?? null,
-      tokenHash: hashToken(token),
-      invitedById: actor.id,
-      expiresAt: new Date(Date.now() + INVITE_TTL_MS),
-    },
+      action: "member.invited",
+      entityType: "OrganizationInvitation",
+      entityId: invitation.id,
+      metadata: { role: input.role, eventId: input.eventId ?? null },
+    });
+    return { invitation, token };
   });
-  await audit(db, {
-    actorUserId: actor.id,
-    organizationId,
-    action: "member.invited",
-    entityType: "OrganizationInvitation",
-    entityId: invitation.id,
-    metadata: { role: input.role, eventId: input.eventId ?? null },
+}
+
+/** Convites ainda não aceitos nem revogados (inclui vencidos, que podem ser reenviados). */
+export async function listPendingInvitations(db: Db, actor: Actor, organizationId: string) {
+  await assertOrgPermission(db, actor, organizationId, "members:manage");
+  const invitations = await db.organizationInvitation.findMany({
+    where: { organizationId, acceptedAt: null, revokedAt: null },
+    orderBy: { createdAt: "desc" },
   });
-  return { invitation, token };
+  const eventIds = [...new Set(invitations.flatMap((i) => (i.eventId ? [i.eventId] : [])))];
+  const userIds = [...new Set(invitations.map((i) => i.invitedById))];
+  const [events, inviters] = await Promise.all([
+    db.event.findMany({ where: { id: { in: eventIds }, organizationId }, select: { id: true, title: true } }),
+    db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }),
+  ]);
+  const now = new Date();
+  return invitations.map((i) => ({
+    id: i.id,
+    email: i.email,
+    role: i.role,
+    createdAt: i.createdAt,
+    expiresAt: i.expiresAt,
+    expired: i.expiresAt <= now,
+    eventTitle: events.find((e) => e.id === i.eventId)?.title ?? null,
+    invitedByName: inviters.find((u) => u.id === i.invitedById)?.name ?? null,
+  }));
+}
+
+/** Carrega um convite pendente da organização e confere se o ator pode mexer no papel convidado. */
+async function pendingInvitationForManager(tx: Tx, actor: Actor, organizationId: string, invitationId: string) {
+  const { role: actorRole } = await assertOrgPermission(tx, actor, organizationId, "members:manage");
+  const inv = await tx.organizationInvitation.findFirst({ where: { id: invitationId, organizationId } });
+  if (!inv) throw notFound("Convite não encontrado.");
+  assertCanManageRole(actorRole, inv.role);
+  if (inv.acceptedAt || inv.revokedAt) throw invalidState("Este convite já foi aceito ou revogado.");
+  return inv;
+}
+
+export async function revokeInvitation(db: Db, actor: Actor, organizationId: string, invitationId: string) {
+  return db.$transaction(async (tx) => {
+    const inv = await pendingInvitationForManager(tx, actor, organizationId, invitationId);
+    // Condicional: perde para um aceite concorrente em vez de revogar um convite já usado.
+    const { count } = await tx.organizationInvitation.updateMany({
+      where: { id: inv.id, acceptedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (count === 0) throw invalidState("Este convite já foi aceito ou revogado.");
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "member.invitation_revoked",
+      entityType: "OrganizationInvitation",
+      entityId: inv.id,
+      metadata: { email: inv.email, role: inv.role },
+    });
+  });
+}
+
+/** Gera um novo token (o anterior deixa de funcionar) e renova a validade. */
+export async function resendInvitation(db: Db, actor: Actor, organizationId: string, invitationId: string) {
+  const token = randomToken(32);
+  return db.$transaction(async (tx) => {
+    const inv = await pendingInvitationForManager(tx, actor, organizationId, invitationId);
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+    const { count } = await tx.organizationInvitation.updateMany({
+      where: { id: inv.id, acceptedAt: null, revokedAt: null },
+      data: { tokenHash: hashToken(token), expiresAt },
+    });
+    if (count === 0) throw invalidState("Este convite já foi aceito ou revogado.");
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "member.invitation_resent",
+      entityType: "OrganizationInvitation",
+      entityId: inv.id,
+      metadata: { email: inv.email, role: inv.role },
+    });
+    return { invitation: { ...inv, expiresAt }, token };
+  });
+}
+
+/** Resumo exibido em /convite/[token]; null se o convite não puder mais ser usado. */
+export async function getInvitationForInvitee(db: Db, actor: Actor & { email: string }, token: string) {
+  assertActive(actor);
+  const inv = await db.organizationInvitation.findFirst({
+    where: { tokenHash: hashToken(token), ...usableInvitation() },
+    select: { role: true, email: true, eventId: true, expiresAt: true, organization: { select: { name: true } } },
+  });
+  if (!inv) return null;
+  if (inv.email !== actor.email.toLowerCase()) return { emailMatches: false as const };
+  const event = inv.eventId ? await db.event.findUnique({ where: { id: inv.eventId }, select: { title: true } }) : null;
+  return { emailMatches: true as const, organizationName: inv.organization.name, role: inv.role, eventTitle: event?.title ?? null, expiresAt: inv.expiresAt };
 }
 
 /** O token prova acesso à caixa de e-mail; o e-mail da conta também precisa coincidir. */
-export async function acceptInvitation(db: Db, actor: Actor & { email: string }, token: string) {
+async function invitationForInvitee(tx: Tx, actor: Actor & { email: string }, token: string) {
   assertActive(actor);
+  const inv = await tx.organizationInvitation.findFirst({ where: { tokenHash: hashToken(token), ...usableInvitation() } });
+  if (!inv) throw invitationInvalid();
+  if (inv.email !== actor.email.toLowerCase()) throw new AppError("FORBIDDEN", "Este convite foi enviado para outro e-mail.");
+  return inv;
+}
+
+export async function acceptInvitation(db: Db, actor: Actor & { email: string }, token: string) {
   return db.$transaction(async (tx) => {
-    const inv = await tx.organizationInvitation.findUnique({ where: { tokenHash: hashToken(token) } });
-    if (!inv || inv.revokedAt || inv.acceptedAt || inv.expiresAt < new Date()) throw new AppError("NOT_FOUND", "Convite inválido ou expirado.");
-    if (inv.email !== actor.email.toLowerCase()) throw new AppError("FORBIDDEN", "Este convite foi enviado para outro e-mail.");
-    const existing = await tx.organizationMember.findUnique({
-      where: { organizationId_userId: { organizationId: inv.organizationId, userId: actor.id } },
+    const inv = await invitationForInvitee(tx, actor, token);
+    // Reivindica o convite de forma atômica: com aceites simultâneos (ou revogação/
+    // reenvio concorrente), só uma transação obtém count = 1.
+    const { count } = await tx.organizationInvitation.updateMany({
+      where: { id: inv.id, tokenHash: inv.tokenHash, ...usableInvitation() },
+      data: { acceptedAt: new Date(), acceptedById: actor.id },
     });
-    if (!existing) await tx.organizationMember.create({ data: { organizationId: inv.organizationId, userId: actor.id, role: inv.role } });
+    if (count === 0) throw invitationInvalid();
+    // Quem já é membro mantém o papel atual; ON CONFLICT DO NOTHING cobre convites diferentes aceitos em paralelo.
+    await tx.organizationMember.createMany({
+      data: [{ organizationId: inv.organizationId, userId: actor.id, role: inv.role }],
+      skipDuplicates: true,
+    });
     if (inv.eventId) {
-      await tx.eventStaffAssignment.upsert({
-        where: { eventId_userId: { eventId: inv.eventId, userId: actor.id } },
-        create: { eventId: inv.eventId, userId: actor.id, assignedById: inv.invitedById },
-        update: {},
+      await tx.eventStaffAssignment.createMany({
+        data: [{ eventId: inv.eventId, userId: actor.id, assignedById: inv.invitedById }],
+        skipDuplicates: true,
       });
     }
-    await tx.organizationInvitation.update({ where: { id: inv.id }, data: { acceptedAt: new Date(), acceptedById: actor.id } });
     await audit(tx, { actorUserId: actor.id, organizationId: inv.organizationId, action: "member.joined", entityType: "OrganizationInvitation", entityId: inv.id });
     return inv;
+  });
+}
+
+/** O convidado recusa: o convite fica revogado (não há coluna própria; a recusa fica na auditoria). */
+export async function declineInvitation(db: Db, actor: Actor & { email: string }, token: string) {
+  return db.$transaction(async (tx) => {
+    const inv = await invitationForInvitee(tx, actor, token);
+    const { count } = await tx.organizationInvitation.updateMany({
+      where: { id: inv.id, tokenHash: inv.tokenHash, acceptedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (count === 0) throw invitationInvalid();
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: inv.organizationId,
+      action: "member.invitation_declined",
+      entityType: "OrganizationInvitation",
+      entityId: inv.id,
+    });
   });
 }
 
@@ -285,17 +443,47 @@ export async function assignStaffToEvent(db: Db, actor: Actor, eventId: string, 
   });
 }
 
+/**
+ * Altera o papel de um membro. Regras (no servidor): quem altera precisa de
+ * `members:manage`; não mexe em quem está acima dele nem concede papel acima do
+ * próprio (só OWNER cria OWNER); a organização nunca fica sem OWNER.
+ */
+export async function changeMemberRole(db: Db, actor: Actor, organizationId: string, userId: string, role: OrgRole) {
+  if (!Object.hasOwn(ROLE_RANK, role)) throw new AppError("VALIDATION", "Papel inválido.");
+  return db.$transaction(async (tx) => {
+    await lockOrganizationTeam(tx, organizationId);
+    const { role: actorRole } = await assertOrgPermission(tx, actor, organizationId, "members:manage");
+    const target = await tx.organizationMember.findUnique({ where: { organizationId_userId: { organizationId, userId } } });
+    if (!target) throw notFound("Membro não encontrado.");
+    if (target.role === role) return target;
+    assertCanManageRole(actorRole, target.role);
+    assertCanManageRole(actorRole, role);
+    if (target.role === "OWNER") await assertNotLastOwner(tx, organizationId);
+    const updated = await tx.organizationMember.update({ where: { id: target.id }, data: { role } });
+    // Atribuições por evento só valem para CHECKIN_STAFF; não deixa concessões antigas para trás.
+    if (target.role === "CHECKIN_STAFF") await tx.eventStaffAssignment.deleteMany({ where: { userId, event: { organizationId } } });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "member.role_changed",
+      entityType: "OrganizationMember",
+      entityId: target.id,
+      metadata: { userId, from: target.role, to: role },
+    });
+    return updated;
+  });
+}
+
 export async function removeMember(db: Db, actor: Actor, organizationId: string, userId: string) {
-  await assertOrgPermission(db, actor, organizationId, "members:manage");
-  const target = await db.organizationMember.findUnique({ where: { organizationId_userId: { organizationId, userId } } });
-  if (!target) throw notFound();
-  if (target.role === "OWNER") {
-    const owners = await db.organizationMember.count({ where: { organizationId, role: "OWNER" } });
-    if (owners <= 1) throw new AppError("VALIDATION", "A organização precisa de ao menos um responsável (OWNER).");
-  }
-  await db.$transaction([
-    db.eventStaffAssignment.deleteMany({ where: { userId, event: { organizationId } } }),
-    db.organizationMember.delete({ where: { id: target.id } }),
-  ]);
-  await audit(db, { actorUserId: actor.id, organizationId, action: "member.removed", entityType: "OrganizationMember", entityId: target.id, metadata: { userId } });
+  await db.$transaction(async (tx) => {
+    await lockOrganizationTeam(tx, organizationId);
+    const { role: actorRole } = await assertOrgPermission(tx, actor, organizationId, "members:manage");
+    const target = await tx.organizationMember.findUnique({ where: { organizationId_userId: { organizationId, userId } } });
+    if (!target) throw notFound();
+    assertCanManageRole(actorRole, target.role);
+    if (target.role === "OWNER") await assertNotLastOwner(tx, organizationId);
+    await tx.eventStaffAssignment.deleteMany({ where: { userId, event: { organizationId } } });
+    await tx.organizationMember.delete({ where: { id: target.id } });
+    await audit(tx, { actorUserId: actor.id, organizationId, action: "member.removed", entityType: "OrganizationMember", entityId: target.id, metadata: { userId } });
+  });
 }
