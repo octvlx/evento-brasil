@@ -4,7 +4,7 @@
 # "Require review from Code Owners" na proteção da branch main.
 
 # Padrão: responsável técnico revisa tudo
-*                                   @SEU-USUARIO-GITHUB
+*                                   @octvlx
 
 # Dinheiro, estoque e permissões: sempre revisão sênior
 /prisma/                            @octvlx  
