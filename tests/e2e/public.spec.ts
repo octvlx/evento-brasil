@@ -73,3 +73,16 @@ test("reembolso: pedido mostra a situação e os ingressos ficam cancelados com 
   const row = page.getByRole("row").filter({ has: page.locator(`a[href="${new URL(orderUrl).pathname}"]`) });
   await expect(row).toContainText("Reembolsado");
 });
+
+test("robots.txt e sitemap.xml públicos", async ({ request }) => {
+  const robots = await request.get("/robots.txt");
+  expect(robots.status()).toBe(200);
+  const robotsText = await robots.text();
+  expect(robotsText).toContain("Disallow: /checkout");
+  expect(robotsText).toContain("sitemap.xml");
+  const sitemap = await request.get("/sitemap.xml");
+  expect(sitemap.status()).toBe(200);
+  const xml = await sitemap.text();
+  expect(xml).toContain("/eventos</loc>");
+  expect(xml).toContain("/cidades/");
+});

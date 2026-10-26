@@ -223,3 +223,13 @@ export async function getPublicOrganizer(db: Db, slug: string, now = new Date())
   const rows = await db.event.findMany({ where: { ...publicEventWhere(now), organizationId: org.id }, include: cardInclude, orderBy: { startsAt: "asc" } });
   return { org, events: rows.map((r) => toCard(r, now)) };
 }
+
+// Entradas para o sitemap: apenas o que é público e indexável.
+export async function listSitemapEntries(db: Db, now = new Date()) {
+  const [events, cities, organizers] = await Promise.all([
+    db.event.findMany({ where: publicEventWhere(now), select: { slug: true, updatedAt: true }, orderBy: { startsAt: "asc" } }),
+    db.city.findMany({ select: { slug: true }, orderBy: { slug: "asc" } }),
+    db.organization.findMany({ where: { status: "APPROVED" }, select: { slug: true, updatedAt: true }, orderBy: { slug: "asc" } }),
+  ]);
+  return { events, cities, organizers };
+}

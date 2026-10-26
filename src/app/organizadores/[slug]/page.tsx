@@ -10,7 +10,15 @@ import { getPublicOrganizer } from "@/server/services/catalog";
 export async function generateMetadata({ params }: PageProps<"/organizadores/[slug]">): Promise<Metadata> {
   const { slug } = await params;
   const org = await db.organization.findFirst({ where: { slug, status: "APPROVED" }, select: { name: true, description: true } });
-  return org ? { title: org.name, description: org.description?.slice(0, 160) } : { title: "Organizador não encontrado" };
+  if (!org) return { title: "Organizador não encontrado", robots: { index: false } };
+  const description = org.description?.slice(0, 160) ?? `Eventos de ${org.name} no Evento Brasil. Compre ingressos com PIX ou cartão.`;
+  return {
+    title: org.name,
+    description,
+    alternates: { canonical: `/organizadores/${slug}` },
+    // Sem imagem própria do organizador: o og:image padrão do site (opengraph-image) é herdado.
+    openGraph: { type: "website", title: org.name, description, url: `/organizadores/${slug}` },
+  };
 }
 
 export default function OrganizerPage({ params }: PageProps<"/organizadores/[slug]">) {
