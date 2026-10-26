@@ -50,7 +50,7 @@ Mescle com **Squash and merge** e apague a branch.
 - **Nunca edite** uma migração já mesclada na `main`; crie outra.
 - Depois de `git pull`, rode o `.bat` (ou `npm run db:deploy`) para aplicar as
   migrações dos colegas sem apagar seus dados.
-- `npm run db:seed` **apaga todo o banco local** e recria os dados de demonstração.
+- `npm run db:seed` só roda em banco vazio (já populado com o seed: sai sem alterar nada). Para recriar os dados de demonstração: `npm run db:reset -- --yes` (**apaga todo o banco local**).
 
 ## Regras do projeto
 

@@ -82,7 +82,7 @@ recusa a rodar com `NODE_ENV=production`.
 | `npm run test:unit` | Testes unitários (sem banco) |
 | `npm run test:integration` | Testes de integração — sobem um PostgreSQL próprio e descartável (porta 5434) |
 | `npm run test:e2e` | Playwright contra `localhost:3000` com o banco do seed (usa o Microsoft Edge instalado; `PW_CHANNEL=chromium` para Chromium) |
-| `npm run db:migrate` · `db:deploy` · `db:seed` | Migrações e seed |
+| `npm run db:migrate` · `db:deploy` · `db:seed` · `db:status` · `db:reset` | Migrações, seed e estado do banco (ver `docs/database.md`) |
 | `npm run cities:import` | Importa os ~5.570 municípios do IBGE (API oficial) |
 | `POST /api/cron/maintenance` (header `x-cron-secret`) | Expira reservas vencidas e encerra eventos — agendar a cada minuto |
 

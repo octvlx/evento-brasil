@@ -42,6 +42,34 @@ const CATEGORIES = [
   ["infantil", "Infantil"], ["congressos", "Congressos e palestras"],
 ] as const;
 
+const DEMO_ADMIN_EMAIL = "admin@demo.eventobrasil.test";
+
+/**
+ * O seed só roda em banco sem dados de uso. Retorna a mensagem de recusa, ou
+ * null quando pode prosseguir (tabelas de referência, como cidades do IBGE,
+ * ainda são limpas pelo wipe).
+ */
+async function refusalReason(): Promise<{ message: string; code: number } | null> {
+  if (await db.user.findUnique({ where: { email: DEMO_ADMIN_EMAIL }, select: { id: true } })) {
+    return {
+      code: 0,
+      message:
+        `Banco já contém o seed de demonstração (${DEMO_ADMIN_EMAIL} existe) — nada a fazer.\n` +
+        "Se uma execução anterior foi interrompida, ou para recriar os dados: npm run db:reset -- --yes",
+    };
+  }
+  const [users, orgs, orders] = await Promise.all([db.user.count(), db.organization.count(), db.order.count()]);
+  if (users + orgs + orders > 0) {
+    return {
+      code: 1,
+      message:
+        `Banco não está vazio (${users} usuários, ${orgs} organizações, ${orders} pedidos) e não é o seed de demonstração.\n` +
+        "O seed apaga todas as tabelas; recusado para não destruir dados. Use um banco novo ou npm run db:reset -- --yes.",
+    };
+  }
+  return null;
+}
+
 async function wipe() {
   const tables = await db.$queryRaw<{ tablename: string }[]>`SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;
   await db.$executeRawUnsafe(`TRUNCATE ${tables.map((t) => `"${t.tablename}"`).join(", ")} CASCADE`);
@@ -59,12 +87,18 @@ function daysToSaturday(tz: string) {
 }
 
 async function main() {
+  const refusal = await refusalReason();
+  if (refusal) {
+    (refusal.code === 0 ? console.log : console.error)(refusal.message);
+    process.exitCode = refusal.code;
+    return;
+  }
   await wipe();
   const passwordHash = await hashPassword(DEMO_PASSWORD);
   const user = (email: string, name: string, extra: object = {}) =>
     db.user.create({ data: { email, name, passwordHash, isDemoAccount: true, ...extra } });
 
-  const admin = await user("admin@demo.eventobrasil.test", "Admin Demonstração", { platformRole: "ADMIN" });
+  const admin = await user(DEMO_ADMIN_EMAIL, "Admin Demonstração", { platformRole: "ADMIN" });
   const producer = await user("produtora@demo.eventobrasil.test", "Paula Produtora (demo)", { phone: "11912345678" });
   const producer2 = await user("coletivo@demo.eventobrasil.test", "Caio Coletivo (demo)");
   const pendingOwner = await user("novo.organizador@demo.eventobrasil.test", "Nina Nova (demo)");
