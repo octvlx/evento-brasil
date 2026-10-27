@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Alert, Badge, Skeleton } from "@/components/ui/primitives";
+import { buttonVariants } from "@/components/ui/button";
 import { PageTitle, StatCard } from "@/components/site/panel-shell";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
@@ -151,15 +152,17 @@ async function Content() {
       </section>
 
       <section className="mt-8">
-        <h2 className="mb-3 font-display text-lg font-bold">Meia-entrada por evento</h2>
+        <h2 className="mb-1 font-display text-lg font-bold">Meia-entrada por evento</h2>
+        <p className="mb-3 text-sm text-muted-foreground">O CSV traz cota, vendas, reembolsos, cancelamentos, check-ins e vendas por dia — sem dados pessoais. Cada exportação fica registrada.</p>
         <div className="overflow-x-auto rounded-2xl border border-border">
-          <table className="w-full min-w-[520px] text-sm">
+          <table className="w-full min-w-[620px] text-sm">
             <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="p-3">Evento</th>
                 <th className="p-3 text-right">Cota</th>
                 <th className="p-3 text-right">Meias vendidas/reservadas</th>
                 <th className="p-3 text-right">Total vendido</th>
+                <th className="p-3 text-right">Relatório</th>
               </tr>
             </thead>
             <tbody>
@@ -173,6 +176,11 @@ async function Content() {
                     <td className="p-3 text-right tabular-nums">{quota ?? "—"}</td>
                     <td className="p-3 text-right tabular-nums">{half}</td>
                     <td className="p-3 text-right tabular-nums">{sold}</td>
+                    <td className="p-3 text-right">
+                      <a href={`/api/organizador/eventos/${e.id}/meia-entrada`} className={buttonVariants({ variant: "outline", size: "sm" })} aria-label={`Baixar CSV de meia-entrada de ${e.title}`}>
+                        CSV
+                      </a>
+                    </td>
                   </tr>
                 );
               })}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CANCEL_HELP_HREF } from "@/lib/help-links";
 import { Logo } from "./logo";
 
 export function SiteFooter() {
@@ -14,6 +15,7 @@ export function SiteFooter() {
           links={[
             ["/eventos", "Explorar eventos"],
             ["/meus-ingressos", "Meus ingressos"],
+            [CANCEL_HELP_HREF, "Cancelar compra / arrependimento"],
             ["/ajuda", "Central de ajuda"],
           ]}
         />

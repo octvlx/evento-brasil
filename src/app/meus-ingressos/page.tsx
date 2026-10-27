@@ -9,6 +9,7 @@ import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { formatDateShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
+import { CANCEL_HELP_HREF } from "@/lib/help-links";
 import { ORDER_STATUS, TICKET_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Meus ingressos", robots: { index: false } };
@@ -93,7 +94,12 @@ async function Content() {
         </section>
       )}
       <section>
-        <h2 className="mb-3 font-display text-xl font-bold">Histórico de pedidos</h2>
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="font-display text-xl font-bold">Histórico de pedidos</h2>
+          <Link href={CANCEL_HELP_HREF} className="text-sm font-semibold text-secondary hover:underline">
+            Cancelar compra / arrependimento
+          </Link>
+        </div>
         <div className="overflow-x-auto rounded-2xl border border-border">
           <table className="w-full text-sm">
             <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">

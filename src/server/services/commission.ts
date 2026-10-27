@@ -1,5 +1,6 @@
 import "server-only";
 import type { CommissionRule, CommissionScope, FeeBearer, ProcessingFeeBearer } from "@/generated/prisma/client";
+import { computeFees } from "@/features/fees/policy";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
 import { assertPlatformAdmin, type Actor } from "../auth/permissions";
@@ -23,6 +24,25 @@ export async function resolveCommissionRule(client: Db | Tx, organizationId: str
   const rule = pick("EVENT") ?? pick("ORGANIZATION") ?? pick("PLATFORM");
   if (!rule) throw new AppError("INVALID_STATE", "Nenhuma regra de comissão configurada para a plataforma.");
   return rule;
+}
+
+export interface BuyerPricePreview {
+  priceCents: number;
+  /** Taxa de serviço por ingresso (0 quando a comissão sai do repasse do organizador). */
+  serviceFeeCents: number;
+  /** O que o comprador paga por ingresso: preço + taxa de serviço. */
+  totalCents: number;
+}
+
+/**
+ * Prévia do preço por ingresso para o catálogo (Decreto 13.108, R1). Usa o
+ * mesmo `computeFees` do `createOrder`, então o valor exibido é o cobrado
+ * (coberto por tests/integration/r-price-preview.test.ts). A regra vem de
+ * `resolveCommissionRule` para o evento.
+ */
+export function buyerPricePreview(rule: Pick<CommissionRule, "percentBps" | "fixedCentsPerTicket" | "bearer">, priceCents: number): BuyerPricePreview {
+  const [line] = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1 }], { ...rule, policyVersion: "preview" }).lines;
+  return { priceCents, serviceFeeCents: line.serviceFeePerUnitCents, totalCents: priceCents + line.serviceFeePerUnitCents };
 }
 
 export interface NewRuleInput {
