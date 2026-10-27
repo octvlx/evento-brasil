@@ -48,6 +48,33 @@ describe("regressões da revisão independente", () => {
     }
   });
 
+  it("segundo clique em 'Gerar PIX' durante a criação no provedor reaproveita a mesma tentativa", async () => {
+    const { event, buyer, items } = await setup();
+    const order = await buy(buyer, event.id, items);
+    const create = adapter.createPayment.bind(adapter);
+    let release!: () => void;
+    const providerCalled = new Promise<void>((resolve) => {
+      vi.spyOn(adapter, "createPayment").mockImplementationOnce(async (input) => {
+        resolve();
+        await new Promise<void>((r) => (release = r));
+        return create(input);
+      });
+    });
+    try {
+      const first = startPayment(db, adapter, buyer, order.id, "PIX");
+      await providerCalled;
+      // A tentativa já foi gravada (sem referência do provedor) e a criação segue em andamento.
+      const second = await startPayment(db, adapter, buyer, order.id, "PIX");
+      release();
+      expect((await first).id).toBe(second.id);
+      expect(adapter.createPayment).toHaveBeenCalledTimes(1);
+      expect(await db.payment.count({ where: { orderId: order.id } })).toBe(1);
+      expect(await db.simulatedProviderPayment.count()).toBe(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("só libera nova tentativa após o provedor confirmar ausência da cobrança", async () => {
     const { event, buyer, items } = await setup();
     const order = await buy(buyer, event.id, items);

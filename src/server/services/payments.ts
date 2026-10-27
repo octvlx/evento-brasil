@@ -44,7 +44,10 @@ export async function startPayment(
     if (pending) {
       // PIX pendente é reaproveitado (mesmo QR). Qualquer outra combinação aguardaria
       // uma tentativa em andamento — recusada para não gerar cobrança dupla.
-      if (pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id && pending.providerPaymentId) return { kind: "reuse", payment: pending } as const;
+      // Sem referência e sem falha registrada, o PIX está em criação por um clique concorrente:
+      // reaproveita. Criação incerta (ou em revisão) continua bloqueada até a reconciliação.
+      const reusable = pending.providerPaymentId !== null || pending.failureReason === null;
+      if (pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id && reusable) return { kind: "reuse", payment: pending } as const;
       throw invalidState(
         pending.method === "PIX"
           ? "Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva."
