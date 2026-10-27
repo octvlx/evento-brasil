@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { CheckCircle2, Clock, RotateCcw, Ticket, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Download, RotateCcw, Ticket, XCircle } from "lucide-react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { OrderSummary } from "@/components/site/order-summary";
@@ -86,7 +86,14 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
 
       {order.tickets.length > 0 && (
         <section className="mt-8">
-          <h2 className="mb-3 font-display text-xl font-bold">Ingressos</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-display text-xl font-bold">Ingressos</h2>
+            {order.tickets.some((t) => t.status !== "REVOKED") && (
+              <a href={`/api/orders/${order.id}/pdf`} target="_blank" rel="noopener" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                <Download aria-hidden /> Salvar todos (PDF)
+              </a>
+            )}
+          </div>
           <ul className="grid gap-3 sm:grid-cols-2">
             {order.tickets.map((t) => {
               const ts = TICKET_STATUS[t.status];
