@@ -202,7 +202,7 @@ function couponDiscounts(c: CouponWithTypes, requested: PricedType[], eventTypes
     if (restricted.size && !restricted.has(t.id)) continue;
     const d = discountPerUnit(t.priceCents, c);
     if (!d) continue;
-    if (undercutHalfPrice(t.priceCents - d, halfPrices) !== undefined)
+    if (undercutHalfPrice(t.priceCents, t.priceCents - d, halfPrices) !== undefined)
       throw new AppError("VALIDATION", "Com este cupom a inteira ficaria mais barata que a meia-entrada; não é possível aplicá-lo.");
     out.set(t.id, d);
   }

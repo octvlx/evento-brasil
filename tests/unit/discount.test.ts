@@ -77,14 +77,19 @@ describe("computeFees com desconto", () => {
 });
 
 describe("undercutHalfPrice", () => {
-  it("acusa inteira com desconto abaixo da meia mais barata", () => {
-    expect(undercutHalfPrice(4000, [5000, 4500])).toBe(4500);
-    expect(undercutHalfPrice(4500, [5000, 4500])).toBeUndefined();
+  it("acusa quando o cupom leva a inteira para baixo da meia mais barata", () => {
+    expect(undercutHalfPrice(10000, 4000, [5000, 4500])).toBe(4500);
+    expect(undercutHalfPrice(4500, 4400, [5000, 4500])).toBe(4500); // tabela = meia
+    expect(undercutHalfPrice(10000, 4500, [5000, 4500])).toBeUndefined();
+  });
+
+  it("tipo que já custa menos que a meia sem cupom não é afetado", () => {
+    expect(undercutHalfPrice(1000, 900, [2500])).toBeUndefined();
   });
 
   it("sem meia paga ou cortesia (líquido 0) não acusa", () => {
-    expect(undercutHalfPrice(100, [])).toBeUndefined();
-    expect(undercutHalfPrice(100, [0])).toBeUndefined();
-    expect(undercutHalfPrice(0, [5000])).toBeUndefined();
+    expect(undercutHalfPrice(100, 90, [])).toBeUndefined();
+    expect(undercutHalfPrice(100, 90, [0])).toBeUndefined();
+    expect(undercutHalfPrice(10000, 0, [5000])).toBeUndefined();
   });
 });

@@ -113,6 +113,14 @@ describe("S — preço com cupom", () => {
     });
     expect(mixed).toMatchObject({ discountCents: 1000, subtotalCents: 9000 + 5000 });
     await expect(order(await makeUser(), event.id, [{ ticketTypeId: general.id, quantity: 1 }], { couponCode: "SESSENTA" })).rejects.toThrow(/meia-entrada/);
+
+    // Tipo que já custa menos que a meia (R$ 20 × meia de R$ 50): o cupom não é recusado.
+    const promo = await db.ticketType.create({ data: { eventId: event.id, name: "Promo", kind: "GENERAL", priceCents: 2000, quantityTotal: 10, maxPerOrder: 10 } });
+    const cheap = await order(await makeUser(), event.id, [{ ticketTypeId: promo.id, quantity: 1 }], { couponCode: "PROMO10" });
+    expect(cheap).toMatchObject({ discountCents: 200, subtotalCents: 1800 });
+    // Cortesia de 100% em evento com meia: não é preço de venda, é aceita.
+    await coupon({ code: "CORTESIA", percentBps: 10000 });
+    expect(await order(await makeUser(), event.id, [{ ticketTypeId: general.id, quantity: 1 }], { couponCode: "CORTESIA" })).toMatchObject({ status: "PAID", totalCents: 0 });
   });
 
   it("guarda B1 com cupom; cupom de 100% vira pedido gratuito resgatado uma única vez", async () => {
