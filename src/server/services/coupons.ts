@@ -1,0 +1,238 @@
+// Cupons de desconto: cadastro pelo organizador (ADR 0002, passo 3).
+//
+// Este módulo só administra o cupom. Validar o código no checkout, aplicar o
+// desconto e mexer nos contadores (timesReserved/timesRedeemed) é do fluxo de
+// pedidos (`orders.ts`, pagamentos-financeiro) — aqui os contadores só são lidos.
+import "server-only";
+import { Prisma, type DiscountType, type EventStatus, type TicketType } from "@/generated/prisma/client";
+import { couponInputSchema, type CouponInput } from "@/features/schemas";
+import { commissionPerUnit } from "@/features/fees/policy";
+import { zonedLocalToUtc } from "@/lib/datetime";
+import { applyBps, formatBRL } from "@/lib/money";
+import type { Db, Tx } from "../db";
+import { audit } from "../audit";
+import { assertEventPermission, assertOrgPermission, type Actor } from "../auth/permissions";
+import { AppError, invalidState, notFound } from "../errors";
+import { resolveCommissionRule } from "./commission";
+
+const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
+
+type DiscountSpec = { discountType: DiscountType; percentBps: number | null; amountCents: number | null };
+
+// Cópia local do cálculo do passo 2 (`discountPerUnit` em src/features/fees/discount.ts,
+// pagamentos-financeiro); trocar pelo import quando ele estiver no main.
+function discountPerUnit(unitPriceCents: number, coupon: DiscountSpec): number {
+  if (unitPriceCents === 0) return 0;
+  const raw = coupon.discountType === "PERCENT" ? applyBps(unitPriceCents, coupon.percentBps ?? 0) : (coupon.amountCents ?? 0);
+  return Math.min(raw, unitPriceCents);
+}
+
+/** Tipos a que o cupom se aplica: pagos, sem meia-entrada (D3), filtrados pela lista quando houver. */
+function eligibleTypes(types: TicketType[], ticketTypeIds: string[]) {
+  return types.filter((t) => t.priceCents > 0 && t.kind !== "HALF_PRICE" && (ticketTypeIds.length === 0 || ticketTypeIds.includes(t.id)));
+}
+
+/**
+ * Avisos para o organizador (não bloqueiam o cadastro): casos em que o pedido
+ * com o cupom será recusado no checkout — repasse negativo (B1) e inteira com
+ * desconto mais barata que a meia (D3, até a revisão jurídica).
+ */
+async function couponWarnings(tx: Tx, organizationId: string, eventId: string, types: TicketType[], spec: DiscountSpec, ticketTypeIds: string[]) {
+  const warnings: string[] = [];
+  const rule = await resolveCommissionRule(tx, organizationId, eventId);
+  const halfPrices = types.filter((t) => t.kind === "HALF_PRICE" && t.priceCents > 0).map((t) => t.priceCents);
+  const cheapestHalf = halfPrices.length ? Math.min(...halfPrices) : null;
+  for (const t of eligibleTypes(types, ticketTypeIds)) {
+    const net = t.priceCents - discountPerUnit(t.priceCents, spec);
+    if (rule.bearer === "ORGANIZER" && net > 0 && commissionPerUnit(net, rule) > net) {
+      warnings.push(`"${t.name}": com o desconto o preço (${formatBRL(net)}) fica abaixo da taxa da plataforma; o cupom será recusado nesse ingresso.`);
+    }
+    // Só quando é o cupom que leva abaixo da meia: um tipo que já custa menos que a meia não é afetado.
+    if (cheapestHalf !== null && t.priceCents >= cheapestHalf && net < cheapestHalf) {
+      warnings.push(`"${t.name}": com o desconto (${formatBRL(net)}) fica mais barato que a meia-entrada (${formatBRL(cheapestHalf)}); o cupom será recusado nesse ingresso até a revisão jurídica.`);
+    }
+  }
+  return warnings;
+}
+
+async function loadEditableEvent(tx: Tx, eventId: string) {
+  const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, include: { ticketTypes: true } });
+  if (!EDITABLE.includes(event.status)) throw invalidState("Este evento não aceita mais cupons.");
+  return event;
+}
+
+function assertTicketTypes(types: TicketType[], ids: string[]) {
+  for (const id of ids) {
+    const t = types.find((x) => x.id === id);
+    if (!t) throw new AppError("VALIDATION", "Tipo de ingresso inválido para este evento.");
+    if (t.kind === "HALF_PRICE") throw new AppError("VALIDATION", "Cupons não se aplicam à meia-entrada (pendente de revisão jurídica).");
+    if (t.priceCents === 0) throw new AppError("VALIDATION", `"${t.name}" é gratuito: não há o que descontar.`);
+  }
+}
+
+function couponData(input: ReturnType<typeof couponInputSchema.parse>, timezone: string) {
+  return {
+    code: input.code,
+    description: input.description ?? null,
+    discountType: input.discountType,
+    percentBps: input.percentBps,
+    amountCents: input.amountCents,
+    validFrom: input.validFromLocal ? zonedLocalToUtc(input.validFromLocal, timezone) : null,
+    validUntil: input.validUntilLocal ? zonedLocalToUtc(input.validUntilLocal, timezone) : null,
+    maxUses: input.maxUses,
+    maxUsesPerUser: input.maxUsesPerUser,
+  };
+}
+
+function isUniqueViolation(err: unknown) {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
+}
+
+const duplicateCode = () => new AppError("CONFLICT", "Já existe um cupom com este código nesta organização.");
+
+const isUsed = (c: { timesReserved: number; timesRedeemed: number; _count: { orders: number } }) => c.timesReserved + c.timesRedeemed + c._count.orders > 0;
+
+/** Cupons do evento (os da organização inteira também valem para ele). */
+export async function listEventCoupons(db: Db, actor: Actor, eventId: string) {
+  const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
+  const coupons = await db.coupon.findMany({
+    where: { organizationId, OR: [{ eventId }, { eventId: null }] },
+    include: { ticketTypes: { select: { ticketTypeId: true } }, _count: { select: { orders: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  return coupons.map((c) => ({
+    id: c.id,
+    code: c.code,
+    description: c.description,
+    discountType: c.discountType,
+    percentBps: c.percentBps,
+    amountCents: c.amountCents,
+    validFrom: c.validFrom,
+    validUntil: c.validUntil,
+    maxUses: c.maxUses,
+    maxUsesPerUser: c.maxUsesPerUser,
+    timesReserved: c.timesReserved,
+    timesRedeemed: c.timesRedeemed,
+    disabled: c.disabledAt !== null,
+    organizationWide: c.eventId === null,
+    ticketTypeIds: c.ticketTypes.map((t) => t.ticketTypeId),
+    used: isUsed(c),
+  }));
+}
+
+export async function createCoupon(db: Db, actor: Actor, eventId: string, raw: CouponInput) {
+  const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
+  const input = couponInputSchema.parse(raw);
+  try {
+    return await db.$transaction(async (tx) => {
+      const event = await loadEditableEvent(tx, eventId);
+      assertTicketTypes(event.ticketTypes, input.ticketTypeIds);
+      const coupon = await tx.coupon.create({
+        data: {
+          ...couponData(input, event.timezone),
+          organizationId,
+          eventId,
+          createdById: actor.id,
+          ticketTypes: { create: input.ticketTypeIds.map((ticketTypeId) => ({ ticketTypeId })) },
+        },
+      });
+      await audit(tx, {
+        actorUserId: actor.id,
+        organizationId,
+        action: "coupon.created",
+        entityType: "Coupon",
+        entityId: coupon.id,
+        metadata: { eventId, code: coupon.code, discountType: coupon.discountType, percentBps: coupon.percentBps, amountCents: coupon.amountCents },
+      });
+      return { coupon, warnings: await couponWarnings(tx, organizationId, eventId, event.ticketTypes, input, input.ticketTypeIds) };
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw duplicateCode();
+    throw err;
+  }
+}
+
+async function loadCouponForManager(tx: Tx, actor: Actor, couponId: string) {
+  const coupon = await tx.coupon.findUnique({ where: { id: couponId }, include: { _count: { select: { orders: true } } } });
+  if (!coupon) throw notFound("Cupom não encontrado.");
+  await assertOrgPermission(tx, actor, coupon.organizationId, "event:write");
+  return coupon;
+}
+
+/**
+ * Edita o cupom. Depois do primeiro uso, código e desconto ficam fixos (os
+ * pedidos guardam o código e o desconto aplicados; mudar confundiria os
+ * relatórios). Validade, limites, descrição e tipos continuam editáveis.
+ */
+export async function updateCoupon(db: Db, actor: Actor, couponId: string, raw: CouponInput) {
+  const input = couponInputSchema.parse(raw);
+  try {
+    return await db.$transaction(async (tx) => {
+      const current = await loadCouponForManager(tx, actor, couponId);
+      if (!current.eventId) throw invalidState("Cupons da organização inteira ainda não são editáveis por aqui.");
+      const event = await loadEditableEvent(tx, current.eventId);
+      assertTicketTypes(event.ticketTypes, input.ticketTypeIds);
+      const used = isUsed(current);
+      if (
+        used &&
+        (input.code !== current.code ||
+          input.discountType !== current.discountType ||
+          input.percentBps !== current.percentBps ||
+          input.amountCents !== current.amountCents)
+      ) {
+        throw new AppError("VALIDATION", "Este cupom já foi usado: código e desconto não podem mais mudar. Crie outro cupom.");
+      }
+      await tx.couponTicketType.deleteMany({ where: { couponId } });
+      const coupon = await tx.coupon.update({
+        where: { id: couponId },
+        data: { ...couponData(input, event.timezone), ticketTypes: { create: input.ticketTypeIds.map((ticketTypeId) => ({ ticketTypeId })) } },
+      });
+      await audit(tx, {
+        actorUserId: actor.id,
+        organizationId: current.organizationId,
+        action: "coupon.updated",
+        entityType: "Coupon",
+        entityId: couponId,
+        metadata: { code: coupon.code, maxUses: coupon.maxUses, maxUsesPerUser: coupon.maxUsesPerUser },
+      });
+      return { coupon, warnings: await couponWarnings(tx, current.organizationId, event.id, event.ticketTypes, input, input.ticketTypeIds) };
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw duplicateCode();
+    throw err;
+  }
+}
+
+export async function setCouponDisabled(db: Db, actor: Actor, couponId: string, disabled: boolean) {
+  return db.$transaction(async (tx) => {
+    const coupon = await loadCouponForManager(tx, actor, couponId);
+    if ((coupon.disabledAt !== null) === disabled) return coupon;
+    const updated = await tx.coupon.update({ where: { id: couponId }, data: { disabledAt: disabled ? new Date() : null } });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: coupon.organizationId,
+      action: disabled ? "coupon.disabled" : "coupon.enabled",
+      entityType: "Coupon",
+      entityId: couponId,
+      metadata: { code: coupon.code },
+    });
+    return updated;
+  });
+}
+
+/** Só cupom nunca usado pode ser apagado (o banco também impede: onDelete Restrict). */
+export async function deleteCoupon(db: Db, actor: Actor, couponId: string) {
+  await db.$transaction(async (tx) => {
+    const coupon = await loadCouponForManager(tx, actor, couponId);
+    if (isUsed(coupon)) throw invalidState("Este cupom já foi usado: desative-o em vez de apagar.");
+    await tx.coupon.delete({ where: { id: couponId } });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: coupon.organizationId,
+      action: "coupon.deleted",
+      entityType: "Coupon",
+      entityId: couponId,
+      metadata: { code: coupon.code },
+    });
+  });
+}
