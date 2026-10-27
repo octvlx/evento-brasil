@@ -11,6 +11,7 @@ export default function robots(): MetadataRoute.Robots {
         "/pedido",
         "/ingressos",
         "/meus-ingressos",
+        "/meus-pedidos",
         "/minha-conta",
         "/entrar",
         "/registrar",

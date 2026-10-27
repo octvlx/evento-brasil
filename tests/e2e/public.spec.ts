@@ -205,3 +205,30 @@ test("canal de cancelamento/arrependimento: rodapé, Meus ingressos e Central de
   await login(page, USERS.customer, "/meus-ingressos");
   await expect(page.getByRole("link", { name: "Cancelar compra / arrependimento" }).first()).toHaveAttribute("href", "/ajuda#cancelamento");
 });
+
+test("meus pedidos: menu da conta, lista de pedidos anteriores e filtro", async ({ page, isMobile }) => {
+  await page.goto("/meus-pedidos");
+  await expect(page).toHaveURL(/\/entrar\?next=%2Fmeus-pedidos/);
+
+  await login(page, USERS.customer, "/");
+  if (isMobile) {
+    await page.getByRole("navigation", { name: "Navegação principal" }).getByRole("link", { name: "Pedidos" }).click();
+  } else {
+    await page.locator("summary", { hasText: "Menu da conta" }).click();
+    await page.getByRole("link", { name: "Meus pedidos" }).click();
+  }
+  await expect(page.getByRole("heading", { level: 1, name: "Meus pedidos" })).toBeVisible();
+  const orders = page.locator('main a[href^="/pedido/"]:visible');
+  await expect(orders.first()).toBeVisible();
+  await expect(page.getByText(/^\d+ pedidos?$/)).toBeVisible();
+
+  await page.getByRole("navigation", { name: "Filtrar pedidos" }).getByRole("link", { name: "Pagos" }).click();
+  await expect(page).toHaveURL(/situacao=pagos/);
+  await expect(page.getByRole("link", { name: "Pagos" })).toHaveAttribute("aria-current", "page");
+  const paid = page.locator('main a[href^="/pedido/"]:visible');
+  if (await paid.count()) {
+    for (const badge of await paid.locator("span", { hasText: /^(Pago|Aguardando pagamento|Reembolsado|Cancelado|Expirado)$/ }).allTextContents()) expect(badge).toBe("Pago");
+    await paid.first().click();
+    await expect(page).toHaveURL(/\/pedido\//);
+  }
+});
