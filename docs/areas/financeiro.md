@@ -108,6 +108,56 @@ após restaurar, provedor que estornou de fato, evento cancelado, detecção de
 invariante, restauração × check-in, reprocessar × restaurar, retentativa ×
 check-in), todos terminando com `checkFinancialInvariants() == []`.
 
+## Cupons e atribuição (ADR 0002, passo 2)
+
+Preço:
+- `discountPerUnit(preço, cupom)` em `src/features/fees/discount.ts` (pura):
+  `PERCENT` = `applyBps` meia-para-cima, `FIXED_PER_TICKET` = `min(valor, preço)`;
+  preço 0 não recebe desconto. `undercutHalfPrice(tabela, líquido, preçosDeMeia)` acusa
+  quando o cupom leva um ingresso com preço de tabela ≥ meia mais barata para baixo dela
+  (tipo que já custa menos que a meia não é afetado; cortesia de 100% fica de fora).
+- `computeFees` aceita `discountPerUnitCents` por linha; comissão e taxa BUYER
+  incidem sobre o **líquido**. A linha devolve `listUnitPriceCents`,
+  `discountPerUnitCents`, `unitPriceCents` (líquido) e `lineDiscountCents`; o
+  resultado tem `discountCents`. Razão, reembolsos e `ORDER_TOTALS_MISMATCH` não mudam.
+
+`createOrder`:
+- Entrada nova: `couponCode?` (normalizado para maiúsculas) e `attribution?`
+  (`trackingLinkId`, `utmSource/Medium/Campaign/Content/Term`).
+- Erros: `"Cupom inválido ou indisponível."` (inexistente, malformado, de outra
+  organização/evento, desativado — sem revelar qual); `"Cupom fora do período de
+  validade."`; `SOLD_OUT "Cupom esgotado."`; `LIMIT_EXCEEDED` (limite por
+  comprador); `"Este cupom não vale para os ingressos selecionados."`; meia-entrada
+  furada; `"Desconto alto demais…"` (guarda B1 com desconto); `RATE_LIMITED`
+  após 10 tentativas com cupom em 10 min por comprador (no serviço, cobre toda entrada).
+- Meia-entrada nunca recebe desconto (D3); sem `CouponTicketType` = todos os tipos pagos.
+- Atribuição: link de outro evento (ou inexistente) é descartado com os UTMs que
+  vieram com ele; UTMs soltos valem; com link e sem UTMs, copia os do link;
+  UTMs truncados em 200. Ler o cookie `eb_attr` é da Server Action (passo 4).
+
+Contadores (D4), definição usada também na reconciliação:
+`timesReserved` = pedidos `PENDING_PAYMENT` com o cupom;
+`timesRedeemed` = pedidos com o cupom que têm ingresso emitido.
+- `createOrder`: reserva +1. `finalizePaidOrderTx` (único ponto, inclusive gratuito):
+  reservado −1, resgatado +1. `releaseOrderTx` (expirar/cancelar/trocar): reservado −1.
+  `acquireLateInventoryTx`: resgatado +1 mesmo acima de `maxUses`, auditado
+  `coupon.redeemed_over_limit`. Pagamento tardio sem estoque não resgata.
+  Reembolso e chargeback não devolvem o uso. `maxUsesPerUser` conta pendentes e
+  pedidos com ingresso.
+
+Travas: **Event → Order → Coupon**. Cupom é trava-folha; transação que mexe em
+mais de um cupom (`createOrder` com troca de pedido/expiração, `expireStaleOrders`,
+`cancelEvent`) trava todos numa instrução `ORDER BY id FOR UPDATE`
+(`lockCoupons`/`lockCouponsOfOrders`). O teste de trocas cruzadas entre dois
+eventos com cupons de organização dá deadlock sem isso.
+
+Invariantes novos: `COUPON_COUNTERS_MISMATCH` (igualdade exata),
+`ORDER_DISCOUNT_MISMATCH`, `COUPON_TENANT_MISMATCH` (cupom de evento ou link em
+pedido de outro evento; `CouponTicketType` de outro evento/organização; link com
+cupom de outra organização/evento).
+
+Testes: `tests/unit/discount.test.ts`, `tests/integration/s-coupon-pricing.test.ts`.
+
 ## Decreto 13.108/2026 — Fase 1 (L1a, L3, L4a)
 
 Plano em `docs/conformidade-decreto-13108.md`.
@@ -166,6 +216,13 @@ Sem mudança de assinatura nas Server Actions. Mudanças de comportamento:
   realizado; seus ingressos foram reativados").
 
 ### `area-organizador` (relatórios)
+Cupons (passo 3): usar `discountPerUnit` e `undercutHalfPrice` de
+`@/features/fees/discount` para os avisos; validar na criação que o líquido não
+fica abaixo de `commissionPerUnit` com bearer ORGANIZER (mesma guarda B1) e que
+`CouponTicketType` só tem tipos do evento/organização do cupom e nunca meia
+(o checkout ignora meia de qualquer forma). `unitPriceCents`/`subtotalCents`
+são líquidos; "descontos concedidos" = `Order.discountCents`.
+
 Sem mudança no razão nem nas contas. Ingressos de pedidos com reembolso em
 andamento passam a aparecer como cancelados mais cedo nas contagens de
 "ingressos vendidos" e na lista de participantes.
