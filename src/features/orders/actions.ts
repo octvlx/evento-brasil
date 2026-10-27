@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { CreateOrderInput } from "@/features/schemas";
@@ -12,11 +13,21 @@ import { cancelPendingOrder, createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/server/services/payments";
 import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
+import { assertCanCreateOrder, assertCanStartPayment } from "./limits";
+
+// Mesmo critério das ações de autenticação. O primeiro x-forwarded-for só é
+// confiável atrás de um proxy que o sobrescreve; o limite por conta vale sempre.
+async function clientKey() {
+  const h = await headers();
+  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local";
+}
 
 export async function createOrderAction(input: CreateOrderInput): Promise<ActionResult<{ orderId: string }>> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Entre na sua conta para continuar.", code: "UNAUTHENTICATED" };
+  const client = await clientKey();
   return toActionResult(async () => {
+    assertCanCreateOrder(user.id, client);
     const order = await createOrder(db, user, input, { providerIsSimulated: getPaymentAdapter().isSimulated });
     return { orderId: order.id };
   });
@@ -24,7 +35,11 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Action
 
 export async function startPaymentAction(orderId: string, method: "PIX" | "CREDIT_CARD", simulatedCardOutcome?: "approve" | "decline") {
   const user = await requireUser(`/checkout/${orderId}`);
-  const result = await toActionResult(() => startPayment(db, getPaymentAdapter(), user, orderId, method, { simulatedCardOutcome }));
+  const client = await clientKey();
+  const result = await toActionResult(async () => {
+    assertCanStartPayment(user.id, client);
+    return startPayment(db, getPaymentAdapter(), user, orderId, method, { simulatedCardOutcome });
+  });
   if (!result.ok) return result;
   refresh();
   return { ok: true as const, data: { paymentId: result.data.id, status: result.data.status } };
