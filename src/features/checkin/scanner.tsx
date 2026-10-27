@@ -41,14 +41,14 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
       if (busy.current) return;
       busy.current = true;
       // Meia-entrada fica mais tempo na tela: dá tempo de pedir e conferir o documento.
-      let holdMs = 2200;
+      let holdMs = 1500;
       try {
         const r = await checkInAction(eventId, payload);
         if (r.ok) {
           setResult(r.data);
           setCounters(r.data.counters);
           setError(null);
-          if (needsHalfPriceDocument(r.data)) holdMs = 5000;
+          if (needsHalfPriceDocument(r.data)) holdMs = 2200;
           navigator.vibrate?.(r.data.result === "ADMITTED" ? 80 : [60, 60, 60, 60, 200]);
         } else setError(r.error);
       } catch {

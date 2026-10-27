@@ -74,7 +74,7 @@ test("meia-entrada: a portaria vê o aviso para exigir o documento, também no d
   await input.fill(payload);
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Entrada liberada")).toContainText("Meia-entrada — exigir documento comprobatório");
-  await staff.waitForTimeout(5400);
+  await staff.waitForTimeout(2600);
   await input.fill(payload);
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Ingresso JÁ UTILIZADO")).toContainText("Meia-entrada — exigir documento comprobatório");
