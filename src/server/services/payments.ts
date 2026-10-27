@@ -44,7 +44,7 @@ export async function startPayment(
     if (pending) {
       // PIX pendente é reaproveitado (mesmo QR). Qualquer outra combinação aguardaria
       // uma tentativa em andamento — recusada para não gerar cobrança dupla.
-      if (pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id) return { kind: "reuse", payment: pending } as const;
+      if (pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id && pending.providerPaymentId) return { kind: "reuse", payment: pending } as const;
       throw invalidState(
         pending.method === "PIX"
           ? "Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva."
@@ -82,9 +82,11 @@ export async function startPayment(
       simulatedCardOutcome: opts.simulatedCardOutcome,
     });
   } catch (err) {
-    await db.payment.update({ where: { id: payment.id }, data: { status: "FAILED", failureReason: "provider_create_failed" } });
+    // Uma falha de transporte não prova que o provedor deixou de cobrar.
+    // Mantém a tentativa bloqueando novas cobranças até a reconciliação resolver a referência.
+    await db.payment.updateMany({ where: { id: payment.id, status: "PENDING" }, data: { failureReason: "PROVIDER_CREATE_UNCERTAIN" } });
     if (err instanceof AppError) throw err;
-    throw new AppError("PROVIDER_ERROR", "Não foi possível iniciar o pagamento. Tente novamente.");
+    throw new AppError("PROVIDER_ERROR", "Estamos confirmando o pagamento com o provedor. Acompanhe seu pedido antes de tentar novamente.");
   }
   const updated = await db.payment.update({
     where: { id: payment.id },
@@ -122,6 +124,7 @@ export type ApplyOutcome =
   | "refunded"
   | "charged_back"
   | "disputed"
+  | "dispute_resolved"
   | "no_change";
 
 /** Aplica um snapshot autoritativo do provedor. Idempotente e seguro contra concorrência. */
@@ -157,6 +160,14 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
 
     switch (snapshot.status) {
       case "PAID": {
+        if (payment.status === "DISPUTED") {
+          await markPayment({ status: "PAID" });
+          if (order.status === "DISPUTED") {
+            await tx.order.update({ where: { id: order.id }, data: { status: "PAID" } });
+          }
+          await audit(tx, { organizationId: order.organizationId, action: "payment.dispute_resolved", entityType: "Payment", entityId: payment.id });
+          return "dispute_resolved";
+        }
         const wasPaid = payment.status === "PAID";
         if (!wasPaid) {
           if (!["PENDING", "FAILED", "EXPIRED", "CANCELLED"].includes(payment.status)) return "no_change";
@@ -245,7 +256,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         return "charged_back";
       }
       case "DISPUTED": {
-        if (payment.status === "DISPUTED") return "no_change";
+        if (payment.status !== "PAID") return "no_change";
         await markPayment({ status: "DISPUTED" });
         if (order.status === "PAID") await tx.order.update({ where: { id: order.id }, data: { status: "DISPUTED" } });
         await audit(tx, { organizationId: order.organizationId, action: "payment.disputed", entityType: "Order", entityId: order.id });

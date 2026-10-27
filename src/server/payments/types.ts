@@ -71,6 +71,8 @@ export interface PaymentProviderAdapter {
    * Opcional: localiza no provedor um pagamento pela nossa chave de idempotência
    * (referência externa). Usado na reconciliação quando o processo caiu entre a
    * criação no provedor e o registro do id localmente.
+   * null significa ausência confirmada, segura para permitir outra cobrança.
+   * Resultado inconclusivo/consistência eventual deve lançar erro.
    */
   findPaymentByReference?(idempotencyKey: string): Promise<ProviderPaymentSnapshot | null>;
 }

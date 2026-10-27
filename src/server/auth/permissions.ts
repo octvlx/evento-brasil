@@ -75,9 +75,10 @@ export async function resolveCheckinAccess(client: Db | Tx, actor: Actor, eventI
   if (!event) throw forbidden();
   const membership = await client.organizationMember.findUnique({
     where: { organizationId_userId: { organizationId: event.organizationId, userId: actor.id } },
-    select: { role: true },
+    select: { role: true, organization: { select: { status: true } } },
   });
   if (!membership) throw forbidden();
+  if (membership.organization.status === "SUSPENDED") throw forbidden();
   if (roleHas(membership.role, "checkin:history")) return { event, canSeeAllHistory: true };
   if (membership.role === "CHECKIN_STAFF") {
     const assigned = await client.eventStaffAssignment.findUnique({

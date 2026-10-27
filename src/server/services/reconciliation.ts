@@ -104,7 +104,7 @@ export async function reconcilePayments(
         report.paymentsClosedNotFound++;
         continue;
       }
-      await db.payment.update({ where: { id: p.id }, data: { providerPaymentId: snapshot.providerPaymentId, providerRawStatus: snapshot.rawStatus } });
+      await db.payment.update({ where: { id: p.id }, data: { providerPaymentId: snapshot.providerPaymentId, providerRawStatus: snapshot.rawStatus, failureReason: null } });
       await applyPaymentSnapshot(db, adapter, snapshot);
       report.paymentsLinked++;
     } catch (err) {
