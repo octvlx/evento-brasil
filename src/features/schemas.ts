@@ -167,6 +167,19 @@ export const createOrderSchema = z.object({
   // Declaração de elegibilidade à meia-entrada (comprovação exigida na entrada).
   halfPriceDeclaration: z.boolean().default(false),
   idempotencyKey: z.string().uuid(),
+  // ADR 0002. Normalizado e validado no serviço (erro genérico para código inválido).
+  couponCode: z.string().max(64).optional(),
+  // Origem da venda; a Server Action preenche a partir do cookie eb_attr. UTMs são truncados em 200.
+  attribution: z
+    .object({
+      trackingLinkId: z.string().max(64).optional(),
+      utmSource: z.string().max(2000).optional(),
+      utmMedium: z.string().max(2000).optional(),
+      utmCampaign: z.string().max(2000).optional(),
+      utmContent: z.string().max(2000).optional(),
+      utmTerm: z.string().max(2000).optional(),
+    })
+    .optional(),
 });
 export type CreateOrderInput = z.input<typeof createOrderSchema>;
 
