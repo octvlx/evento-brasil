@@ -16,7 +16,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/tickets/[code]/w
   if (!owner || owner.userId !== user.id) return new Response("Não encontrado", { status: 404 });
   const tickets = await toWalletTickets(db, await loadPdfTickets(db, { code }));
   if (!tickets.length) return new Response("Ingresso indisponível", { status: 410 });
-  const res = NextResponse.redirect(googleWalletSaveUrl(tickets, cfg, env().APP_URL));
+  const res = NextResponse.redirect(await googleWalletSaveUrl(tickets, cfg, env().APP_URL));
   res.headers.set("Cache-Control", "no-store");
   return res;
 }

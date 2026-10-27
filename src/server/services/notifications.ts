@@ -34,6 +34,19 @@ export async function loadPdfTickets(db: Db, where: { orderId?: string; code?: s
   });
 }
 
+// Os .pkpass são um extra: certificado vencido ou mal configurado não pode impedir
+// o envio dos ingressos (PDF), então a falha só é registrada e o e-mail segue sem eles.
+async function applePassesForEmail(db: Db, tickets: PdfTicket[], orderId: string): Promise<{ code: string; pass: Buffer }[]> {
+  const apple = appleWallet();
+  if (!apple) return [];
+  try {
+    return await Promise.all((await toWalletTickets(db, tickets)).map(async (t) => ({ code: t.code, pass: await buildApplePass(t, apple) })));
+  } catch (err) {
+    console.error(`[notificações] falha ao gerar .pkpass do pedido ${orderId}; e-mail segue sem Apple Wallet:`, err);
+    return [];
+  }
+}
+
 export async function sendOrderTicketsEmail(db: Db, orderId: string): Promise<void> {
   if (env().NODE_ENV === "test") return;
   const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, include: { event: true, items: true } });
@@ -43,8 +56,7 @@ export async function sendOrderTicketsEmail(db: Db, orderId: string): Promise<vo
   const url = `${env().APP_URL}/pedido/${order.id}`;
   // Carteiras: só quando configuradas (docs/wallet.md). Um .pkpass por ingresso;
   // o Google Wallet salva todos de uma vez por um link (exige login, sem segredo no e-mail).
-  const apple = appleWallet();
-  const passes = apple ? await Promise.all((await toWalletTickets(db, tickets)).map(async (t) => ({ code: t.code, pass: await buildApplePass(t, apple) }))) : [];
+  const passes = await applePassesForEmail(db, tickets, orderId);
   const googleUrl = googleWallet() ? `${env().APP_URL}/api/orders/${order.id}/wallet/google` : null;
   const walletHtml = [
     passes.length ? "<p>Para a <strong>Apple Wallet</strong>, abra no iPhone os arquivos <em>.pkpass</em> em anexo.</p>" : "",

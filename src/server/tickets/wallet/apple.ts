@@ -3,7 +3,7 @@
 // ingresso cancelado continua na carteira, mas a portaria valida online e recusa.
 import "server-only";
 import { PKPass } from "passkit-generator";
-import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
+import { formatDateLong, formatDateShort, formatTime, timezoneLabel } from "@/lib/datetime";
 import { qrPayload } from "../../services/tickets";
 import type { AppleWalletConfig } from "./config";
 import { APPLE_PASS_IMAGES } from "./images";
@@ -29,7 +29,7 @@ export function applePassJson(t: WalletTicket, cfg: Pick<AppleWalletConfig, "pas
     expirationDate: t.event.endsAt.toISOString(),
     barcodes: [{ format: "PKBarcodeFormatQR", message: qrPayload(t), messageEncoding: "iso-8859-1", altText: t.code }],
     eventTicket: {
-      headerFields: [{ key: "date", label: "DATA", value: formatTime(t.event.startsAt, tz), textAlignment: "PKTextAlignmentRight" }],
+      headerFields: [{ key: "date", label: "DATA", value: formatDateShort(t.event.startsAt, tz), textAlignment: "PKTextAlignmentRight" }],
       primaryFields: [{ key: "event", label: "EVENTO", value: t.event.title }],
       secondaryFields: [
         { key: "when", label: "QUANDO", value: `${formatDateLong(t.event.startsAt, tz)} · ${formatTime(t.event.startsAt, tz)} (${timezoneLabel(t.event.startsAt, tz)})` },

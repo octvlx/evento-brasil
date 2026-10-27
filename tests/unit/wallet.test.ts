@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "@/server/env";
 import { appleWalletConfig, googleWalletConfig, pemFromEnv } from "@/server/tickets/wallet/config";
 import { applePassJson, buildApplePass } from "@/server/tickets/wallet/apple";
-import { googleWalletJwtPayload, googleWalletSaveUrl } from "@/server/tickets/wallet/google";
+import { googleWalletJwtPayload, googleWalletResources, googleWalletSaveUrl } from "@/server/tickets/wallet/google";
 import type { WalletTicket } from "@/server/tickets/wallet/types";
 import { TEST_SIGNER_CERT, TEST_SIGNER_KEY, TEST_WWDR_CERT } from "../support/wallet-test-certs";
 
@@ -48,23 +48,66 @@ describe("Google Wallet", () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   const cfg = { issuerId: "3388000000012345678", serviceAccountEmail: "wallet@projeto.iam.gserviceaccount.com", privateKey };
 
-  it("link de salvar com JWT RS256 válido, uma classe por evento e um objeto por ingresso", () => {
-    const url = googleWalletSaveUrl([ticket(), ticket({ code: "ZZZZ9999ZZ", kind: "HALF_PRICE", ticketTypeName: "Meia" })], cfg, "https://eventobrasil.example");
+  /** API do Google simulada: token OAuth, e 409 para recursos que já existem. */
+  function fakeGoogle(existing: string[] = []) {
+    const calls: { method: string; url: string; body: string }[] = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = String(init?.body ?? "");
+      calls.push({ method: init?.method ?? "GET", url, body });
+      if (url === "https://oauth2.googleapis.com/token") return Response.json({ access_token: "tok" });
+      if (init?.method === "POST" && existing.includes(JSON.parse(body).id)) return new Response("já existe", { status: 409 });
+      return Response.json(JSON.parse(body));
+    }) as typeof fetch;
+    return { calls, fetchImpl };
+  }
+
+  it("grava classe e objetos pela API e o link leva um JWT RS256 curto só com os ids", async () => {
+    const { calls, fetchImpl } = fakeGoogle();
+    const tickets = Array.from({ length: 10 }, (_, i) => ticket({ code: `ABCD1234E${i}`, kind: i ? "GENERAL" : "HALF_PRICE" }));
+    const url = await googleWalletSaveUrl(tickets, cfg, "https://eventobrasil.example", fetchImpl);
+    // Limite do Google para o link de salvar: ~1800 caracteres.
+    expect(url.length).toBeLessThan(1800);
     expect(url.startsWith("https://pay.google.com/gp/v/save/")).toBe(true);
     const [header, body, sig] = url.slice("https://pay.google.com/gp/v/save/".length).split(".");
     expect(createVerify("RSA-SHA256").update(`${header}.${body}`).verify(publicKey, Buffer.from(sig, "base64url"))).toBe(true);
     const payload = JSON.parse(Buffer.from(body, "base64url").toString());
     expect(payload).toMatchObject({ iss: cfg.serviceAccountEmail, aud: "google", typ: "savetowallet", origins: ["https://eventobrasil.example"] });
-    expect(payload.payload.eventTicketClasses).toHaveLength(1);
-    expect(payload.payload.eventTicketClasses[0].id).toBe(`${cfg.issuerId}.evento-cevento1`);
-    const [a, b] = payload.payload.eventTicketObjects;
-    expect(a).toMatchObject({ id: `${cfg.issuerId}.ingresso-ABCD1234EF`, state: "ACTIVE", barcode: { type: "QR_CODE", value: `EB1:ABCD1234EF:${"t".repeat(43)}` } });
-    expect(b.ticketType.defaultValue.value).toMatch(/meia-entrada/);
+    expect(payload.payload.eventTicketObjects[0]).toEqual({ id: `${cfg.issuerId}.ingresso-ABCD1234E0` });
+    expect(JSON.stringify(payload)).not.toContain("t".repeat(43));
+
+    // Token de conta de serviço com o escopo do emissor, assinado com a chave dela.
+    const assertion = new URLSearchParams(calls[0].body).get("assertion")!;
+    const [ah, ab, as] = assertion.split(".");
+    expect(createVerify("RSA-SHA256").update(`${ah}.${ab}`).verify(publicKey, Buffer.from(as, "base64url"))).toBe(true);
+    expect(JSON.parse(Buffer.from(ab, "base64url").toString())).toMatchObject({ iss: cfg.serviceAccountEmail, scope: "https://www.googleapis.com/auth/wallet_object.issuer" });
+
+    // Uma classe por evento, gravada antes dos objetos; um objeto por ingresso.
+    const posts = calls.filter((c) => c.method === "POST" && c.url.includes("walletobjects"));
+    expect(posts[0].url).toMatch(/\/eventTicketClass$/);
+    expect(JSON.parse(posts[0].body).id).toBe(`${cfg.issuerId}.evento-cevento1`);
+    const objects = posts.filter((c) => c.url.endsWith("/eventTicketObject")).map((c) => JSON.parse(c.body));
+    expect(objects).toHaveLength(10);
+    expect(objects[0]).toMatchObject({ id: `${cfg.issuerId}.ingresso-ABCD1234E0`, state: "ACTIVE", barcode: { type: "QR_CODE", value: `EB1:ABCD1234E0:${"t".repeat(43)}` } });
+    expect(objects[0].ticketType.defaultValue.value).toMatch(/meia-entrada/);
+  });
+
+  it("recurso que já existe é atualizado (PUT) em vez de falhar", async () => {
+    const classId = `${cfg.issuerId}.evento-cevento1`;
+    const { calls, fetchImpl } = fakeGoogle([classId]);
+    await googleWalletSaveUrl([ticket()], cfg, "https://eventobrasil.example", fetchImpl);
+    expect(calls.some((c) => c.method === "PUT" && c.url.endsWith(`/eventTicketClass/${encodeURIComponent(classId)}`))).toBe(true);
+  });
+
+  it("erro da API não gera link", async () => {
+    const fetchImpl = (async () => new Response("negado", { status: 403 })) as unknown as typeof fetch;
+    await expect(googleWalletSaveUrl([ticket()], cfg, "https://eventobrasil.example", fetchImpl)).rejects.toThrow(/403/);
   });
 
   it("ingresso de teste leva o aviso", () => {
-    const payload = googleWalletJwtPayload([ticket({ isSimulated: true })], cfg, "http://localhost:3000");
-    expect(JSON.stringify(payload)).toMatch(/Pagamento simulado/);
+    const { objects } = googleWalletResources([ticket({ isSimulated: true })], cfg);
+    expect(JSON.stringify(objects)).toMatch(/Pagamento simulado/);
+    expect(googleWalletJwtPayload(["x"], cfg, "http://localhost:3000").origins).toEqual(["http://localhost:3000"]);
   });
 });
 

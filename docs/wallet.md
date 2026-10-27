@@ -12,7 +12,8 @@ Ligada:
 O passe traz o mesmo QR do ingresso e do PDF. A portaria valida online, então um
 ingresso cancelado ou reembolsado depois de salvo continua aparecendo na
 carteira, mas é recusado na entrada. Atualizar ou remover o passe automaticamente
-é uma etapa futura: web service de passes da Apple e API do Google Wallet.
+é uma etapa futura: web service de passes da Apple e, no Google, marcar o objeto
+como inativo pela mesma API que já o grava.
 
 Código: `src/server/tickets/wallet/`. Rotas:
 - `/api/tickets/[code]/wallet/apple`
@@ -101,9 +102,14 @@ do certificado, WWDR errado (precisa ser o G4) ou certificado vencido.
 
 ### Conferir
 
-Abra o ingresso num Android e toque em "Salvar no Google Wallet". A classe do
-evento é criada no primeiro salvamento com o status `UNDER_REVIEW`; o Google
-aprova automaticamente as classes de emissores publicados.
+Abra o ingresso num Android e toque em "Salvar no Google Wallet". Antes de
+redirecionar, o servidor grava pela API REST (`walletobjects.googleapis.com`) a
+classe do evento (status `UNDER_REVIEW`; o Google aprova automaticamente as
+classes de emissores publicados) e o objeto de cada ingresso; se já existem, são
+atualizados com os dados atuais. O link leva só os ids dos objetos: o Google
+limita o link de salvar a ~1800 caracteres, e a classe e o objeto completos de
+um único ingresso já passam disso. Por isso o servidor precisa de saída HTTPS
+para `oauth2.googleapis.com` e `walletobjects.googleapis.com`.
 
 ## Segurança
 
@@ -111,4 +117,7 @@ aprova automaticamente as classes de emissores publicados.
   nunca no repositório. `.env` não é versionado.
 - O passe contém o mesmo token do QR que o PDF. Por isso as rotas exigem login e
   só entregam ingressos do próprio comprador. O e-mail leva os `.pkpass` (Apple)
-  e um link que exige login (Google), sem token na URL do e-mail.
+  e um link que exige login (Google), sem token na URL do e-mail. O link do
+  Google também não leva o token: ele fica no objeto gravado pela API.
+- Falha ao gerar os `.pkpass` (certificado vencido, chave errada) não impede o
+  e-mail: ele segue só com o PDF e o erro fica no log.
