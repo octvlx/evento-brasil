@@ -85,4 +85,10 @@ test("robots.txt e sitemap.xml públicos", async ({ request }) => {
   const xml = await sitemap.text();
   expect(xml).toContain("/eventos</loc>");
   expect(xml).toContain("/cidades/");
+  // Só cidades com evento publicado: Franca tem a Corrida Noturna; cidades sem eventos ficam de fora.
+  expect(xml).toContain("/cidades/franca-sp</loc>");
+  expect(xml).not.toMatch(/\/admin|\/checkout|\/pedido\//);
+  // Páginas que definem openGraph próprio mantêm a imagem de compartilhamento padrão.
+  const eventos = await (await request.get("/eventos")).text();
+  expect(eventos).toMatch(/<meta property="og:image" content="[^"]*\/opengraph-image/);
 });

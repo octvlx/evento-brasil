@@ -8,6 +8,7 @@ import { Select } from "@/components/ui/primitives";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { db } from "@/server/db";
 import { listCategories, listCities, searchEvents, type DateFilter, type PriceFilter } from "@/server/services/catalog";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { UFS } from "@/lib/br";
 
 const EVENTS_DESCRIPTION = "Busque eventos por cidade, categoria, data e preço em todo o Brasil.";
@@ -20,7 +21,7 @@ export async function generateMetadata({ searchParams }: PageProps<"/eventos">):
     title: "Explorar eventos",
     description: EVENTS_DESCRIPTION,
     alternates: { canonical: "/eventos" },
-    openGraph: { type: "website", title: "Explorar eventos", description: EVENTS_DESCRIPTION, url: "/eventos" },
+    openGraph: { type: "website", title: "Explorar eventos", description: EVENTS_DESCRIPTION, url: "/eventos", images: [DEFAULT_OG_IMAGE] },
     ...(filtered ? { robots: { index: false, follow: true } } : {}),
   };
 }

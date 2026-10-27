@@ -6,6 +6,7 @@ import { AtSign, BadgeCheck, Globe } from "lucide-react";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { db } from "@/server/db";
 import { getPublicOrganizer } from "@/server/services/catalog";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 
 export async function generateMetadata({ params }: PageProps<"/organizadores/[slug]">): Promise<Metadata> {
   const { slug } = await params;
@@ -16,8 +17,8 @@ export async function generateMetadata({ params }: PageProps<"/organizadores/[sl
     title: org.name,
     description,
     alternates: { canonical: `/organizadores/${slug}` },
-    // Sem imagem própria do organizador: o og:image padrão do site (opengraph-image) é herdado.
-    openGraph: { type: "website", title: org.name, description, url: `/organizadores/${slug}` },
+    // Sem imagem própria do organizador: usa a imagem padrão (um openGraph na página substitui o herdado).
+    openGraph: { type: "website", title: org.name, description, url: `/organizadores/${slug}`, images: [DEFAULT_OG_IMAGE] },
   };
 }
 

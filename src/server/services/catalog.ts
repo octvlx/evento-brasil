@@ -228,7 +228,12 @@ export async function getPublicOrganizer(db: Db, slug: string, now = new Date())
 export async function listSitemapEntries(db: Db, now = new Date()) {
   const [events, cities, organizers] = await Promise.all([
     db.event.findMany({ where: publicEventWhere(now), select: { slug: true, updatedAt: true }, orderBy: { startsAt: "asc" } }),
-    db.city.findMany({ select: { slug: true }, orderBy: { slug: "asc" } }),
+    // Só cidades com evento público: páginas vazias não entram no índice (a base do IBGE tem milhares).
+    db.city.findMany({
+      where: { OR: [{ events: { some: publicEventWhere(now) } }, { venues: { some: { events: { some: publicEventWhere(now) } } } }] },
+      select: { slug: true },
+      orderBy: { slug: "asc" },
+    }),
     db.organization.findMany({ where: { status: "APPROVED" }, select: { slug: true, updatedAt: true }, orderBy: { slug: "asc" } }),
   ]);
   return { events, cities, organizers };
