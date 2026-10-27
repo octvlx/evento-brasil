@@ -1,4 +1,4 @@
-// Fluxo S (ADR 0002, passo 3): o organizador cadastra cupons e links de
+// Fluxo T (ADR 0002, passo 3): o organizador cadastra cupons e links de
 // divulgação e vê os relatórios de origem e de uso de cupons. Aplicar o cupom
 // no checkout é do passo 2 (pagamentos-financeiro); aqui os pedidos com cupom
 // ou link são montados direto no banco.
@@ -7,6 +7,7 @@ import type { OrgRole } from "@/generated/prisma/client";
 import { createCoupon, deleteCoupon, listEventCoupons, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, listEventTrackingLinks, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { couponUsage, salesBySource } from "@/server/services/reports";
+import { checkFinancialInvariants } from "@/server/services/reconciliation";
 import { buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
@@ -29,7 +30,7 @@ async function setup(extra: OrgRole[] = []) {
 
 const percent = (code: string, percentBps: number, extra: Record<string, unknown> = {}) => ({ code, discountType: "PERCENT" as const, percentBps, ...extra });
 
-describe("S — cupons do organizador", () => {
+describe("T — cupons do organizador", () => {
   it("cria cupom (código em maiúsculas), audita e recusa código repetido na organização", async () => {
     const { owner, org, event } = await setup();
     const { coupon, warnings } = await createCoupon(db, owner, event.id, percent("amigos10", 1000, { maxUses: 100, ticketTypeIds: [event.ticketTypes[0].id] }));
@@ -73,8 +74,9 @@ describe("S — cupons do organizador", () => {
     expect(warnings.join("\n")).toMatch(/"Inteira": .*mais barato que a meia-entrada/);
     // 10%: nenhum aviso. Cupom de 100% zera o preço (gratuito), sem aviso de taxa.
     expect((await createCoupon(db, owner, event.id, percent("LEVE", 1000))).warnings).toEqual([]);
-    const full = await createCoupon(db, owner, event.id, percent("CORTESIA", 10_000, { ticketTypeIds: [event.ticketTypes[2].id] }));
-    expect(full.warnings.join("\n")).not.toMatch(/taxa/);
+    // Cortesia de 100% (líquido 0) não recebe aviso de taxa nem de meia, como no checkout.
+    const full = await createCoupon(db, owner, event.id, percent("CORTESIA", 10_000));
+    expect(full.warnings).toEqual([]);
   });
 
   it("cupom usado: não apaga, código e desconto ficam fixos, limites e desativação continuam", async () => {
@@ -125,7 +127,7 @@ describe("S — cupons do organizador", () => {
   });
 });
 
-describe("S — links de divulgação", () => {
+describe("T — links de divulgação", () => {
   it("cria link com código curto, cupom do mesmo evento e arquivamento auditado", async () => {
     const { owner, org, event } = await setup();
     const { coupon } = await createCoupon(db, owner, event.id, percent("INSTA", 1000));
@@ -145,10 +147,12 @@ describe("S — links de divulgação", () => {
     await setTrackingLinkArchived(db, owner, link.id, false);
     const actions = (await db.auditLog.findMany({ where: { entityId: link.id }, orderBy: { createdAt: "asc" } })).map((a) => a.action);
     expect(actions).toEqual(["tracking_link.created", "tracking_link.archived", "tracking_link.restored"]);
+    // O verificador de tenant do passo 2 não acusa nada do que o cadastro deixou passar.
+    expect((await checkFinancialInvariants(db)).find((v) => v.code === "COUPON_TENANT_MISMATCH")).toBeUndefined();
   });
 });
 
-describe("S — relatórios de origem e cupons", () => {
+describe("T — relatórios de origem e cupons", () => {
   it("contam só pedidos pagos, por link, utm_source ou direto, e por cupom", async () => {
     const { owner, members, org, event } = await setup(["FINANCE", "CHECKIN_STAFF"]);
     const [finance, staff] = members;
@@ -174,6 +178,8 @@ describe("S — relatórios de origem e cupons", () => {
       expect.objectContaining({ code: "PROMO", eventTitle: event.title, paidOrders: 1, discountCents: 1000, netTicketCents: 10000 }),
     ]);
     expect(await listEventTrackingLinks(db, owner, event.id)).toEqual([expect.objectContaining({ id: link.id, paidOrders: 1 })]);
+
+    expect((await checkFinancialInvariants(db)).find((v) => v.code === "COUPON_TENANT_MISMATCH")).toBeUndefined();
 
     // Relatórios exigem finance:read na organização.
     await expect(salesBySource(db, staff, org.id)).rejects.toMatchObject(forbidden);

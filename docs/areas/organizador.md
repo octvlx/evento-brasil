@@ -58,9 +58,9 @@ e `organizer-team.spec.ts` (convites e papéis).
    e-mail; limitar convites pendentes por organização.
 2. ~~Convites: revogar, reenviar, recusar, pendentes~~ e ~~Equipe: alterar papel~~ — feitos.
    **Cupons e links (ADR 0002):** cupons da organização inteira (sem evento)
-   ainda não têm tela (o serviço lista, mas não cria nem edita); trocar a
-   cópia local de `discountPerUnit` em `coupons.ts` pelo import de
-   `src/features/fees/discount.ts` quando o passo 2 entrar.
+   ainda não têm tela (o serviço lista, mas não cria nem edita). Os avisos do
+   cadastro usam `discountPerUnit`/`undercutHalfPrice` de
+   `src/features/fees/discount.ts`, as mesmas regras do checkout.
 3. **Página do evento no painel** (`/organizador/eventos/[id]`) com resumo de
    vendas do evento (`eventSalesSummary` já existe) e atalhos.
 4. **Relatórios:** filtros de período/evento, vendas por tipo de ingresso, ticket

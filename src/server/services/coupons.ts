@@ -4,11 +4,12 @@
 // desconto e mexer nos contadores (timesReserved/timesRedeemed) é do fluxo de
 // pedidos (`orders.ts`, pagamentos-financeiro) — aqui os contadores só são lidos.
 import "server-only";
-import { Prisma, type DiscountType, type EventStatus, type TicketType } from "@/generated/prisma/client";
+import { Prisma, type EventStatus, type TicketType } from "@/generated/prisma/client";
 import { couponInputSchema, type CouponInput } from "@/features/schemas";
+import { discountPerUnit, undercutHalfPrice, type DiscountSpec } from "@/features/fees/discount";
 import { commissionPerUnit } from "@/features/fees/policy";
 import { zonedLocalToUtc } from "@/lib/datetime";
-import { applyBps, formatBRL } from "@/lib/money";
+import { formatBRL } from "@/lib/money";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
 import { assertEventPermission, assertOrgPermission, type Actor } from "../auth/permissions";
@@ -17,15 +18,6 @@ import { resolveCommissionRule } from "./commission";
 
 const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
 
-type DiscountSpec = { discountType: DiscountType; percentBps: number | null; amountCents: number | null };
-
-// Cópia local do cálculo do passo 2 (`discountPerUnit` em src/features/fees/discount.ts,
-// pagamentos-financeiro); trocar pelo import quando ele estiver no main.
-function discountPerUnit(unitPriceCents: number, coupon: DiscountSpec): number {
-  if (unitPriceCents === 0) return 0;
-  const raw = coupon.discountType === "PERCENT" ? applyBps(unitPriceCents, coupon.percentBps ?? 0) : (coupon.amountCents ?? 0);
-  return Math.min(raw, unitPriceCents);
-}
 
 /** Tipos a que o cupom se aplica: pagos, sem meia-entrada (D3), filtrados pela lista quando houver. */
 function eligibleTypes(types: TicketType[], ticketTypeIds: string[]) {
@@ -40,16 +32,18 @@ function eligibleTypes(types: TicketType[], ticketTypeIds: string[]) {
 async function couponWarnings(tx: Tx, organizationId: string, eventId: string, types: TicketType[], spec: DiscountSpec, ticketTypeIds: string[]) {
   const warnings: string[] = [];
   const rule = await resolveCommissionRule(tx, organizationId, eventId);
-  const halfPrices = types.filter((t) => t.kind === "HALF_PRICE" && t.priceCents > 0).map((t) => t.priceCents);
-  const cheapestHalf = halfPrices.length ? Math.min(...halfPrices) : null;
+  // Mesmo conjunto que o checkout usa (createOrder): meias visíveis.
+  const halfPrices = types.filter((t) => t.kind === "HALF_PRICE" && !t.isHidden).map((t) => t.priceCents);
   for (const t of eligibleTypes(types, ticketTypeIds)) {
     const net = t.priceCents - discountPerUnit(t.priceCents, spec);
     if (rule.bearer === "ORGANIZER" && net > 0 && commissionPerUnit(net, rule) > net) {
       warnings.push(`"${t.name}": com o desconto o preço (${formatBRL(net)}) fica abaixo da taxa da plataforma; o cupom será recusado nesse ingresso.`);
     }
     // Só quando é o cupom que leva abaixo da meia: um tipo que já custa menos que a meia não é afetado.
-    if (cheapestHalf !== null && t.priceCents >= cheapestHalf && net < cheapestHalf) {
-      warnings.push(`"${t.name}": com o desconto (${formatBRL(net)}) fica mais barato que a meia-entrada (${formatBRL(cheapestHalf)}); o cupom será recusado nesse ingresso até a revisão jurídica.`);
+    // Mesma regra do checkout: só quando é o cupom que leva abaixo da meia; cortesia (100%) fica fora.
+    const half = undercutHalfPrice(t.priceCents, net, halfPrices);
+    if (half !== undefined) {
+      warnings.push(`"${t.name}": com o desconto (${formatBRL(net)}) fica mais barato que a meia-entrada (${formatBRL(half)}); o cupom será recusado nesse ingresso até a revisão jurídica.`);
     }
   }
   return warnings;
