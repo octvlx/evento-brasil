@@ -158,9 +158,26 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     const markPayment = (data: Prisma.PaymentUpdateInput) =>
       tx.payment.update({ where: { id: payment.id }, data: { providerRawStatus: snapshot.rawStatus, ...data } });
 
+    if (payment.status === "PENDING" && snapshot.status === "PENDING" && payment.method === "PIX") {
+      await tx.payment.update({ where: { id: payment.id }, data: {
+        pixCopyPaste: snapshot.pixCopyPaste,
+        pixQrCodeBase64: snapshot.pixQrCodeBase64,
+        providerExpiresAt: snapshot.expiresAt,
+      } });
+    }
+    const syncProcessingFee = async () => {
+      // null = ainda desconhecida; nunca apaga uma taxa já confirmada.
+      if (snapshot.processingFeeCents === null) return;
+      await postProcessingFee(tx, order, payment.id, snapshot.processingFeeCents, order.commissionRule?.processingFeeBearer ?? "ORGANIZER");
+      if (payment.processingFeeCents !== snapshot.processingFeeCents) {
+        await tx.payment.update({ where: { id: payment.id }, data: { processingFeeCents: snapshot.processingFeeCents } });
+      }
+    };
+
     switch (snapshot.status) {
       case "PAID": {
         if (payment.status === "DISPUTED") {
+          await syncProcessingFee();
           await markPayment({ status: "PAID" });
           if (order.status === "DISPUTED") {
             await tx.order.update({ where: { id: order.id }, data: { status: "PAID" } });
@@ -171,7 +188,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         const wasPaid = payment.status === "PAID";
         if (!wasPaid) {
           if (!["PENDING", "FAILED", "EXPIRED", "CANCELLED"].includes(payment.status)) return "no_change";
-          await markPayment({ status: "PAID", paidAt: now, processingFeeCents: snapshot.processingFeeCents });
+          await markPayment({ status: "PAID", paidAt: now });
         }
         if (["PAID", "REFUND_PENDING", "REFUNDED", "DISPUTED"].includes(order.status)) {
           const paidByOther = await tx.payment.count({ where: { orderId: order.id, status: "PAID", NOT: { id: payment.id } } });
@@ -181,6 +198,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
             await audit(tx, { organizationId: order.organizationId, action: "payment.duplicate", entityType: "Payment", entityId: payment.id });
             return "duplicate_payment";
           }
+          if (wasPaid) await syncProcessingFee();
           return "already_processed";
         }
         let result: ApplyOutcome = "paid";
@@ -206,9 +224,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
           result = "late_payment_refund";
         }
         await postSale(tx, order, payment.id);
-        if (snapshot.processingFeeCents) {
-          await postProcessingFee(tx, order, payment.id, snapshot.processingFeeCents, order.commissionRule?.processingFeeBearer ?? "ORGANIZER");
-        }
+        await syncProcessingFee();
         await audit(tx, { organizationId: order.organizationId, action: `payment.${result}`, entityType: "Order", entityId: order.id, metadata: { paymentId: payment.id } });
         return result;
       }
