@@ -225,6 +225,8 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
                 ticketTypeName: t.name,
                 kind: t.kind,
                 unitPriceCents: l.unitPriceCents,
+                // Sem cupom ainda (ADR 0002, passo 2): preço de tabela = preço cobrado.
+                listUnitPriceCents: l.unitPriceCents,
                 commissionPerUnitCents: l.commissionPerUnitCents,
                 serviceFeePerUnitCents: l.serviceFeePerUnitCents,
                 quantity: l.quantity,

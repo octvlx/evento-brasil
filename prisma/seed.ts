@@ -290,6 +290,36 @@ async function main() {
   }
   await db.eventStaffAssignment.create({ data: { eventId: events[0].id, userId: staff.id, assignedById: producer.id } });
 
+  // Cupom e link rastreado de exemplo (ADR 0002). Sem efeito no preço até o passo 2.
+  // A meia-entrada fica fora do cupom (D3): só os tipos que não são HALF_PRICE.
+  const sambaTypes = await db.ticketType.findMany({ where: { eventId: events[0].id, kind: { not: "HALF_PRICE" } }, select: { id: true } });
+  const demo10 = await db.coupon.create({
+    data: {
+      organizationId: sonora.id,
+      eventId: events[0].id,
+      code: "DEMO10",
+      description: "Cupom de demonstração: 10% na Noite de Samba (exceto meia-entrada)",
+      discountType: "PERCENT",
+      percentBps: 1000,
+      maxUses: 100,
+      createdById: producer.id,
+      ticketTypes: { create: sambaTypes.map((t) => ({ ticketTypeId: t.id })) },
+    },
+  });
+  await db.trackingLink.create({
+    data: {
+      organizationId: sonora.id,
+      eventId: events[0].id,
+      code: "demoSamba1",
+      name: "Instagram — divulgação (demo)",
+      utmSource: "instagram",
+      utmMedium: "social",
+      utmCampaign: "noite-de-samba",
+      couponId: demo10.id,
+      createdById: producer.id,
+    },
+  });
+
   console.log("Seed concluído. Senha de todas as contas demo:", DEMO_PASSWORD);
   console.log("Contas: admin@, produtora@, coletivo@, novo.organizador@, portaria@, cliente@ (domínio demo.eventobrasil.test)");
 }
