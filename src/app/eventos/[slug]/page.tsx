@@ -11,6 +11,7 @@ import { TicketSelector } from "@/features/orders/ticket-selector";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
 import { getPublicEvent } from "@/server/services/catalog";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { formatAddress } from "@/lib/br";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { AVAILABILITY } from "@/lib/labels";
@@ -28,7 +29,7 @@ export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">)
     title: `${e.title}${where}`,
     description: e.summary ?? `Ingressos para ${e.title}${where}.`,
     alternates: { canonical: `/eventos/${slug}` },
-    openGraph: { title: e.title, description: e.summary ?? undefined, images: e.coverImageUrl ? [e.coverImageUrl] : undefined },
+    openGraph: { title: e.title, description: e.summary ?? undefined, images: [e.coverImageUrl ?? DEFAULT_OG_IMAGE] },
   };
 }
 

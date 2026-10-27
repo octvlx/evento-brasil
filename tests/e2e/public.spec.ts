@@ -99,6 +99,25 @@ test("reembolso: pedido mostra a situação e os ingressos ficam cancelados com 
   await expect(row).toContainText("Reembolsado");
 });
 
+test("robots.txt e sitemap.xml públicos", async ({ request }) => {
+  const robots = await request.get("/robots.txt");
+  expect(robots.status()).toBe(200);
+  const robotsText = await robots.text();
+  expect(robotsText).toContain("Disallow: /checkout");
+  expect(robotsText).toContain("sitemap.xml");
+  const sitemap = await request.get("/sitemap.xml");
+  expect(sitemap.status()).toBe(200);
+  const xml = await sitemap.text();
+  expect(xml).toContain("/eventos</loc>");
+  expect(xml).toContain("/cidades/");
+  // Só cidades com evento publicado: Franca tem a Corrida Noturna; cidades sem eventos ficam de fora.
+  expect(xml).toContain("/cidades/franca-sp</loc>");
+  expect(xml).not.toMatch(/\/admin|\/checkout|\/pedido\//);
+  // Páginas que definem openGraph próprio mantêm a imagem de compartilhamento padrão.
+  const eventos = await (await request.get("/eventos")).text();
+  expect(eventos).toMatch(/<meta property="og:image" content="[^"]*\/opengraph-image/);
+});
+
 test.describe("preço total com taxa (Decreto 13.108/2026)", () => {
   const slug = "workshop-de-fotografia-urbana-curitiba";
   let restore: () => Promise<void>;
