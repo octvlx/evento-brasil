@@ -297,3 +297,18 @@ export async function trackingLinkCouponCode(db: Db, linkId: string, eventId: st
   });
   return link?.coupon?.code ?? null;
 }
+
+// Entradas para o sitemap: apenas o que é público e indexável.
+export async function listSitemapEntries(db: Db, now = new Date()) {
+  const [events, cities, organizers] = await Promise.all([
+    db.event.findMany({ where: publicEventWhere(now), select: { slug: true, updatedAt: true }, orderBy: { startsAt: "asc" } }),
+    // Só cidades com evento público: páginas vazias não entram no índice (a base do IBGE tem milhares).
+    db.city.findMany({
+      where: { OR: [{ events: { some: publicEventWhere(now) } }, { venues: { some: { events: { some: publicEventWhere(now) } } } }] },
+      select: { slug: true },
+      orderBy: { slug: "asc" },
+    }),
+    db.organization.findMany({ where: { status: "APPROVED" }, select: { slug: true, updatedAt: true }, orderBy: { slug: "asc" } }),
+  ]);
+  return { events, cities, organizers };
+}

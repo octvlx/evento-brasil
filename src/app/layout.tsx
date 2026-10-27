@@ -16,6 +16,7 @@ export const metadata: Metadata = {
   description: "Descubra eventos perto de você em todo o Brasil e compre ingressos com PIX ou cartão.",
   applicationName: "Evento Brasil",
   openGraph: { type: "website", locale: "pt_BR", siteName: "Evento Brasil" },
+  twitter: { card: "summary_large_image" },
   appleWebApp: { capable: true, title: "Evento Brasil", statusBarStyle: "black-translucent" },
 };
 
