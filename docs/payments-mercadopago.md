@@ -17,6 +17,18 @@ por referência deixam a tentativa para revisão manual. Uma consulta que ainda
 não pode confirmar a ausência (por exemplo, por consistência eventual) deve
 lançar erro, nunca retornar `null`.
 
+Snapshots de PIX pendente devem devolver as instruções da cobrança existente
+(`pixCopyPaste` e/ou `pixQrCodeBase64`, mais `expiresAt` quando disponível),
+inclusive na busca por referência. A confirmação persiste essas instruções
+após validar o valor; a recuperação não chama `createPayment` de novo.
+Sem instruções, o checkout mantém a mensagem de confirmação pendente.
+
+`processingFeeCents` no snapshot é o total conhecido da taxa em centavos;
+`null` significa ainda desconhecido. Atualizações `PAID`, inclusive posteriores
+à aprovação e na resolução de disputa, reconciliam esse total com o razão.
+Correções criam partidas pelo delta, sem editar o histórico. Repetições não
+duplicam custos, e `null` nunca apaga um custo já conhecido.
+
 ## O que o sistema já espera de qualquer provedor
 
 Contrato em `src/server/payments/types.ts`:

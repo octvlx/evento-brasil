@@ -59,7 +59,7 @@ export class SimulatedPaymentAdapter implements PaymentProviderAdapter {
       providerPaymentId: row.id,
       status: stateToStatus[row.state],
       rawStatus: row.state,
-      pixCopyPaste: input.method === "PIX" ? `SIMULADO-NAO-PAGUE-${row.id}-${randomToken(6)}` : undefined,
+      pixCopyPaste: input.method === "PIX" ? `SIMULADO-NAO-PAGUE-${row.id}` : undefined,
       expiresAt: row.expiresAt,
     };
   }
@@ -76,6 +76,8 @@ export class SimulatedPaymentAdapter implements PaymentProviderAdapter {
       amountCents: row.amountCents,
       // O simulado não cobra taxa de processamento.
       processingFeeCents: 0,
+      pixCopyPaste: row.method === "PIX" ? `SIMULADO-NAO-PAGUE-${row.id}` : undefined,
+      expiresAt: row.expiresAt,
     };
   }
 
