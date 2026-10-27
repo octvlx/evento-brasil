@@ -154,6 +154,8 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             capacity: event.capacity,
             halfPriceQuotaPercent: event.halfPriceQuotaBps === null ? undefined : event.halfPriceQuotaBps / 100,
             refundPolicy: event.refundPolicy,
+            refundWindowDays: event.refundWindowDays,
+            refundMinHoursBeforeEvent: event.refundMinHoursBeforeEvent,
             accessibilityInfo: event.accessibilityInfo ?? undefined,
             coverImageUrl: event.coverImageUrl ?? undefined,
           }}

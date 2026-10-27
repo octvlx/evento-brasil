@@ -10,8 +10,12 @@ de parecer de advogado(a) e contador(a) antes do lançamento comercial.
 ## Direito do consumidor
 
 - **Direito de arrependimento (CDC art. 49)** e sua aplicação a ingressos de
-  eventos com data marcada. Hoje: janela configurável `REFUND_WINDOW_DAYS=7`
-  após a compra **e** `REFUND_MIN_HOURS_BEFORE_EVENT=48` antes do evento.
+  eventos com data marcada. Hoje: cada evento define "dias após a compra"
+  (`Event.refundWindowDays`, padrão 7, 0–365) **e** "horas antes do evento"
+  (`Event.refundMinHoursBeforeEvent`, padrão 48, 0–720) ao ser criado; com
+  ingressos vendidos, o organizador só pode tornar os prazos mais favoráveis.
+  **Decidir se a plataforma deve impor um mínimo** (ex.: não permitir menos de
+  7 dias), já que o sistema hoje aceita 0 dias.
 - **Cancelamento/adiamento pelo organizador:** política atual = reembolso
   integral automático (incluindo taxa de serviço) e revogação dos ingressos.
   Avaliar regras específicas para adiamento/remarcação.

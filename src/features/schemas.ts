@@ -105,6 +105,18 @@ export const eventInputSchema = z
     capacity: z.coerce.number().int().positive("Capacidade deve ser positiva").max(1_000_000),
     halfPriceQuotaPercent: z.coerce.number().min(0).max(100).optional(),
     refundPolicy: trimmed(10, 4000, "Descreva a política de reembolso"),
+    refundWindowDays: z.coerce
+      .number({ message: "Informe os dias após a compra" })
+      .int("Use um número inteiro de dias")
+      .min(0, "Mínimo de 0 dias")
+      .max(365, "Máximo de 365 dias")
+      .default(7),
+    refundMinHoursBeforeEvent: z.coerce
+      .number({ message: "Informe as horas antes do evento" })
+      .int("Use um número inteiro de horas")
+      .min(0, "Mínimo de 0 horas")
+      .max(720, "Máximo de 720 horas")
+      .default(48),
     accessibilityInfo: optionalText(2000),
     coverImageUrl: z.string().trim().optional(),
   })

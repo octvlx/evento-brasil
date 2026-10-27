@@ -239,6 +239,8 @@ export interface CreateOrderOptions {
   now?: Date;
   /** O provedor configurado é o simulado (marca o pedido como simulado). */
   providerIsSimulated: boolean;
+  /** False quando o adaptador ainda não oferece nenhum método de pagamento. */
+  paymentsAvailable?: boolean;
 }
 
 export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, opts: CreateOrderOptions) {
@@ -333,6 +335,8 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       if (negative) throw new AppError("VALIDATION", "O preço deste ingresso é menor que a taxa da plataforma.");
       const attribution = await resolveAttributionTx(tx, event.id, input.attribution);
       const isFree = fees.totalCents === 0;
+      if (!isFree && opts.paymentsAvailable === false)
+        throw new AppError("SALES_CLOSED", "A compra de ingressos pagos está temporariamente indisponível.");
       if (!isFree && !["CONNECTED", "SIMULATED"].includes(event.organization.paymentAccountStatus))
         throw new AppError("SALES_CLOSED", "O organizador ainda não está habilitado para vender ingressos pagos.");
       if (!isFree && event.organization.paymentAccountStatus === "SIMULATED" && !opts.providerIsSimulated)

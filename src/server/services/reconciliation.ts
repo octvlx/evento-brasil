@@ -13,6 +13,7 @@ import { resumeRefund, retryFailedRefunds } from "./refunds";
 export interface ReconciliationReport {
   webhooksReprocessed: number;
   paymentsSynced: number;
+  settledPaymentsSynced: number;
   paymentsLinked: number;
   paymentsClosedNotFound: number;
   paymentsNeedReview: number;
@@ -42,6 +43,7 @@ export async function reconcilePayments(
   const report: ReconciliationReport = {
     webhooksReprocessed: 0,
     paymentsSynced: 0,
+    settledPaymentsSynced: 0,
     paymentsLinked: 0,
     paymentsClosedNotFound: 0,
     paymentsNeedReview: 0,
@@ -82,6 +84,29 @@ export async function reconcilePayments(
     }
   }
 
+  // Pagamentos pagos/disputados continuam sujeitos a estorno e chargeback.
+  // Fila independente das pendências: um grupo não pode consumir o limite do outro.
+  // updatedAt registra também a consulta; ordenar pelo mais antigo faz a fila
+  // avançar entre execuções, inclusive quando uma consulta falha.
+  const settled = await db.payment.findMany({
+    where: { provider: adapter.id, status: { in: ["PAID", "DISPUTED"] }, providerPaymentId: { not: null }, updatedAt: { lt: cutoff } },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    take: limit,
+  });
+  for (const p of settled) {
+    try {
+      await syncPaymentFromProvider(db, adapter, p.providerPaymentId!);
+      report.settledPaymentsSynced++;
+    } catch (err) {
+      fail("settled-payment", p.id, err, p.orderId);
+    }
+    // Nunca sobrescreve um estado financeiro confirmado por webhook concorrente.
+    await db.payment.updateMany({
+      where: { id: p.id, status: { in: ["PAID", "DISPUTED"] } },
+      data: { updatedAt: now },
+    });
+  }
+
   // 3. Pagamentos sem id do provedor: o processo caiu entre criar no provedor e salvar o id.
   const unlinked = await db.payment.findMany({
     where: { provider: adapter.id, status: "PENDING", providerPaymentId: null, method: { not: "FREE" }, createdAt: { lt: cutoff } },
@@ -104,7 +129,7 @@ export async function reconcilePayments(
         report.paymentsClosedNotFound++;
         continue;
       }
-      await db.payment.update({ where: { id: p.id }, data: { providerPaymentId: snapshot.providerPaymentId, providerRawStatus: snapshot.rawStatus } });
+      await db.payment.update({ where: { id: p.id }, data: { providerPaymentId: snapshot.providerPaymentId, providerRawStatus: snapshot.rawStatus, failureReason: null } });
       await applyPaymentSnapshot(db, adapter, snapshot);
       report.paymentsLinked++;
     } catch (err) {
