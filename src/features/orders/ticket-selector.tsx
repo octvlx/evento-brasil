@@ -2,13 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { Minus, Plus, ShieldCheck } from "lucide-react";
+import { Minus, Plus, ShieldCheck, TicketPercent, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label } from "@/components/ui/primitives";
 import { formatBRL } from "@/lib/money";
 import { feeBreakdownText } from "@/lib/price-display";
 import { TICKET_KIND } from "@/lib/labels";
 import { createOrderAction } from "./actions";
+import { isCouponError } from "./status-view";
 
 export interface SelectorTicket {
   id: string;
@@ -33,9 +34,11 @@ interface Props {
   buyerPaysFee: boolean;
   user: { name: string; email: string } | null;
   halfPriceLeft: number | null;
+  /** Cupom pré-aplicado por um link rastreado (o comprador pode remover). */
+  initialCouponCode?: string | null;
 }
 
-export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user, halfPriceLeft }: Props) {
+export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user, halfPriceLeft, initialCouponCode }: Props) {
   const router = useRouter();
   const [qty, setQty] = useState<Record<string, number>>({});
   const [attendees, setAttendees] = useState<Record<string, string[]>>({});
@@ -43,6 +46,10 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
   const [buyerEmail, setBuyerEmail] = useState(user?.email ?? "");
   const [halfDecl, setHalfDecl] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [coupon, setCoupon] = useState(initialCouponCode ?? "");
+  const [couponOpen, setCouponOpen] = useState(Boolean(initialCouponCode));
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const couponCode = coupon.trim();
   const [pending, start] = useTransition();
   // Chave de idempotência por tentativa: evita pedidos duplicados em duplo clique.
   const [idempotencyKey, setKey] = useState(() => crypto.randomUUID());
@@ -72,6 +79,8 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
       router.push(`/entrar?next=${encodeURIComponent(`/eventos/${eventSlug}`)}`);
       return;
     }
+    setError(null);
+    setCouponError(null);
     start(async () => {
       const res = await createOrderAction({
         eventId,
@@ -84,10 +93,12 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
         buyerEmail,
         halfPriceDeclaration: halfDecl,
         idempotencyKey,
+        couponCode: couponCode || undefined,
       });
       if (res.ok) router.push(`/checkout/${res.data.orderId}`);
       else {
-        setError(res.error);
+        if (isCouponError(res, Boolean(couponCode))) setCouponError(res.error);
+        else setError(res.error);
         setKey(crypto.randomUUID());
       }
     });
@@ -177,6 +188,61 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
         </div>
       )}
 
+      <div className="rounded-2xl border border-border p-4">
+        {couponOpen ? (
+          <div>
+            <Label htmlFor="couponCode" className="flex items-center gap-1.5">
+              <TicketPercent className="size-4 text-secondary" aria-hidden /> Cupom de desconto
+            </Label>
+            <div className="mt-1.5 flex gap-2">
+              <Input
+                id="couponCode"
+                value={coupon}
+                onChange={(e) => {
+                  setCoupon(e.target.value.toUpperCase());
+                  setCouponError(null);
+                }}
+                maxLength={32}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                placeholder="EX.: PROMO10"
+                className="font-mono uppercase"
+                aria-invalid={!!couponError}
+                aria-describedby={couponError ? "couponError" : "couponHint"}
+              />
+              {coupon && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Remover cupom"
+                  onClick={() => {
+                    setCoupon("");
+                    setCouponError(null);
+                  }}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
+            {couponError ? (
+              <p id="couponError" role="alert" className="mt-1.5 text-sm font-medium text-destructive">
+                {couponError}
+              </p>
+            ) : (
+              <p id="couponHint" className="mt-1.5 text-xs text-muted-foreground">
+                O desconto é calculado e conferido na próxima etapa. Não vale para meia-entrada.
+              </p>
+            )}
+          </div>
+        ) : (
+          <button type="button" className="flex items-center gap-1.5 text-sm font-semibold text-secondary hover:underline" onClick={() => setCouponOpen(true)}>
+            <TicketPercent className="size-4" aria-hidden /> Tenho um cupom de desconto
+          </button>
+        )}
+      </div>
+
       <dl className="space-y-1.5 rounded-2xl bg-muted p-4 text-sm">
         <div className="flex justify-between">
           <dt>Ingressos ({totals.count})</dt>
@@ -186,8 +252,16 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
           <dt>Taxa de serviço</dt>
           <dd className="tabular-nums">{buyerPaysFee ? formatBRL(totals.fee) : "Sem taxa para o comprador"}</dd>
         </div>
+        {couponCode && (
+          <div className="flex justify-between gap-3 text-secondary">
+            <dt>
+              Cupom <span className="font-mono font-semibold">{couponCode}</span>
+            </dt>
+            <dd>desconto na próxima etapa</dd>
+          </div>
+        )}
         <div className="flex justify-between border-t border-border pt-2 text-base font-bold">
-          <dt>Total</dt>
+          <dt>{couponCode ? "Total sem desconto" : "Total"}</dt>
           <dd className="tabular-nums">{formatBRL(totals.total)}</dd>
         </div>
       </dl>

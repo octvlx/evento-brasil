@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import pg from "pg";
-import { login, USERS } from "./helpers";
+import { createCouponLink, login, USERS } from "./helpers";
 
 /**
  * Regra de comissão do evento com taxa paga pelo comprador (o seed só tem a
@@ -97,6 +97,41 @@ test("reembolso: pedido mostra a situação e os ingressos ficam cancelados com 
   await page.goto("/meus-ingressos");
   const row = page.getByRole("row").filter({ has: page.locator(`a[href="${new URL(orderUrl).pathname}"]`) });
   await expect(row).toContainText("Reembolsado");
+});
+
+test("link rastreado → cupom pré-aplicado → pedido com desconto", async ({ page }) => {
+  const { couponCode, linkCode } = await createCouponLink("noite-de-samba-no-terraco-sao-paulo");
+  await login(page, USERS.customer, "/meus-ingressos");
+  // Clique no link vindo de fora (rede social): carregamento completo da página.
+  await page.goto(`/r/${linkCode}`);
+  await expect(page).toHaveURL(/\/eventos\/noite-de-samba-no-terraco/);
+
+  const coupon = page.getByLabel("Cupom de desconto");
+  await expect(coupon).toHaveValue(couponCode);
+  await page.locator("li").filter({ hasText: "Inteira" }).getByRole("button", { name: "Aumentar" }).click();
+
+  // Erro do serviço aparece junto ao campo; o comprador pode trocar ou remover o cupom.
+  await coupon.fill("NAOEXISTE");
+  await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Cupom inválido ou indisponível." })).toBeVisible();
+  await expect(coupon).toHaveAttribute("aria-invalid", "true");
+
+  await coupon.fill(couponCode.toLowerCase());
+  await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
+  await page.waitForURL(/\/checkout\//);
+  // O Next mantém a página anterior oculta no DOM: só o resumo visível.
+  const summary = page.locator("dl:visible").filter({ hasText: "Subtotal" });
+  await expect(summary).toContainText("1× Inteira");
+  await expect(summary).toContainText("R$ 80,00");
+  await expect(summary).toContainText(`Desconto · cupom ${couponCode}`);
+  await expect(summary).toContainText("−R$ 8,00");
+  await expect(summary.locator("div").filter({ hasText: "Subtotal" })).toContainText("R$ 72,00");
+
+  await page.getByRole("button", { name: "Gerar PIX" }).click();
+  await page.getByRole("button", { name: "Aprovar PIX" }).click();
+  await page.waitForURL(/\/pedido\//);
+  await expect(page.getByRole("heading", { name: "Pagamento confirmado!" })).toBeVisible();
+  await expect(page.locator("dl:visible").filter({ hasText: "Subtotal" })).toContainText(`Desconto · cupom ${couponCode}`);
 });
 
 test.describe("preço total com taxa (Decreto 13.108/2026)", () => {
