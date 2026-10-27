@@ -34,7 +34,7 @@ async function Content() {
       include: { ticketType: { select: { name: true } }, event: { select: { id: true, title: true, slug: true, startsAt: true, endsAt: true, timezone: true, coverImageUrl: true } } },
       orderBy: { event: { startsAt: "asc" } },
     }),
-    db.order.findMany({ where: { userId: user.id }, include: { event: { select: { title: true } } }, orderBy: { createdAt: "desc" }, take: 30 }),
+    db.order.findMany({ where: { userId: user.id }, include: { event: { select: { title: true } } }, orderBy: { createdAt: "desc" }, take: 5 }),
   ]);
   const byEvent = new Map<string, typeof tickets>();
   for (const t of tickets) byEvent.set(t.event.id, [...(byEvent.get(t.event.id) ?? []), t]);
@@ -95,10 +95,15 @@ async function Content() {
       )}
       <section>
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-display text-xl font-bold">Histórico de pedidos</h2>
-          <Link href={CANCEL_HELP_HREF} className="text-sm font-semibold text-secondary hover:underline">
-            Cancelar compra / arrependimento
-          </Link>
+          <h2 className="font-display text-xl font-bold">Últimos pedidos</h2>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <Link href="/meus-pedidos" className="text-sm font-semibold text-secondary hover:underline">
+              Ver todos os pedidos
+            </Link>
+            <Link href={CANCEL_HELP_HREF} className="text-sm font-semibold text-secondary hover:underline">
+              Cancelar compra / arrependimento
+            </Link>
+          </div>
         </div>
         <div className="overflow-x-auto rounded-2xl border border-border">
           <table className="w-full text-sm">
