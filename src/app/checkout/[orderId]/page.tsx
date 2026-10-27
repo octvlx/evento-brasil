@@ -69,7 +69,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
         <p className="mb-4 mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
           <CalendarDays className="size-4" aria-hidden /> {formatEventDateTime(order.event.startsAt, order.event.timezone)}
         </p>
-        <OrderSummary items={order.items} subtotalCents={order.subtotalCents} serviceFeeCents={order.serviceFeeCents} totalCents={order.totalCents} />
+        <OrderSummary items={order.items} subtotalCents={order.subtotalCents} serviceFeeCents={order.serviceFeeCents} totalCents={order.totalCents} discountCents={order.discountCents} couponCode={order.couponCode} />
         <p className="mt-4 text-xs text-muted-foreground">
           Vendido por {order.event.organization.name}. A plataforma intermedeia a venda; a realização do evento é responsabilidade do organizador.
         </p>
