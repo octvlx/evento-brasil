@@ -146,6 +146,51 @@ export const ticketTypeInputSchema = z
   });
 export type TicketTypeInput = z.input<typeof ticketTypeInputSchema>;
 
+// ── Cupons e links de divulgação (ADR 0002) ──
+export const COUPON_CODE_RE = /^[A-Z0-9_-]{3,32}$/;
+const optionalLimit = z.coerce.number().int().min(1).max(1_000_000).nullable().default(null);
+
+export const couponInputSchema = z
+  .object({
+    code: z.string().trim().toUpperCase().regex(COUPON_CODE_RE, "Use de 3 a 32 letras, números, - ou _"),
+    description: optionalText(200),
+    discountType: z.enum(["PERCENT", "FIXED_PER_TICKET"]),
+    // Percentual em pontos-base (1–10000) ou valor fixo em centavos, conforme o tipo.
+    percentBps: z.coerce.number().int().min(1).max(10_000).nullable().default(null),
+    amountCents: z.coerce.number().int().min(1).max(100_000_00).nullable().default(null),
+    validFromLocal: localDateTime.optional().or(z.literal("")),
+    validUntilLocal: localDateTime.optional().or(z.literal("")),
+    maxUses: optionalLimit,
+    maxUsesPerUser: optionalLimit,
+    // Vazio = todos os tipos pagos do evento (exceto meia-entrada).
+    ticketTypeIds: z.array(z.string().min(1)).max(50).default([]),
+  })
+  .superRefine((v, ctx) => {
+    if (v.discountType === "PERCENT" && v.percentBps === null) ctx.addIssue({ code: "custom", path: ["percentBps"], message: "Informe o percentual de desconto" });
+    if (v.discountType === "FIXED_PER_TICKET" && v.amountCents === null)
+      ctx.addIssue({ code: "custom", path: ["amountCents"], message: "Informe o valor do desconto" });
+    if (v.validFromLocal && v.validUntilLocal && v.validUntilLocal <= v.validFromLocal)
+      ctx.addIssue({ code: "custom", path: ["validUntilLocal"], message: "O fim da validade deve ser depois do início" });
+  })
+  .transform((v) => ({
+    ...v,
+    percentBps: v.discountType === "PERCENT" ? v.percentBps : null,
+    amountCents: v.discountType === "FIXED_PER_TICKET" ? v.amountCents : null,
+  }));
+export type CouponInput = z.input<typeof couponInputSchema>;
+
+const utm = optionalText(200);
+export const trackingLinkInputSchema = z.object({
+  name: trimmed(2, 120, "Dê um nome ao link (ex.: Instagram stories)"),
+  utmSource: utm,
+  utmMedium: utm,
+  utmCampaign: utm,
+  utmContent: utm,
+  utmTerm: utm,
+  couponId: z.string().min(1).optional().or(z.literal("")),
+});
+export type TrackingLinkInput = z.input<typeof trackingLinkInputSchema>;
+
 // ── Pedidos ──
 export const attendeeSchema = z.object({ name: trimmed(2, 120, "Nome do participante"), email: email.optional() });
 

@@ -2,6 +2,7 @@
 import "server-only";
 import type { LedgerAccount } from "@/generated/prisma/client";
 import type { Db } from "../db";
+import { formatDateTimeShort } from "@/lib/datetime";
 import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, roleHas, type Actor } from "../auth/permissions";
 
 export async function organizerOverview(db: Db, actor: Actor, organizationId: string) {
@@ -213,18 +214,113 @@ export async function listAttendees(db: Db, actor: Actor, eventId: string) {
   });
 }
 
+/** Célula CSV entre aspas, com fórmulas de planilha neutralizadas. */
+function csvCell(v: unknown): string {
+  const s = v === null || v === undefined ? "" : String(v);
+  // Neutraliza injeção de fórmulas em planilhas.
+  const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+/** CSV com BOM UTF-8 (o Excel reconhece acentos) e quebra de linha CRLF. */
+function toCsv(rows: unknown[][], sep = ","): string {
+  return "﻿" + rows.map((r) => r.map(csvCell).join(sep)).join("\r\n");
+}
+
 export function attendeesToCsv(rows: Awaited<ReturnType<typeof listAttendees>>): string {
-  const esc = (v: unknown) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    // Neutraliza injeção de fórmulas em planilhas.
-    const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
-    return `"${safe.replace(/"/g, '""')}"`;
-  };
   const header = ["codigo", "participante", "email", "tipo", "status", "check_in", "pedido"];
-  const lines = rows.map((t) =>
-    [t.code, t.holderName, t.holderEmail, t.ticketType.name, t.status, t.checkedInAt?.toISOString() ?? "", t.order.publicCode].map(esc).join(","),
+  return toCsv([
+    header,
+    ...rows.map((t) => [t.code, t.holderName, t.holderEmail, t.ticketType.name, t.status, t.checkedInAt?.toISOString() ?? "", t.order.publicCode]),
+  ]);
+}
+
+/**
+ * Situação da meia-entrada de um evento (R7 do decreto). Só números agregados —
+ * nenhum dado pessoal. "Vendidas" é monotônico (inclui as depois reembolsadas
+ * ou canceladas), como no estoque; a cota restante segue a regra do checkout:
+ * cota − (vendidas + reservadas).
+ */
+export async function halfPriceReport(db: Db, actor: Actor, eventId: string, now = new Date()) {
+  await assertEventPermission(db, actor, eventId, "finance:read");
+  const event = await db.event.findUniqueOrThrow({
+    where: { id: eventId },
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      startsAt: true,
+      timezone: true,
+      capacity: true,
+      halfPriceQuotaBps: true,
+      organizationId: true,
+      ticketTypes: { where: { kind: "HALF_PRICE" }, select: { quantitySold: true, quantityReserved: true } },
+    },
+  });
+  const [ticketRows, dayRows] = await Promise.all([
+    db.issuedTicket.groupBy({ by: ["status", "revocationReason"], where: { eventId, ticketType: { kind: "HALF_PRICE" } }, _count: true }),
+    db.$queryRaw<{ day: string; half: number; halfFaceCents: number; total: number }[]>`
+      SELECT to_char((o."paidAt" AT TIME ZONE ${event.timezone})::date, 'YYYY-MM-DD') AS day,
+             COALESCE(SUM(CASE WHEN i.kind = 'HALF_PRICE' THEN i.quantity END), 0)::int AS half,
+             COALESCE(SUM(CASE WHEN i.kind = 'HALF_PRICE' THEN i.quantity * i."unitPriceCents" END), 0)::int AS "halfFaceCents",
+             SUM(i.quantity)::int AS total
+      FROM "Order" o
+      JOIN "OrderItem" i ON i."orderId" = o.id
+      WHERE o."eventId" = ${eventId} AND o."paidAt" IS NOT NULL
+        AND o.status IN ('PAID', 'REFUND_PENDING', 'REFUNDED', 'DISPUTED')
+      GROUP BY 1 ORDER BY 1`,
+  ]);
+  const count = (pred: (r: (typeof ticketRows)[number]) => boolean) => ticketRows.filter(pred).reduce((s, r) => s + r._count, 0);
+  const sold = event.ticketTypes.reduce((s, t) => s + t.quantitySold, 0);
+  const reserved = event.ticketTypes.reduce((s, t) => s + t.quantityReserved, 0);
+  const quota = event.halfPriceQuotaBps === null ? null : Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000);
+  return {
+    event,
+    generatedAt: now,
+    capacity: event.capacity,
+    quotaBps: event.halfPriceQuotaBps,
+    quota,
+    sold,
+    reserved,
+    refunded: count((r) => r.status === "REVOKED" && r.revocationReason === "REFUNDED"),
+    cancelled: count((r) => r.status === "REVOKED" && r.revocationReason === "EVENT_CANCELLED"),
+    otherRevoked: count((r) => r.status === "REVOKED" && r.revocationReason !== "REFUNDED" && r.revocationReason !== "EVENT_CANCELLED"),
+    valid: count((r) => r.status === "VALID"),
+    checkedIn: count((r) => r.status === "CHECKED_IN"),
+    remaining: quota === null ? null : Math.max(0, quota - sold - reserved),
+    byDay: dayRows.map((r) => ({ day: r.day, halfSold: r.half, halfFaceCents: r.halfFaceCents, totalSold: r.total })),
+  };
+}
+
+const decimalBR = (n: number) => String(n).replace(".", ",");
+const centsBR = (c: number) => (c / 100).toFixed(2).replace(".", ",");
+
+/** Separador ";" e decimal com vírgula: o Excel em pt-BR abre em colunas. */
+export function halfPriceReportToCsv(r: Awaited<ReturnType<typeof halfPriceReport>>): string {
+  const noQuota = "Sem cota definida";
+  return toCsv(
+    [
+      ["Indicador", "Valor"],
+      ["Evento", r.event.title],
+      ["Início do evento", formatDateTimeShort(r.event.startsAt, r.event.timezone)],
+      ["Capacidade", r.capacity],
+      ["Cota de meia-entrada (%)", r.quotaBps === null ? noQuota : decimalBR(r.quotaBps / 100)],
+      ["Cota de meia-entrada (ingressos)", r.quota ?? noQuota],
+      ["Meias vendidas (inclui reembolsadas e canceladas)", r.sold],
+      ["Meias reservadas (pagamento pendente)", r.reserved],
+      ["Meias reembolsadas", r.refunded],
+      ["Meias canceladas (evento cancelado)", r.cancelled],
+      ["Meias revogadas por outro motivo", r.otherRevoked],
+      ["Meias válidas sem check-in", r.valid],
+      ["Meias com check-in", r.checkedIn],
+      ["Cota restante", r.remaining ?? noQuota],
+      ["Gerado em", formatDateTimeShort(r.generatedAt, r.event.timezone)],
+      [],
+      ["Data da venda", "Meias vendidas", "Valor de face das meias (R$)", "Ingressos vendidos (todos os tipos)"],
+      ...r.byDay.map((d) => [d.day.split("-").reverse().join("/"), d.halfSold, centsBR(d.halfFaceCents), d.totalSold]),
+    ],
+    ";",
   );
-  return "﻿" + [header.join(","), ...lines].join("\r\n");
 }
 
 export async function adminStats(db: Db, admin: Actor) {
@@ -248,4 +344,85 @@ export async function adminStats(db: Db, admin: Actor) {
     refunds: toMap(refundsByStatus),
     webhooksPending: webhooksFailed,
   };
+}
+
+// ── Cupons e origem das vendas (ADR 0002) ──
+// Só pedidos PAID: pendentes, expirados e reembolsados ficam de fora. Valores de
+// ingresso são líquidos de desconto (`subtotalCents`), sem taxa de serviço.
+
+/** Vendas por origem: link rastreado, senão utm_source, senão "direto". */
+export async function salesBySource(db: Db, actor: Actor, organizationId: string) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  const groups = await db.order.groupBy({
+    by: ["trackingLinkId", "utmSource"],
+    where: { organizationId, status: "PAID" },
+    _count: { _all: true },
+    _sum: { subtotalCents: true, discountCents: true },
+  });
+  const linkIds = groups.flatMap((g) => (g.trackingLinkId ? [g.trackingLinkId] : []));
+  const links = await db.trackingLink.findMany({
+    where: { id: { in: linkIds }, organizationId },
+    select: { id: true, name: true, code: true, event: { select: { title: true } } },
+  });
+  return groups
+    .map((g) => {
+      const link = links.find((l) => l.id === g.trackingLinkId);
+      return {
+        key: g.trackingLinkId ?? `utm:${g.utmSource ?? ""}`,
+        kind: link ? ("link" as const) : g.utmSource ? ("utm" as const) : ("direct" as const),
+        label: link ? link.name : (g.utmSource ?? "Direto / sem origem"),
+        detail: link ? `${link.event.title} · /r/${link.code}${g.utmSource ? ` · ${g.utmSource}` : ""}` : null,
+        orders: g._count._all,
+        netTicketCents: g._sum.subtotalCents ?? 0,
+        discountCents: g._sum.discountCents ?? 0,
+      };
+    })
+    .sort((a, b) => b.netTicketCents - a.netTicketCents);
+}
+
+/** Uso de cada cupom da organização: resgates, pedidos pagos, desconto concedido e valor vendido. */
+export async function couponUsage(db: Db, actor: Actor, organizationId: string) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  const [coupons, paid] = await Promise.all([
+    db.coupon.findMany({
+      where: { organizationId },
+      select: {
+        id: true,
+        code: true,
+        discountType: true,
+        percentBps: true,
+        amountCents: true,
+        maxUses: true,
+        timesReserved: true,
+        timesRedeemed: true,
+        disabledAt: true,
+        event: { select: { title: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.order.groupBy({
+      by: ["couponId"],
+      where: { organizationId, status: "PAID", couponId: { not: null } },
+      _count: { _all: true },
+      _sum: { subtotalCents: true, discountCents: true },
+    }),
+  ]);
+  return coupons.map((c) => {
+    const g = paid.find((p) => p.couponId === c.id);
+    return {
+      id: c.id,
+      code: c.code,
+      eventTitle: c.event?.title ?? null,
+      discountType: c.discountType,
+      percentBps: c.percentBps,
+      amountCents: c.amountCents,
+      maxUses: c.maxUses,
+      timesReserved: c.timesReserved,
+      timesRedeemed: c.timesRedeemed,
+      disabled: c.disabledAt !== null,
+      paidOrders: g?._count._all ?? 0,
+      discountCents: g?._sum.discountCents ?? 0,
+      netTicketCents: g?._sum.subtotalCents ?? 0,
+    };
+  });
 }

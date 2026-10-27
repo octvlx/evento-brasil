@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { CreateOrderInput } from "@/features/schemas";
@@ -14,13 +14,23 @@ import { handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/s
 import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
 import { ATTR_COOKIE, attributionCookieOptions, decodeAttribution, encodeAttribution, utmsFromParams } from "./attribution";
+import { assertCanCreateOrder, assertCanStartPayment } from "./limits";
+
+// Mesmo critério das ações de autenticação. O primeiro x-forwarded-for só é
+// confiável atrás de um proxy que o sobrescreve; o limite por conta vale sempre.
+async function clientKey() {
+  const h = await headers();
+  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local";
+}
 
 export async function createOrderAction(input: CreateOrderInput): Promise<ActionResult<{ orderId: string }>> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Entre na sua conta para continuar.", code: "UNAUTHENTICATED" };
   // Atribuição só do cookie primário eb_attr; a enviada pelo cliente é descartada.
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
+  const client = await clientKey();
   return toActionResult(async () => {
+    assertCanCreateOrder(user.id, client);
     const order = await createOrder(db, user, { ...input, attribution }, { providerIsSimulated: getPaymentAdapter().isSimulated });
     return { orderId: order.id };
   });
@@ -37,7 +47,11 @@ export async function captureUtmAction(params: Record<string, string>): Promise<
 
 export async function startPaymentAction(orderId: string, method: "PIX" | "CREDIT_CARD", simulatedCardOutcome?: "approve" | "decline") {
   const user = await requireUser(`/checkout/${orderId}`);
-  const result = await toActionResult(() => startPayment(db, getPaymentAdapter(), user, orderId, method, { simulatedCardOutcome }));
+  const client = await clientKey();
+  const result = await toActionResult(async () => {
+    assertCanStartPayment(user.id, client);
+    return startPayment(db, getPaymentAdapter(), user, orderId, method, { simulatedCardOutcome });
+  });
   if (!result.ok) return result;
   refresh();
   return { ok: true as const, data: { paymentId: result.data.id, status: result.data.status } };

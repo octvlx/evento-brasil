@@ -12,6 +12,8 @@ vi.mock("next/headers", () => ({
     get: (name: string) => (jar.has(name) ? { name, value: jar.get(name)! } : undefined),
     set: (name: string, value: string) => void jar.set(name, value),
   }),
+  // createOrderAction lê o IP para o limite de pedidos (conformidade, L4a).
+  headers: async () => new Headers(),
 }));
 vi.mock("next/cache", () => ({ refresh: () => {} }));
 vi.mock("@/server/auth/current", () => ({
