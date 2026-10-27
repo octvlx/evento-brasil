@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import QRCode from "qrcode";
 import Link from "next/link";
-import { ArrowLeft, Download, MapPin, Receipt } from "lucide-react";
+import { ArrowLeft, Download, MapPin, Receipt, Wallet } from "lucide-react";
 import { Alert, Badge, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { db } from "@/server/db";
@@ -13,6 +13,7 @@ import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { TICKET_STATUS } from "@/lib/labels";
 import { revocationText } from "@/features/orders/status-view";
 import { PrintButton } from "@/features/orders/print-button";
+import { walletAvailability } from "@/server/tickets/wallet";
 
 export const metadata: Metadata = { title: "Ingresso", robots: { index: false } };
 
@@ -38,6 +39,8 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
   const st = TICKET_STATUS[t.status];
   const tz = t.event.timezone;
   const city = t.event.venue?.city ?? t.event.city;
+  // Botões de carteira só quando a conta da Apple/Google estiver configurada (docs/wallet.md).
+  const wallet = t.status === "VALID" ? walletAvailability() : { apple: false, google: false };
   const svg = t.status === "VALID" ? await QRCode.toString(qrPayload(t), { type: "svg", margin: 1, errorCorrectionLevel: "M" }) : null;
 
   return (
@@ -85,6 +88,16 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
                 <Download aria-hidden /> Salvar PDF
               </a>
               <PrintButton />
+              {wallet.apple && (
+                <a href={`/api/tickets/${t.code}/wallet/apple`} className={buttonVariants({ variant: "outline" })}>
+                  <Wallet aria-hidden /> Adicionar à Apple Wallet
+                </a>
+              )}
+              {wallet.google && (
+                <a href={`/api/tickets/${t.code}/wallet/google`} className={buttonVariants({ variant: "outline" })}>
+                  <Wallet aria-hidden /> Salvar no Google Wallet
+                </a>
+              )}
             </div>
           )}
           <p className="mt-4 text-xs text-muted-foreground">Não compartilhe este QR code: ele é validado uma única vez na entrada.</p>
