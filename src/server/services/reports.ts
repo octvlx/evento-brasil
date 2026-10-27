@@ -249,3 +249,84 @@ export async function adminStats(db: Db, admin: Actor) {
     webhooksPending: webhooksFailed,
   };
 }
+
+// ── Cupons e origem das vendas (ADR 0002) ──
+// Só pedidos PAID: pendentes, expirados e reembolsados ficam de fora. Valores de
+// ingresso são líquidos de desconto (`subtotalCents`), sem taxa de serviço.
+
+/** Vendas por origem: link rastreado, senão utm_source, senão "direto". */
+export async function salesBySource(db: Db, actor: Actor, organizationId: string) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  const groups = await db.order.groupBy({
+    by: ["trackingLinkId", "utmSource"],
+    where: { organizationId, status: "PAID" },
+    _count: { _all: true },
+    _sum: { subtotalCents: true, discountCents: true },
+  });
+  const linkIds = groups.flatMap((g) => (g.trackingLinkId ? [g.trackingLinkId] : []));
+  const links = await db.trackingLink.findMany({
+    where: { id: { in: linkIds }, organizationId },
+    select: { id: true, name: true, code: true, event: { select: { title: true } } },
+  });
+  return groups
+    .map((g) => {
+      const link = links.find((l) => l.id === g.trackingLinkId);
+      return {
+        key: g.trackingLinkId ?? `utm:${g.utmSource ?? ""}`,
+        kind: link ? ("link" as const) : g.utmSource ? ("utm" as const) : ("direct" as const),
+        label: link ? link.name : (g.utmSource ?? "Direto / sem origem"),
+        detail: link ? `${link.event.title} · /r/${link.code}${g.utmSource ? ` · ${g.utmSource}` : ""}` : null,
+        orders: g._count._all,
+        netTicketCents: g._sum.subtotalCents ?? 0,
+        discountCents: g._sum.discountCents ?? 0,
+      };
+    })
+    .sort((a, b) => b.netTicketCents - a.netTicketCents);
+}
+
+/** Uso de cada cupom da organização: resgates, pedidos pagos, desconto concedido e valor vendido. */
+export async function couponUsage(db: Db, actor: Actor, organizationId: string) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  const [coupons, paid] = await Promise.all([
+    db.coupon.findMany({
+      where: { organizationId },
+      select: {
+        id: true,
+        code: true,
+        discountType: true,
+        percentBps: true,
+        amountCents: true,
+        maxUses: true,
+        timesReserved: true,
+        timesRedeemed: true,
+        disabledAt: true,
+        event: { select: { title: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.order.groupBy({
+      by: ["couponId"],
+      where: { organizationId, status: "PAID", couponId: { not: null } },
+      _count: { _all: true },
+      _sum: { subtotalCents: true, discountCents: true },
+    }),
+  ]);
+  return coupons.map((c) => {
+    const g = paid.find((p) => p.couponId === c.id);
+    return {
+      id: c.id,
+      code: c.code,
+      eventTitle: c.event?.title ?? null,
+      discountType: c.discountType,
+      percentBps: c.percentBps,
+      amountCents: c.amountCents,
+      maxUses: c.maxUses,
+      timesReserved: c.timesReserved,
+      timesRedeemed: c.timesRedeemed,
+      disabled: c.disabledAt !== null,
+      paidOrders: g?._count._all ?? 0,
+      discountCents: g?._sum.discountCents ?? 0,
+      netTicketCents: g?._sum.subtotalCents ?? 0,
+    };
+  });
+}
