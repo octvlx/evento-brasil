@@ -1,5 +1,30 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import pg from "pg";
 import { login, USERS } from "./helpers";
+
+/**
+ * Regra de comissão do evento com taxa paga pelo comprador (o seed só tem a
+ * da plataforma, paga pelo organizador). Devolve uma função que a encerra.
+ */
+async function withBuyerFee(slug: string, percentBps: number, fixedCents: number) {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const { rows } = await client.query('SELECT id FROM "Event" WHERE slug = $1', [slug]);
+  expect(rows[0], `evento ${slug}`).toBeTruthy();
+  const eventId = rows[0].id as string;
+  const id = `e2e-${randomUUID()}`;
+  await client.query(`UPDATE "CommissionRule" SET "activeTo" = now() WHERE scope = 'EVENT' AND "eventId" = $1 AND "activeTo" IS NULL`, [eventId]);
+  await client.query(
+    `INSERT INTO "CommissionRule" (id, scope, "eventId", "percentBps", "fixedCentsPerTicket", bearer, "policyVersion", "activeFrom")
+     VALUES ($1, 'EVENT', $2, $3, $4, 'BUYER', $5, now() - interval '1 minute')`,
+    [id, eventId, percentBps, fixedCents, `${id}:v1`],
+  );
+  return async () => {
+    await client.query('UPDATE "CommissionRule" SET "activeTo" = now() WHERE id = $1', [id]);
+    await client.end();
+  };
+}
 
 test("visitante descobre eventos publicados sem login", async ({ page }) => {
   await page.goto("/");
@@ -72,4 +97,56 @@ test("reembolso: pedido mostra a situação e os ingressos ficam cancelados com 
   await page.goto("/meus-ingressos");
   const row = page.getByRole("row").filter({ has: page.locator(`a[href="${new URL(orderUrl).pathname}"]`) });
   await expect(row).toContainText("Reembolsado");
+});
+
+test.describe("preço total com taxa (Decreto 13.108/2026)", () => {
+  const slug = "workshop-de-fotografia-urbana-curitiba";
+  let restore: () => Promise<void>;
+  // R$ 150,00 + 10% + R$ 1,50 = R$ 166,50 por ingresso.
+  test.beforeAll(async () => {
+    restore = await withBuyerFee(slug, 1000, 150);
+  });
+  test.afterAll(async () => {
+    await restore?.();
+  });
+
+  test("card, página do evento e checkout mostram o mesmo total com a taxa discriminada", async ({ page }) => {
+    await login(page, USERS.customer, "/eventos?cidade=curitiba-pr");
+    const card = page.locator(`a[href="/eventos/${slug}"]`);
+    const price = card.getByTestId("card-price");
+    await expect(price).toContainText(/A partir de R\$\s166,50/);
+    await expect(price).toContainText(/\(R\$\s150,00 \+ R\$\s16,50 de taxa\)/);
+
+    await card.click();
+    const ticket = page.locator("li").filter({ hasText: "Participante" });
+    await expect(ticket.getByTestId("ticket-total")).toHaveText(/R\$\s166,50/);
+    await expect(ticket).toContainText(/R\$\s150,00 \+ R\$\s16,50 de taxa de serviço/);
+    await ticket.getByRole("button", { name: "Aumentar" }).click();
+    await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
+    await page.waitForURL(/\/checkout\//);
+    const total = page.locator("dl div").filter({ has: page.getByText("Total", { exact: true }) }).last();
+    await expect(total).toContainText(/R\$\s166,50/);
+
+    // Pedido pendente: o canal de cancelamento aparece; cancela para liberar a reserva.
+    await page.goto(page.url().replace("/checkout/", "/pedido/"));
+    await expect(page.getByRole("link", { name: /Cancelar compra \/ arrependimento/ })).toHaveAttribute("href", "/ajuda#cancelamento");
+    await page.getByRole("button", { name: "Cancelar pedido" }).click();
+    await expect(page.getByRole("button", { name: "Cancelar pedido" })).toHaveCount(0);
+  });
+});
+
+test("canal de cancelamento/arrependimento: rodapé, Meus ingressos e Central de ajuda", async ({ page }) => {
+  await page.goto("/");
+  const footerLink = page.getByRole("contentinfo").getByRole("link", { name: "Cancelar compra / arrependimento" });
+  await expect(footerLink).toHaveAttribute("href", "/ajuda#cancelamento");
+  await footerLink.click();
+  await expect(page).toHaveURL(/\/ajuda#cancelamento$/);
+  const section = page.getByRole("heading", { name: "Cancelar compra / arrependimento" });
+  await expect(section).toBeVisible();
+  await expect(page.getByText(/pago há no máximo 7 dias/)).toBeVisible();
+  await expect(page.getByText(/pelo menos 48 horas/)).toBeVisible();
+  await expect(page.getByText(/revisão jurídica/)).toBeVisible();
+
+  await login(page, USERS.customer, "/meus-ingressos");
+  await expect(page.getByRole("link", { name: "Cancelar compra / arrependimento" }).first()).toHaveAttribute("href", "/ajuda#cancelamento");
 });
