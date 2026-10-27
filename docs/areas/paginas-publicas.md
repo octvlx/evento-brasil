@@ -23,7 +23,7 @@ e implementação dos estados de pagamento/reembolso no checkout e no pedido
 | Ingresso: QR só para ingresso válido, PDF, código, titular, aviso de meia-entrada | `/ingressos/[code]` | Pronto |
 | Minha conta (perfil) | `/minha-conta` | Pronto |
 | Ajuda, termos, privacidade, 404 em pt-BR; páginas privadas com `noindex` | `/ajuda`, `/termos`, `/privacidade`, `not-found.tsx` | Pronto |
-| sitemap, robots, `error.tsx`/`global-error.tsx`, imagem OG padrão, canonical em `/eventos` e no perfil do organizador | branch `feat/seo-erros-paginas-publicas` (commit `9040ed4`) | **Feito, mas não incorporado ao `main`** |
+| sitemap (eventos públicos, cidades com evento, organizadores aprovados), robots, `error.tsx`/`global-error.tsx`, imagem OG padrão (também em páginas com `openGraph` próprio), canonical e `noindex` com filtros em `/eventos` | `sitemap.ts`, `robots.ts`, `error.tsx`, `global-error.tsx`, `opengraph-image.tsx`, `lib/site.ts` | Pronto |
 
 Testes: unidade em `tests/unit/order-status-view.test.ts`; E2E em
 `tests/e2e/public.spec.ts` (descoberta, busca, cidade, 404, reembolso) e
@@ -39,9 +39,8 @@ Testes: unidade em `tests/unit/order-status-view.test.ts`; E2E em
 
 ## O que falta (por prioridade)
 
-1. **Incorporar o SEO/erros** do commit `9040ed4` (sitemap, robots, `error.tsx`,
-   `global-error.tsx`, OG padrão, canonical). Pronto numa branch; precisa de
-   rebase/PR. Sem `error.tsx`, uma falha de banco mostra a tela padrão do Next.
+1. ~~**Incorporar o SEO/erros**~~ (sitemap, robots, páginas de erro, OG padrão,
+   canonical) — feito.
 2. **Ordenação na busca** (data, preço, relevância) em `/eventos` e nas cidades —
    só `catalog.ts` + página.
 3. **`/cidades`** (visão geral das cidades) e destaques/busca na página da cidade.
