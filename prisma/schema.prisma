@@ -38,13 +38,24 @@ model User {
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  sessions          Session[]
-  memberships       OrganizationMember[]
-  orders            Order[]
-  tickets           IssuedTicket[]
-  staffAssignments  EventStaffAssignment[] @relation("StaffAssignee")
-  checkins          TicketCheckin[]
-  auditLogs         AuditLog[]
+  sessions         Session[]
+  memberships      OrganizationMember[]
+  orders           Order[]
+  tickets          IssuedTicket[]         @relation("TicketBuyer")
+  heldTickets      IssuedTicket[]         @relation("TicketHolder")
+  staffAssignments EventStaffAssignment[] @relation("StaffAssignee")
+  checkins         TicketCheckin[]
+  auditLogs        AuditLog[]
+
+  transfersOut          TicketTransfer[]      @relation("TransferFrom")
+  transfersIn           TicketTransfer[]      @relation("TransferTo")
+  transfersCreated      TicketTransfer[]      @relation("TransferCreatedBy")
+  transfersDecided      TicketTransfer[]      @relation("TransferDecidedBy")
+  eventChanges          EventChange[]
+  cancellationRequests  CancellationRequest[] @relation("CancellationRequester")
+  cancellationsAssigned CancellationRequest[] @relation("CancellationAssignee")
+  cancellationsDecided  CancellationRequest[] @relation("CancellationDecider")
+  termsAcceptances      TermsAcceptance[]
 }
 
 model Session {
@@ -106,17 +117,22 @@ model Organization {
   createdAt                DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt                DateTime             @updatedAt @db.Timestamptz(3)
 
-  city            City?                    @relation(fields: [cityId], references: [id])
-  members         OrganizationMember[]
-  invitations     OrganizationInvitation[]
-  verifications   OrganizerVerification[]
-  events          Event[]
-  venues          Venue[]
-  orders          Order[]
-  commissionRules CommissionRule[]
-  ledgerEntries   FinancialLedgerEntry[]
-  settlements     OrganizerSettlement[]
-  auditLogs       AuditLog[]
+  city             City?                    @relation(fields: [cityId], references: [id])
+  members          OrganizationMember[]
+  invitations      OrganizationInvitation[]
+  verifications    OrganizerVerification[]
+  events           Event[]
+  venues           Venue[]
+  orders           Order[]
+  commissionRules  CommissionRule[]
+  ledgerEntries    FinancialLedgerEntry[]
+  settlements      OrganizerSettlement[]
+  auditLogs        AuditLog[]
+  coupons          Coupon[]
+  trackingLinks    TrackingLink[]
+  eventChanges     EventChange[]
+  cancellations    CancellationRequest[]
+  termsAcceptances TermsAcceptance[]
 
   @@index([status])
 }
@@ -267,39 +283,42 @@ model EventCategory {
 }
 
 model Event {
-  id                 String       @id @default(cuid())
-  organizationId     String
-  slug               String       @unique
-  title              String
-  summary            String?
-  description        String
-  categoryId         String
-  coverImageUrl      String?
-  locationType       LocationType @default(VENUE)
-  venueId            String?
-  onlineUrl          String?
-  cityId             String?
-  startsAt           DateTime     @db.Timestamptz(3)
-  endsAt             DateTime     @db.Timestamptz(3)
-  timezone           String
+  id                   String       @id @default(cuid())
+  organizationId       String
+  slug                 String       @unique
+  title                String
+  summary              String?
+  description          String
+  categoryId           String
+  coverImageUrl        String?
+  locationType         LocationType @default(VENUE)
+  venueId              String?
+  onlineUrl            String?
+  cityId               String?
+  startsAt             DateTime     @db.Timestamptz(3)
+  endsAt               DateTime     @db.Timestamptz(3)
+  timezone             String
   // 0 = livre; caso contrário idade mínima.
-  ageRestriction     Int          @default(0)
-  salesStartAt       DateTime     @db.Timestamptz(3)
-  salesEndAt         DateTime     @db.Timestamptz(3)
-  capacity           Int
+  ageRestriction       Int          @default(0)
+  salesStartAt         DateTime     @db.Timestamptz(3)
+  salesEndAt           DateTime     @db.Timestamptz(3)
+  capacity             Int
   // Cota de meia-entrada em pontos-base da capacidade (ex.: 4000 = 40%).
   // Nulo = sem cota configurada. Requer revisão jurídica.
-  halfPriceQuotaBps  Int?
-  status             EventStatus  @default(DRAFT)
-  isFeatured         Boolean      @default(false)
-  refundPolicy       String
-  accessibilityInfo  String?
-  moderationNote     String?
-  publishedAt        DateTime?    @db.Timestamptz(3)
-  cancelledAt        DateTime?    @db.Timestamptz(3)
-  cancellationReason String?
-  createdAt          DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime     @updatedAt @db.Timestamptz(3)
+  halfPriceQuotaBps    Int?
+  // Limite de ingressos por conta neste evento (R4, Decreto 13.108/2026). Nulo = sem
+  // limite; CHECK > 0. Contagem e exceções ficam no serviço (L4b).
+  maxTicketsPerAccount Int?
+  status               EventStatus  @default(DRAFT)
+  isFeatured           Boolean      @default(false)
+  refundPolicy         String
+  accessibilityInfo    String?
+  moderationNote       String?
+  publishedAt          DateTime?    @db.Timestamptz(3)
+  cancelledAt          DateTime?    @db.Timestamptz(3)
+  cancellationReason   String?
+  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
 
   organization     Organization           @relation(fields: [organizationId], references: [id])
   category         EventCategory          @relation(fields: [categoryId], references: [id])
@@ -312,7 +331,14 @@ model Event {
   checkins         TicketCheckin[]
   staffAssignments EventStaffAssignment[]
   commissionRules  CommissionRule[]
+  coupons          Coupon[]
+  trackingLinks    TrackingLink[]
+  transfers        TicketTransfer[]
+  changes          EventChange[]
+  cancellations    CancellationRequest[]
 
+  // Alvo das FKs compostas de Coupon e TrackingLink (evento da mesma organização).
+  @@unique([id, organizationId])
   @@index([status, startsAt])
   @@index([cityId, status, startsAt])
   @@index([organizationId, status])
@@ -387,6 +413,7 @@ model TicketType {
   reservations TicketInventoryReservation[]
   orderItems   OrderItem[]
   tickets      IssuedTicket[]
+  coupons      CouponTicketType[]
 
   @@index([eventId, sortOrder])
 }
@@ -455,23 +482,44 @@ model Order {
   cancelledAt      DateTime?   @db.Timestamptz(3)
   createdAt        DateTime    @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime    @updatedAt @db.Timestamptz(3)
+  // Instantâneos imutáveis da compra (ADR 0002). couponCode é a cópia do código usado.
+  couponId         String?
+  couponCode       String?     @db.VarChar(32)
+  // Σ discountPerUnitCents × quantity dos itens.
+  discountCents    Int         @default(0)
+  trackingLinkId   String?
+  utmSource        String?     @db.VarChar(200)
+  utmMedium        String?     @db.VarChar(200)
+  utmCampaign      String?     @db.VarChar(200)
+  utmContent       String?     @db.VarChar(200)
+  utmTerm          String?     @db.VarChar(200)
 
-  user           User                         @relation(fields: [userId], references: [id])
-  event          Event                        @relation(fields: [eventId], references: [id])
-  organization   Organization                 @relation(fields: [organizationId], references: [id])
-  commissionRule CommissionRule?              @relation(fields: [commissionRuleId], references: [id])
-  items          OrderItem[]
-  reservations   TicketInventoryReservation[]
-  payments       Payment[]
-  tickets        IssuedTicket[]
-  refunds        Refund[]
-  ledgerEntries  FinancialLedgerEntry[]
+  user             User                         @relation(fields: [userId], references: [id])
+  event            Event                        @relation(fields: [eventId], references: [id])
+  organization     Organization                 @relation(fields: [organizationId], references: [id])
+  commissionRule   CommissionRule?              @relation(fields: [commissionRuleId], references: [id])
+  // Cupom da mesma organização do pedido; Restrict porque o cupom usado é histórico.
+  coupon           Coupon?                      @relation(fields: [couponId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  trackingLink     TrackingLink?                @relation(fields: [trackingLinkId], references: [id], onDelete: Restrict)
+  items            OrderItem[]
+  reservations     TicketInventoryReservation[]
+  payments         Payment[]
+  tickets          IssuedTicket[]
+  refunds          Refund[]
+  ledgerEntries    FinancialLedgerEntry[]
+  cancellations    CancellationRequest[]
+  termsAcceptances TermsAcceptance[]
 
   @@unique([userId, idempotencyKey])
   @@index([eventId, status])
   @@index([organizationId, status, createdAt])
   @@index([status, expiresAt])
   @@index([userId, createdAt])
+  // Limite por conta por evento (R4): pedidos e reservas da conta no evento.
+  @@index([userId, eventId, status])
+  // Limite de usos por comprador; também cobre consultas só por couponId.
+  @@index([couponId, userId])
+  @@index([trackingLinkId])
 }
 
 model OrderItem {
@@ -481,7 +529,11 @@ model OrderItem {
   // Snapshots do momento da compra.
   ticketTypeName         String
   kind                   TicketKind
+  // Preço efetivamente cobrado = listUnitPriceCents - discountPerUnitCents (CHECK OrderItem_discount).
   unitPriceCents         Int
+  // Preço de tabela no momento da compra.
+  listUnitPriceCents     Int
+  discountPerUnitCents   Int        @default(0)
   commissionPerUnitCents Int
   serviceFeePerUnitCents Int
   quantity               Int
@@ -493,6 +545,91 @@ model OrderItem {
   tickets    IssuedTicket[]
 
   @@unique([orderId, ticketTypeId])
+}
+
+// ───────────────────────────── Cupons e links rastreados ─────────────────────────────
+// ADR 0002. Regras de uso e contadores ficam no serviço; CHECKs na migração
+// 20261027120000_coupons_tracking_links. Cupom/link usado não é apagado, só
+// desativado (disabledAt/archivedAt).
+
+enum DiscountType {
+  PERCENT
+  FIXED_PER_TICKET
+}
+
+model Coupon {
+  id             String       @id @default(cuid())
+  organizationId String
+  // Nulo = todos os eventos da organização.
+  eventId        String?
+  // Maiúsculas, ^[A-Z0-9_-]{3,32}$ (CHECK).
+  code           String       @db.VarChar(32)
+  description    String?      @db.VarChar(200)
+  discountType   DiscountType
+  percentBps     Int?
+  amountCents    Int?
+  validFrom      DateTime?    @db.Timestamptz(3)
+  validUntil     DateTime?    @db.Timestamptz(3)
+  // Nulo = ilimitado. O limite não é CHECK: pagamento tardio pode ultrapassá-lo (auditado).
+  maxUses        Int?
+  maxUsesPerUser Int?         @default(1)
+  timesReserved  Int          @default(0)
+  timesRedeemed  Int          @default(0)
+  disabledAt     DateTime?    @db.Timestamptz(3)
+  createdById    String
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  event        Event?             @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  ticketTypes  CouponTicketType[]
+  orders       Order[]
+  links        TrackingLink[]
+
+  @@unique([organizationId, code])
+  // Alvo de Order(couponId, organizationId).
+  @@unique([id, organizationId])
+  @@index([eventId])
+}
+
+// Sem linhas = todos os tipos pagos do evento. Tipos do mesmo evento do cupom: checado no serviço.
+model CouponTicketType {
+  couponId     String
+  ticketTypeId String
+
+  coupon     Coupon     @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, ticketTypeId])
+  @@index([ticketTypeId])
+}
+
+model TrackingLink {
+  id             String    @id @default(cuid())
+  organizationId String
+  eventId        String
+  // Curto, público, aleatório: ^[A-Za-z0-9]{6,16}$ (CHECK).
+  code           String    @unique @db.VarChar(16)
+  name           String    @db.VarChar(120)
+  utmSource      String?   @db.VarChar(200)
+  utmMedium      String?   @db.VarChar(200)
+  utmCampaign    String?   @db.VarChar(200)
+  utmContent     String?   @db.VarChar(200)
+  utmTerm        String?   @db.VarChar(200)
+  // Pré-aplica um cupom; mesma organização checada no serviço (FK simples por causa do SetNull).
+  couponId       String?
+  clicks         Int       @default(0)
+  archivedAt     DateTime? @db.Timestamptz(3)
+  createdById    String
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  event        Event        @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  coupon       Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  orders       Order[]
+
+  @@index([eventId])
+  @@index([couponId])
 }
 
 // ───────────────────────────── Pagamentos ─────────────────────────────
@@ -606,7 +743,11 @@ model IssuedTicket {
   orderItemId      String
   eventId          String
   ticketTypeId     String
+  // Comprador (quem pagou). Não muda na transferência; o reembolso segue o pagamento (D7).
   userId           String
+  // Titular atual (R6). Sem valor no INSERT, o gatilho IssuedTicket_default_holder
+  // preenche com userId; depois muda só pelo aceite de TicketTransfer.
+  holderUserId     String                  @default(dbgenerated())
   sequence         Int
   holderName       String?
   holderEmail      String?
@@ -617,18 +758,25 @@ model IssuedTicket {
   checkedInAt      DateTime?               @db.Timestamptz(3)
   issuedAt         DateTime                @default(now()) @db.Timestamptz(3)
 
-  order      Order           @relation(fields: [orderId], references: [id])
-  orderItem  OrderItem       @relation(fields: [orderItemId], references: [id])
-  event      Event           @relation(fields: [eventId], references: [id])
-  ticketType TicketType      @relation(fields: [ticketTypeId], references: [id])
-  user       User            @relation(fields: [userId], references: [id])
+  order      Order            @relation(fields: [orderId], references: [id])
+  orderItem  OrderItem        @relation(fields: [orderItemId], references: [id])
+  event      Event            @relation(fields: [eventId], references: [id])
+  ticketType TicketType       @relation(fields: [ticketTypeId], references: [id])
+  user       User             @relation("TicketBuyer", fields: [userId], references: [id])
+  holder     User             @relation("TicketHolder", fields: [holderUserId], references: [id], onDelete: Restrict)
   checkins   TicketCheckin[]
+  transfers  TicketTransfer[]
 
   // Garante emissão única por unidade do item, mesmo com webhooks concorrentes.
   @@unique([orderItemId, sequence])
   @@index([eventId, status])
   @@index([userId, issuedAt])
   @@index([orderId])
+  // "Meus ingressos" pelo titular atual.
+  @@index([holderUserId, issuedAt])
+  // Limite por conta por evento (R4): ingressos em mãos e ingressos comprados.
+  @@index([eventId, holderUserId])
+  @@index([eventId, userId])
 }
 
 enum CheckinResult {
@@ -671,6 +819,8 @@ enum RefundReason {
   EVENT_CANCELLED
   LATE_PAYMENT_NO_INVENTORY
   ADMIN
+  // Janela de reembolso integral por alteração relevante (R8, L8a).
+  EVENT_CHANGED
 }
 
 model Refund {
@@ -688,11 +838,240 @@ model Refund {
   createdAt        DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
 
-  order         Order                  @relation(fields: [orderId], references: [id])
-  payment       Payment?               @relation(fields: [paymentId], references: [id])
-  ledgerEntries FinancialLedgerEntry[]
+  // Alteração de evento que abriu a janela (reason = EVENT_CHANGED).
+  eventChangeId         String?
+  // Pedido de cancelamento atendido. Sem unicidade: um reembolso que falha é seguido de outro.
+  cancellationRequestId String?
+
+  order               Order                  @relation(fields: [orderId], references: [id])
+  payment             Payment?               @relation(fields: [paymentId], references: [id])
+  eventChange         EventChange?           @relation(fields: [eventChangeId], references: [id], onDelete: Restrict)
+  cancellationRequest CancellationRequest?   @relation(fields: [cancellationRequestId], references: [id], onDelete: Restrict)
+  ledgerEntries       FinancialLedgerEntry[]
 
   @@index([status, createdAt])
+  @@index([orderId])
+  @@index([eventChangeId])
+  @@index([cancellationRequestId])
+}
+
+// ───────────────────────────── Conformidade (Decreto 13.108/2026) ─────────────────────────────
+// ADR 0003. CHECKs, índices parciais e gatilhos de imutabilidade ficam na migração
+// 20261027180000_compliance_schema. FKs Restrict: o histórico não some junto com
+// ingresso, usuário ou evento. Prazos e regras legais (D1–D8) ficam no serviço.
+
+enum TicketTransferStatus {
+  PENDING
+  ACCEPTED
+  CANCELLED
+  EXPIRED
+}
+
+enum TicketTransferInitiator {
+  // O titular pede; o destinatário aceita com o token.
+  HOLDER
+  // Reversão/correção pelo admin (fraude): nasce decidida, sem token, com motivo.
+  ADMIN
+}
+
+// Transferência de titularidade (R6). Histórico ≥ 2 anos: só INSERT e a transição
+// PENDING → decidida (gatilho TicketTransfer_append_only); depois, imutável.
+model TicketTransfer {
+  id                 String                  @id @default(cuid())
+  ticketId           String
+  eventId            String
+  initiatedBy        TicketTransferInitiator @default(HOLDER)
+  // Titular no momento do pedido; nome e e-mail copiados (User/IssuedTicket mudam).
+  fromUserId         String
+  fromHolderName     String                  @db.VarChar(200)
+  fromHolderEmail    String                  @db.VarChar(254)
+  // Nulo até o aceite, se o destinatário ainda não tem conta.
+  toUserId           String?
+  // Minúsculas (CHECK).
+  toEmail            String                  @db.VarChar(254)
+  toHolderName       String?                 @db.VarChar(200)
+  status             TicketTransferStatus    @default(PENDING)
+  // SHA-256 hex do token de aceite (nunca o token). Obrigatório só em HOLDER.
+  tokenHash          String?                 @unique @db.Char(64)
+  // SHA-256 hex do validationToken (QR) invalidado no aceite.
+  previousTokenHash  String?                 @db.Char(64)
+  // Reversão pelo admin aponta para a transferência revertida.
+  reversesTransferId String?                 @unique
+  // Motivo do pedido; obrigatório em ADMIN.
+  reason             String?                 @db.VarChar(2000)
+  // Quem criou: o titular (HOLDER) ou o admin.
+  createdById        String
+  createdAt          DateTime                @default(now()) @db.Timestamptz(3)
+  // Obrigatório em HOLDER; o prazo vem do serviço (D7).
+  expiresAt          DateTime?               @db.Timestamptz(3)
+  decidedAt          DateTime?               @db.Timestamptz(3)
+  // Destinatário (aceite), remetente ou admin (cancelamento); nulo = expiração automática.
+  decidedById        String?
+  decisionReason     String?                 @db.VarChar(500)
+  requestIp          String?                 @db.VarChar(64)
+  requestUserAgent   String?                 @db.VarChar(512)
+  decisionIp         String?                 @db.VarChar(64)
+  decisionUserAgent  String?                 @db.VarChar(512)
+
+  ticket           IssuedTicket    @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  event            Event           @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  fromUser         User            @relation("TransferFrom", fields: [fromUserId], references: [id], onDelete: Restrict)
+  toUser           User?           @relation("TransferTo", fields: [toUserId], references: [id], onDelete: Restrict)
+  createdBy        User            @relation("TransferCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  decidedBy        User?           @relation("TransferDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  reversesTransfer TicketTransfer? @relation("TransferReversal", fields: [reversesTransferId], references: [id], onDelete: Restrict)
+  reversedBy       TicketTransfer? @relation("TransferReversal")
+
+  @@index([ticketId, createdAt])
+  @@index([eventId, createdAt])
+  @@index([fromUserId, createdAt])
+  @@index([toUserId, createdAt])
+  @@index([toEmail, status])
+  @@index([status, expiresAt])
+}
+
+// Alteração relevante ou adiamento (R8). Somente inserção. O que é "relevante" e o
+// tamanho da janela são D2: `relevant` e `refundUntil` ficam nulos até o serviço decidir.
+// O aviso aos compradores vai para AuditLog (a linha não muda depois de gravada).
+model EventChange {
+  id              String    @id @default(cuid())
+  eventId         String
+  organizationId  String
+  // Nulo = sistema.
+  actorUserId     String?
+  // Chaves alteradas; [] numa prorrogação de janela.
+  changedFields   String[]
+  // { campo: valor } com datas em ISO UTC; sem dados pessoais.
+  before          Json
+  after           Json
+  reason          String    @db.VarChar(2000)
+  relevant        Boolean?
+  // Janela de reembolso integral desta alteração (vale para pedidos pagos antes de createdAt).
+  refundUntil     DateTime? @db.Timestamptz(3)
+  // Prorrogação: aponta para a alteração original.
+  extendsChangeId String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+
+  event        Event         @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actor        User?         @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  extends      EventChange?  @relation("EventChangeExtension", fields: [extendsChangeId], references: [id], onDelete: Restrict)
+  extensions   EventChange[] @relation("EventChangeExtension")
+  refunds      Refund[]
+
+  @@index([eventId, createdAt])
+  @@index([eventId, refundUntil])
+  @@index([organizationId, createdAt])
+  @@index([refundUntil])
+  @@index([extendsChangeId])
+}
+
+enum CancellationRequestStatus {
+  OPEN
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// Pedido de cancelamento/arrependimento com protocolo (R5). Tem ciclo de vida
+// (OPEN → decidido), mas os campos do pedido não mudam e a linha decidida fica
+// congelada (gatilho CancellationRequest_guard). Mudanças vão para AuditLog.
+model CancellationRequest {
+  id                    String                    @id @default(cuid())
+  // Gerado pelo serviço: CAN-AAAAMMDD-XXXXXX (base32 sem I, L, O, U). CHECK de formato.
+  protocol              String                    @unique @db.VarChar(32)
+  orderId               String
+  eventId               String
+  organizationId        String
+  requestedById         String
+  reason                String                    @db.VarChar(2000)
+  status                CancellationRequestStatus @default(OPEN)
+  // Prazo de resposta (D3). Pode ser definido uma vez; depois não muda.
+  respondBy             DateTime?                 @db.Timestamptz(3)
+  // Resultado de refundEligibility no momento do pedido (SAC/auditoria).
+  autoEligibleAtRequest Boolean?
+  assignedToId          String?
+  assignedAt            DateTime?                 @db.Timestamptz(3)
+  // Obrigatória em REJECTED.
+  decisionNote          String?                   @db.VarChar(2000)
+  // Em WITHDRAWN, o próprio solicitante.
+  decidedById           String?
+  decidedAt             DateTime?                 @db.Timestamptz(3)
+  createdAt             DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime                  @updatedAt @db.Timestamptz(3)
+
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  event        Event        @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  requestedBy  User         @relation("CancellationRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  assignedTo   User?        @relation("CancellationAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  decidedBy    User?        @relation("CancellationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  refunds      Refund[]
+
+  // Fila do admin (respondBy fica nulo até D3).
+  @@index([status, createdAt])
+  @@index([status, respondBy])
+  @@index([eventId, status])
+  @@index([organizationId, status, createdAt])
+  @@index([orderId])
+  @@index([requestedById, createdAt])
+}
+
+enum TermsKind {
+  BUYER
+  ORGANIZER
+  PRIVACY
+}
+
+enum TermsAcceptanceContext {
+  SIGNUP
+  CHECKOUT
+  ORGANIZER_SIGNUP
+  // Aceite de versão nova pedido depois do cadastro.
+  REACCEPT
+}
+
+// Versão publicada de termos/política (R10). Somente inserção: texto novo = versão nova.
+model TermsVersion {
+  id           String    @id @default(cuid())
+  kind         TermsKind
+  version      String    @db.VarChar(32)
+  // SHA-256 hex do texto exibido.
+  textHash     String    @db.Char(64)
+  // Onde o texto é exibido (ex.: /termos).
+  documentPath String?   @db.VarChar(200)
+  // Rascunho técnico até D8; a versão final é uma linha nova.
+  isDraft      Boolean   @default(true)
+  publishedAt  DateTime  @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  acceptances TermsAcceptance[]
+
+  @@unique([kind, version])
+  @@index([kind, publishedAt])
+}
+
+// Um registro por evento de aceite (somente inserção). No checkout aponta o pedido;
+// no contrato de organizador, a organização.
+model TermsAcceptance {
+  id             String                 @id @default(cuid())
+  userId         String
+  termsVersionId String
+  context        TermsAcceptanceContext
+  organizationId String?
+  orderId        String?
+  acceptedAt     DateTime               @default(now()) @db.Timestamptz(3)
+  ip             String?                @db.VarChar(64)
+  userAgent      String?                @db.VarChar(512)
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  termsVersion TermsVersion  @relation(fields: [termsVersionId], references: [id], onDelete: Restrict)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  order        Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([userId, termsVersionId])
+  @@index([termsVersionId])
+  @@index([organizationId])
   @@index([orderId])
 }
 
@@ -718,20 +1097,20 @@ enum ProcessingFeeBearer {
 
 // Regras são imutáveis: alterar = encerrar (activeTo) e criar nova versão.
 model CommissionRule {
-  id                       String          @id @default(cuid())
+  id                       String              @id @default(cuid())
   scope                    CommissionScope
   organizationId           String?
   eventId                  String?
   percentBps               Int
-  fixedCentsPerTicket      Int             @default(0)
-  bearer                   FeeBearer       @default(ORGANIZER)
+  fixedCentsPerTicket      Int                 @default(0)
+  bearer                   FeeBearer           @default(ORGANIZER)
   processingFeeBearer      ProcessingFeeBearer @default(ORGANIZER)
-  refundCommissionOnRefund Boolean         @default(true)
-  policyVersion            String          @unique
-  activeFrom               DateTime        @default(now()) @db.Timestamptz(3)
-  activeTo                 DateTime?       @db.Timestamptz(3)
+  refundCommissionOnRefund Boolean             @default(true)
+  policyVersion            String              @unique
+  activeFrom               DateTime            @default(now()) @db.Timestamptz(3)
+  activeTo                 DateTime?           @db.Timestamptz(3)
   createdById              String?
-  createdAt                DateTime        @default(now()) @db.Timestamptz(3)
+  createdAt                DateTime            @default(now()) @db.Timestamptz(3)
 
   organization Organization? @relation(fields: [organizationId], references: [id])
   event        Event?        @relation(fields: [eventId], references: [id])

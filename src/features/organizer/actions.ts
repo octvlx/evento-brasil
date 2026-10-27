@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { OrgRole } from "@/generated/prisma/client";
-import type { EventInput, OrganizerApplicationInput, TicketTypeInput } from "@/features/schemas";
+import type { CouponInput, EventInput, OrganizerApplicationInput, TicketTypeInput, TrackingLinkInput } from "@/features/schemas";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
@@ -15,6 +15,8 @@ import { getPaymentAdapter } from "@/server/payments";
 import { getEmailAdapter, escapeHtml } from "@/server/email";
 import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
+import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
+import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, upsertTicketType } from "@/server/services/events";
 import {
   acceptInvitation,
@@ -238,6 +240,59 @@ export async function removeMemberAction(userId: string): Promise<ActionResult> 
   const user = await requireUser("/organizador/configuracoes");
   const res = await toActionResult(async () => {
     await removeMember(db, user, await activeOrgId(user.id), userId);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+// ── Cupons e links de divulgação ──
+
+/** Cria (couponId nulo) ou edita um cupom; devolve avisos que não impedem salvar. */
+export async function saveCouponAction(eventId: string, couponId: string | null, input: CouponInput): Promise<ActionResult<{ warnings: string[] }>> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    const { warnings } = couponId ? await updateCoupon(db, user, couponId, input) : await createCoupon(db, user, eventId, input);
+    return { warnings };
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function setCouponDisabledAction(couponId: string, disabled: boolean): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await setCouponDisabled(db, user, couponId, disabled);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function deleteCouponAction(couponId: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await deleteCoupon(db, user, couponId);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function createTrackingLinkAction(eventId: string, input: TrackingLinkInput): Promise<ActionResult<{ url: string }>> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    const link = await createTrackingLink(db, user, eventId, input);
+    return { url: `${env().APP_URL}/r/${link.code}` };
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function setTrackingLinkArchivedAction(linkId: string, archived: boolean): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await setTrackingLinkArchived(db, user, linkId, archived);
     return undefined;
   });
   if (res.ok) refresh();

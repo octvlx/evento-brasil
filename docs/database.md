@@ -43,6 +43,22 @@ erDiagram
   OrganizerSettlement ||--o{ FinancialLedgerEntry : ""
   User ||--o{ AuditLog : "actor"
   Organization ||--o{ AuditLog : ""
+  Organization ||--o{ Coupon : ""
+  Event |o--o{ Coupon : "opcional"
+  Coupon ||--o{ CouponTicketType : ""
+  TicketType ||--o{ CouponTicketType : ""
+  Coupon |o--o{ Order : ""
+  Event ||--o{ TrackingLink : ""
+  Coupon |o--o{ TrackingLink : "pré-aplica"
+  TrackingLink |o--o{ Order : ""
+  IssuedTicket ||--o{ TicketTransfer : ""
+  User ||--o{ IssuedTicket : "titular (holderUserId)"
+  Event ||--o{ EventChange : ""
+  EventChange |o--o{ Refund : "janela"
+  Order ||--o{ CancellationRequest : ""
+  CancellationRequest |o--o{ Refund : ""
+  TermsVersion ||--o{ TermsAcceptance : ""
+  User ||--o{ TermsAcceptance : ""
 ```
 
 | Domínio | Modelos | Dono (consultar antes de mudar) |
@@ -51,9 +67,12 @@ erDiagram
 | Organizações | `Organization`, `OrganizationMember` (`OrgRole`), `OrganizationInvitation`, `OrganizerVerification` (documento cifrado com `encryptPII`) | `area-organizador`; aprovação → `admin` |
 | Catálogo | `City`, `Venue`, `EventCategory`, `Event`, `EventImage`, `TicketType` | `area-organizador` (eventos/lotes); `paginas-publicas` (cidades, categorias, busca) |
 | Pedidos e estoque | `Order`, `OrderItem`, `TicketInventoryReservation` | `pagamentos-financeiro` |
+| Cupons e atribuição (ADR 0002) | `Coupon`, `CouponTicketType`, `TrackingLink`; instantâneos em `Order` (`couponCode`, `discountCents`, `utm*`) e `OrderItem` (`listUnitPriceCents`, `discountPerUnitCents`) | Cadastro → `area-organizador`; preço, contadores e reconciliação → `pagamentos-financeiro` |
 | Pagamentos | `Payment`, `PaymentWebhookEvent`, `SimulatedProviderPayment` (só provedor simulado) | `pagamentos-financeiro` |
-| Ingressos e entrada | `IssuedTicket`, `TicketCheckin`, `EventStaffAssignment` | `check-in` |
-| Financeiro | `Refund`, `CommissionRule`, `FinancialLedgerEntry`, `OrganizerSettlement` | `pagamentos-financeiro` |
+| Ingressos e entrada | `IssuedTicket` (`userId` = comprador, `holderUserId` = titular atual), `TicketCheckin`, `EventStaffAssignment` | `check-in` |
+| Transferência (ADR 0003, R6) | `TicketTransfer` | `check-in`; reversão por fraude → `admin` |
+| Financeiro | `Refund` (`eventChangeId`, `cancellationRequestId`), `CommissionRule`, `FinancialLedgerEntry`, `OrganizerSettlement` | `pagamentos-financeiro` |
+| Conformidade (ADR 0003) | `EventChange` (R8), `CancellationRequest` (R5), `TermsVersion`/`TermsAcceptance` (R10), `Event.maxTicketsPerAccount` (R4) | `area-organizador` (alterações, limite); `pagamentos-financeiro` (janela, cancelamento); `admin` (fila); `paginas-publicas` (termos) |
 | Auditoria | `AuditLog` (gravado por `audit()` em `src/server/audit.ts`) | `admin` |
 
 Unicidades que sustentam regras de negócio (não remover sem falar com o dono):
@@ -61,7 +80,22 @@ Unicidades que sustentam regras de negócio (não remover sem falar com o dono):
 `PaymentWebhookEvent(provider, externalEventId)` (deduplicação de webhook),
 `IssuedTicket(orderItemId, sequence)` (emissão única),
 `FinancialLedgerEntry(idempotencyKey, account, direction)`,
-`OrganizationMember(organizationId, userId)`, `EventStaffAssignment(eventId, userId)`.
+`OrganizationMember(organizationId, userId)`, `EventStaffAssignment(eventId, userId)`,
+`Coupon(organizationId, code)`, `TrackingLink(code)`, `TicketTransfer(tokenHash)`,
+`CancellationRequest(protocol)`, `TermsVersion(kind, version)`, e os índices
+únicos parciais da tabela abaixo (uma transferência pendente por ingresso, um
+pedido de cancelamento aberto por compra, um aceite por versão por pedido/organização).
+
+**Mesmo tenant por FK composta.** `Event @@unique([id, organizationId])` e
+`Coupon @@unique([id, organizationId])` existem para que
+`Coupon(eventId, organizationId)`, `TrackingLink(eventId, organizationId)` e
+`Order(couponId, organizationId)` só apontem para registros da mesma
+organização. Essas FKs são `Restrict`: com `organizationId` obrigatório, um
+`SetNull` composto tentaria anular a organização. Ficam no serviço (e na
+reconciliação): `TrackingLink.couponId` da mesma organização,
+`Order.trackingLinkId` do mesmo evento e `CouponTicketType` com tipos do evento
+do cupom. Cupom ou link usado não se apaga (`Restrict` a partir de `Order`);
+desative com `disabledAt`/`archivedAt`.
 
 ## Objetos SQL escritos à mão
 
@@ -80,8 +114,25 @@ banco migrado e o schema).
 | Gatilho `FinancialLedgerEntry_immutable` (`ledger_block_mutation()`) | idem | Razão somente inserção |
 | Índice `Event_title_lower_idx` (`lower(title)`) | idem | Busca por título sem diferenciar maiúsculas |
 | Gatilho `AuditLog_immutable` (`audit_log_block_mutation()`) | `20261026150000_audit_log_append_only` | Auditoria somente inserção |
+| `Coupon_counters_nonnegative`, `_max_uses`, `_discount_value`, `_validity`, `_code_format` | `20261027120000_coupons_tracking_links` | Contadores ≥ 0 (pega decremento duplo); limites > 0; `PERCENT` com 1–10000 bps **ou** `FIXED_PER_TICKET` com valor > 0; janela coerente; código `^[A-Z0-9_-]{3,32}$`. O limite de usos **não** é CHECK (pagamento tardio pode ultrapassá-lo, auditado). |
+| `TrackingLink_clicks_nonnegative`, `_code_format` | idem | Cliques ≥ 0; código `^[A-Za-z0-9]{6,16}$` |
+| `OrderItem_discount` | idem | `unitPriceCents = listUnitPriceCents - discountPerUnitCents`, desconto ≥ 0 (com `unitPriceCents >= 0`, desconto ≤ preço de tabela) |
+| `Order_discount` | idem | Desconto ≥ 0 e só com cupom; `couponId` e `couponCode` preenchidos juntos. `discountCents = Σ itens` fica na reconciliação. |
+| Gatilho `IssuedTicket_default_holder` (`issued_ticket_default_holder()`) | `20261027180000_compliance_schema` | `BEFORE INSERT`: sem `holderUserId`, o titular é o comprador (`userId`). No Prisma o campo é `@default(dbgenerated())`, por isso `issueTicketsTx` não precisa informá-lo. |
+| `Event_max_tickets_per_account` | idem | Limite por conta nulo ou > 0 |
+| `Refund_event_change_link` | idem | `reason = EVENT_CHANGED` ⇔ `eventChangeId` preenchido |
+| `TicketTransfer_decision_state`, `_accepted_recipient`, `_distinct_parties`, `_to_email_lower`, `_hash_format`, `_previous_token_on_accept`, `_holder_request`, `_admin_action` | idem | PENDING ⇔ sem `decidedAt`; aceite tem destinatário; e-mail em minúsculas; hashes SHA-256 hex; pedido do titular com token, validade e autor = remetente; ação do admin sem token, já decidida e com motivo |
+| Índice único parcial `TicketTransfer_one_pending_per_ticket` | idem | Uma transferência PENDING por ingresso |
+| Gatilho `TicketTransfer_append_only` (`ticket_transfer_guard()`) | idem | Sem DELETE; UPDATE só PENDING → decidida, sem mudar os dados do pedido nem um destinatário já definido; decidida = imutável |
+| `EventChange_reason_present`, `_changed_fields_present`, `_refund_window`, `_extension` | idem | Motivo obrigatório; `refundUntil > createdAt`; prorrogação aponta outra alteração e traz data |
+| `CancellationRequest_protocol_format`, `_reason_present`, `_decision_state`, `_rejection_note`, `_withdrawn_by_requester`, `_assignment` | idem | Protocolo `^CAN-[0-9]{8}-[0-9A-HJKMNP-TV-Z]{6}$`; OPEN ⇔ sem decisão; recusa com justificativa; desistência pelo próprio solicitante |
+| Índice único parcial `CancellationRequest_one_open_per_order` | idem | Um pedido aberto por compra |
+| Gatilho `CancellationRequest_guard` (`cancellation_request_guard()`) | idem | Sem DELETE; dados do pedido fixos; `respondBy` definido uma vez; decidido = imutável |
+| `TermsVersion_text_hash_format`, `_version_present`; `TermsAcceptance_checkout_order`, `_organization` | idem | Hash SHA-256 hex; CHECKOUT ⇔ `orderId`; ORGANIZER_SIGNUP com organização, SIGNUP/CHECKOUT sem |
+| Índices únicos parciais `TermsAcceptance_order_once`, `_organization_once` | idem | Um aceite por versão por pedido e por organização |
+| Gatilhos `EventChange_immutable`, `TermsVersion_immutable`, `TermsAcceptance_immutable` (`compliance_block_mutation()`) | idem | Somente inserção |
 
-Os dois gatilhos são `BEFORE UPDATE OR DELETE … FOR EACH ROW`:
+Os gatilhos de imutabilidade são `BEFORE UPDATE OR DELETE … FOR EACH ROW`:
 
 - `TRUNCATE` não os aciona. A limpeza do seed e dos testes (`resetDb` em
   `tests/support/fixtures.ts`) continua funcionando.
@@ -92,6 +143,9 @@ Os dois gatilhos são `BEFORE UPDATE OR DELETE … FOR EACH ROW`:
   **excluir um `User` ou `Organization` que aparece na auditoria falha**. Hoje
   nenhum código exclui usuários ou organizações. Para LGPD, desative ou
   anonimize o registro em vez de excluí-lo (política a definir com o `admin`).
+- As tabelas de conformidade (ADR 0003) usam FKs `RESTRICT` para usuário,
+  ingresso, evento e pedido: o histórico (transferências ≥ 2 anos) impede a
+  exclusão desses registros. A anonimização depende de D6 e ainda não tem colunas.
 
 ## Ambiente local
 
@@ -128,7 +182,10 @@ check-in simultâneo, reembolso × check-in) e `checkFinancialInvariants`.
 `prisma/seed.ts` cria as 27 capitais + Franca, categorias, contas
 `…@demo.eventobrasil.test` (senha em `DEMO_PASSWORD`), organizações, eventos,
 pedidos pagos pelo provedor simulado, um check-in e um reembolso, sempre pelos
-**serviços reais**.
+**serviços reais**. Também cria o cupom `DEMO10` (10% na Noite de Samba, só nos
+tipos que não são meia-entrada) e o link rastreado `demoSamba1` (UTMs de
+Instagram, pré-aplica o `DEMO10`). Até o passo 2 do ADR 0002 eles não alteram
+preço.
 
 - Recusa `NODE_ENV=production`.
 - Se `admin@demo.eventobrasil.test` já existe, informa que o banco já tem o seed

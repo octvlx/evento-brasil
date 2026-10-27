@@ -108,6 +108,96 @@ após restaurar, provedor que estornou de fato, evento cancelado, detecção de
 invariante, restauração × check-in, reprocessar × restaurar, retentativa ×
 check-in), todos terminando com `checkFinancialInvariants() == []`.
 
+## Cupons e atribuição (ADR 0002, passo 2)
+
+Preço:
+- `discountPerUnit(preço, cupom)` em `src/features/fees/discount.ts` (pura):
+  `PERCENT` = `applyBps` meia-para-cima, `FIXED_PER_TICKET` = `min(valor, preço)`;
+  preço 0 não recebe desconto. `undercutHalfPrice(tabela, líquido, preçosDeMeia)` acusa
+  quando o cupom leva um ingresso com preço de tabela ≥ meia mais barata para baixo dela
+  (tipo que já custa menos que a meia não é afetado; cortesia de 100% fica de fora).
+- `computeFees` aceita `discountPerUnitCents` por linha; comissão e taxa BUYER
+  incidem sobre o **líquido**. A linha devolve `listUnitPriceCents`,
+  `discountPerUnitCents`, `unitPriceCents` (líquido) e `lineDiscountCents`; o
+  resultado tem `discountCents`. Razão, reembolsos e `ORDER_TOTALS_MISMATCH` não mudam.
+
+`createOrder`:
+- Entrada nova: `couponCode?` (normalizado para maiúsculas) e `attribution?`
+  (`trackingLinkId`, `utmSource/Medium/Campaign/Content/Term`).
+- Erros: `"Cupom inválido ou indisponível."` (inexistente, malformado, de outra
+  organização/evento, desativado — sem revelar qual); `"Cupom fora do período de
+  validade."`; `SOLD_OUT "Cupom esgotado."`; `LIMIT_EXCEEDED` (limite por
+  comprador); `"Este cupom não vale para os ingressos selecionados."`; meia-entrada
+  furada; `"Desconto alto demais…"` (guarda B1 com desconto); `RATE_LIMITED`
+  após 10 tentativas com cupom em 10 min por comprador (no serviço, cobre toda entrada).
+- Meia-entrada nunca recebe desconto (D3); sem `CouponTicketType` = todos os tipos pagos.
+- Atribuição: link de outro evento (ou inexistente) é descartado com os UTMs que
+  vieram com ele; UTMs soltos valem; com link e sem UTMs, copia os do link;
+  UTMs truncados em 200. Ler o cookie `eb_attr` é da Server Action (passo 4).
+
+Contadores (D4), definição usada também na reconciliação:
+`timesReserved` = pedidos `PENDING_PAYMENT` com o cupom;
+`timesRedeemed` = pedidos com o cupom que têm ingresso emitido.
+- `createOrder`: reserva +1. `finalizePaidOrderTx` (único ponto, inclusive gratuito):
+  reservado −1, resgatado +1. `releaseOrderTx` (expirar/cancelar/trocar): reservado −1.
+  `acquireLateInventoryTx`: resgatado +1 mesmo acima de `maxUses`, auditado
+  `coupon.redeemed_over_limit`. Pagamento tardio sem estoque não resgata.
+  Reembolso e chargeback não devolvem o uso. `maxUsesPerUser` conta pendentes e
+  pedidos com ingresso.
+
+Travas: **Event → Order → Coupon**. Cupom é trava-folha; transação que mexe em
+mais de um cupom (`createOrder` com troca de pedido/expiração, `expireStaleOrders`,
+`cancelEvent`) trava todos numa instrução `ORDER BY id FOR UPDATE`
+(`lockCoupons`/`lockCouponsOfOrders`). O teste de trocas cruzadas entre dois
+eventos com cupons de organização dá deadlock sem isso.
+
+Invariantes novos: `COUPON_COUNTERS_MISMATCH` (igualdade exata),
+`ORDER_DISCOUNT_MISMATCH`, `COUPON_TENANT_MISMATCH` (cupom de evento ou link em
+pedido de outro evento; `CouponTicketType` de outro evento/organização; link com
+cupom de outra organização/evento).
+
+Testes: `tests/unit/discount.test.ts`, `tests/integration/s-coupon-pricing.test.ts`.
+
+## Decreto 13.108/2026 — Fase 1 (L1a, L3, L4a)
+
+Plano em `docs/conformidade-decreto-13108.md`.
+
+### Prévia de preço ao comprador (R1, L1a)
+`buyerPricePreview(rule, priceCents)` em `@/server/services/commission` →
+`{ priceCents, serviceFeeCents, totalCents }` por ingresso, com `rule` vindo de
+`resolveCommissionRule(db, organizationId, eventId)`. Usa o mesmo `computeFees`
+do `createOrder`; equivale a `rule.bearer === "BUYER" ? commissionPerUnit(preço, rule) : 0`
+para a taxa. Gratuito sempre 0; bearer `ORGANIZER` não tem taxa para o comprador.
+`tests/integration/r-price-preview.test.ts` prova que a prévia é o que o pedido
+grava e o que vai ao provedor (BUYER e ORGANIZER, percentual + fixo,
+gratuitos, regra de organização e de evento).
+
+### Preço congelado na reserva (R3, L3)
+O pedido grava preço, taxa e regra (`OrderItem.unitPriceCents`,
+`serviceFeePerUnitCents`, `Order.commissionRuleId`) na criação; o pagamento
+usa `Order.totalCents`. `tests/integration/s-price-freeze.test.ts` muda o preço
+do tipo e as regras (plataforma e evento) com a reserva ativa — antes de iniciar
+o pagamento e depois do PIX gerado — e confere pedido, valor no provedor, razão
+e `checkFinancialInvariants`.
+
+### Limites de pedido e pagamento (R4, L4a)
+`src/features/orders/limits.ts`, aplicados em `createOrderAction` e
+`startPaymentAction` antes de tocar o banco. Janela fixa de 10 minutos; cada
+chamada conta (inclusive repetição com a mesma chave de idempotência e PIX
+reaproveitado). Erro `RATE_LIMITED` com mensagem pt-BR.
+
+| Ação | Por conta | Por IP | Por quê |
+|---|---|---|---|
+| Criar pedido | 10 / 10 min | 30 / 10 min | Compra normal usa 1–3 tentativas (trocar quantidade substitui o pedido pendente). 10 dá folga a quem erra; um robô fica em ~1 pedido/min. |
+| Iniciar pagamento | 15 / 10 min | 40 / 10 min | Cartão recusado + nova tentativa + troca PIX/cartão; cada tentativa de cartão no provedor tem custo e risco de teste de cartão roubado. |
+
+O limite por IP é mais folgado porque redes móveis e Wi-Fi de evento
+compartilham IP. Limitações: limitador em memória por processo
+(`src/server/rate-limit.ts`; com várias instâncias, mover para Redis/Postgres);
+o IP vem do primeiro `x-forwarded-for`, confiável só atrás de proxy que
+sobrescreve o cabeçalho — o limite por conta vale sempre. Limite de ingressos
+por conta por evento e sinal anti-robô continuam pendentes (R4, Fase 2/3).
+
 ## Contratos com outras áreas
 
 ### `paginas-publicas` (checkout e pedido)
@@ -126,6 +216,13 @@ Sem mudança de assinatura nas Server Actions. Mudanças de comportamento:
   realizado; seus ingressos foram reativados").
 
 ### `area-organizador` (relatórios)
+Cupons (passo 3): usar `discountPerUnit` e `undercutHalfPrice` de
+`@/features/fees/discount` para os avisos; validar na criação que o líquido não
+fica abaixo de `commissionPerUnit` com bearer ORGANIZER (mesma guarda B1) e que
+`CouponTicketType` só tem tipos do evento/organização do cupom e nunca meia
+(o checkout ignora meia de qualquer forma). `unitPriceCents`/`subtotalCents`
+são líquidos; "descontos concedidos" = `Order.discountCents`.
+
 Sem mudança no razão nem nas contas. Ingressos de pedidos com reembolso em
 andamento passam a aparecer como cancelados mais cedo nas contagens de
 "ingressos vendidos" e na lista de participantes.

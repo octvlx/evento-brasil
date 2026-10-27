@@ -5,7 +5,7 @@ import { assertEventPermission, assertPlatformAdmin, type Actor } from "../auth/
 import { AppError } from "../errors";
 import type { PaymentProviderAdapter } from "../payments/types";
 import { assertEventTransition } from "./events";
-import { releaseOrderTx, lockEvent } from "./orders";
+import { lockCouponsOfOrders, lockEvent, releaseOrderTx } from "./orders";
 import { processRefund } from "./refunds";
 
 /**
@@ -31,6 +31,8 @@ export async function cancelEvent(
     const now = new Date();
     await tx.event.update({ where: { id: eventId }, data: { status: "CANCELLED", cancelledAt: now, cancellationReason: reason } });
 
+    // Vários pedidos podem ter cupons distintos: trava todos de uma vez (ordem de id).
+    await lockCouponsOfOrders(tx, { eventId, status: "PENDING_PAYMENT" });
     const pending = await tx.order.findMany({ where: { eventId, status: "PENDING_PAYMENT" }, select: { id: true } });
     for (const o of pending) await releaseOrderTx(tx, o.id, "CANCELLED", "event_cancelled", now);
 

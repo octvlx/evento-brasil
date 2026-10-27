@@ -4,6 +4,9 @@ Este software **não** afirma conformidade legal. Os itens abaixo foram
 implementados de forma configurável ou documentados como pendentes e precisam
 de parecer de advogado(a) e contador(a) antes do lançamento comercial.
 
+> **Decreto nº 13.108/2026 (venda de ingressos):** análise de lacunas e plano
+> por agente em [`conformidade-decreto-13108.md`](conformidade-decreto-13108.md).
+
 ## Direito do consumidor
 
 - **Direito de arrependimento (CDC art. 49)** e sua aplicação a ingressos de

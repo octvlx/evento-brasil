@@ -1,7 +1,7 @@
 # Área do organizador — inventário e dependências
 
-Responsável: agente `area-organizador`. Última revisão: convites (revogar,
-reenviar, recusar, lista de pendentes) e alteração de papel na equipe.
+Responsável: agente `area-organizador`. Última revisão: relatório CSV de
+meia-entrada por evento (L7b do plano de conformidade com o Decreto nº 13.108/2026).
 
 ## O que existe
 
@@ -15,10 +15,31 @@ reenviar, recusar, lista de pendentes) e alteração de papel na equipe.
 | Tipos de ingresso (preço, quantidade, limites, janela, oculto, nome por ingresso) | `…/[id]/editar`, `upsertTicketType`, `deleteTicketType` | Pronto |
 | Publicação com moderação / publicação automática; cancelamento com reembolso | `submitEventForPublication`, `cancelEvent` (financeiro) | Pronto |
 | Vendas, repasses e cota de meia-entrada | `/organizador/vendas` | Pronto |
+| CSV de meia-entrada por evento (cota, vendidas, reservadas, reembolsadas, canceladas, check-in, cota restante, vendas por dia) — auditado, sem dados pessoais | `/organizador/vendas`, `/api/organizador/eventos/[id]/meia-entrada`, `halfPriceReport`/`halfPriceReportToCsv` em `reports.ts` | Pronto |
 | Participantes + CSV auditado | `/organizador/participantes`, `/api/organizador/eventos/[id]/participantes` | Pronto |
 | Perfil, conta de recebimento (simulada), equipe, convites, atribuição de check-in | `/organizador/configuracoes`, `/convite/[token]` | Pronto |
 | Convites: lista de pendentes (com vencidos), revogar, reenviar (novo token; o anterior deixa de valer), recusar pelo convidado | `/organizador/configuracoes`, `/convite/[token]`, `listPendingInvitations`, `revokeInvitation`, `resendInvitation`, `declineInvitation` | Pronto |
 | Alterar papel de membro | `/organizador/configuracoes`, `changeMemberRole` | Pronto |
+| Cupons de desconto (criar, editar, desativar, excluir se nunca usado; avisos de taxa e meia-entrada) | `/organizador/eventos/[id]/editar`, `coupons.ts` | Pronto (ADR 0002, passo 3); aplicar no checkout é o passo 2 (`pagamentos-financeiro`) |
+| Links de divulgação rastreados (UTMs, cupom pré-aplicado, cliques, arquivar) | `/organizador/eventos/[id]/editar`, `tracking-links.ts` | Pronto (passo 3); `/r/[code]` e cookie de atribuição são do passo 4 (`paginas-publicas`) |
+| Relatórios "Vendas por origem" e "Uso de cupons" (só pedidos pagos, valores líquidos de desconto) | `/organizador/vendas`, `salesBySource`, `couponUsage` | Pronto |
+| Recusa de preço de ingresso abaixo da taxa da plataforma (bearer ORGANIZER) | `upsertTicketType` | Pronto (ADR 0002, passo 0) |
+
+### Relatório de meia-entrada (R7)
+
+- Exige `finance:read` no evento (`assertEventPermission`): OWNER, ADMIN e
+  FINANCE; vale também com a organização suspensa, como o resto das finanças.
+- "Vendidas" é o `quantitySold` dos tipos `HALF_PRICE` (monotônico: inclui as
+  depois reembolsadas/canceladas). Reembolsadas, canceladas (evento cancelado),
+  outras revogações, válidas e com check-in vêm de `IssuedTicket`. Cota restante
+  = cota − (vendidas + reservadas), a mesma regra do checkout.
+- Vendas por dia: pedidos pagos (inclusive os depois reembolsados), agrupados por
+  `paidAt` no fuso do evento.
+- CSV com BOM UTF-8, separador `;` e decimal com vírgula (Excel em pt-BR),
+  células entre aspas e fórmulas neutralizadas (`csvCell`, compartilhado com o
+  CSV de participantes). Cada download grava `half_price_report.exported`.
+- Testes: `tests/integration/r-half-price-report.test.ts`; 403 para cliente em
+  `tests/e2e/access-control.spec.ts`.
 
 ### Regras da equipe (aplicadas no servidor)
 
@@ -53,10 +74,16 @@ e `organizer-team.spec.ts` (convites e papéis).
 1. **Convites (complementos):** transferir a propriedade com confirmação por
    e-mail; limitar convites pendentes por organização.
 2. ~~Convites: revogar, reenviar, recusar, pendentes~~ e ~~Equipe: alterar papel~~ — feitos.
+   **Cupons e links (ADR 0002):** cupons da organização inteira (sem evento)
+   ainda não têm tela (o serviço lista, mas não cria nem edita). Os avisos do
+   cadastro usam `discountPerUnit`/`undercutHalfPrice` de
+   `src/features/fees/discount.ts`, as mesmas regras do checkout.
 3. **Página do evento no painel** (`/organizador/eventos/[id]`) com resumo de
    vendas do evento (`eventSalesSummary` já existe) e atalhos.
 4. **Relatórios:** filtros de período/evento, vendas por tipo de ingresso, ticket
-   médio, exportação CSV de vendas, carimbo de data do relatório.
+   médio, exportação CSV de vendas, carimbo de data do relatório. Quando a reserva
+   da cota de meia (L7c, depende de D5) existir, o CSV de meia-entrada deve passar
+   a mostrar a cota reservada.
 5. **Eventos:** duplicar evento, despublicar, galeria de imagens (`EventImage`
    existe mas não é usado), busca/filtro na lista, paginação.
 6. **Avisar compradores** quando data/local de evento com vendas mudar.
