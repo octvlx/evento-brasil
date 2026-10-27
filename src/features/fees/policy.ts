@@ -49,6 +49,18 @@ export function commissionPerUnit(unitPriceCents: number, rule: Pick<FeeRule, "p
   return applyBps(unitPriceCents, rule.percentBps) + rule.fixedCentsPerTicket;
 }
 
+/**
+ * Com bearer ORGANIZER a comissão sai do repasse; se a comissão por unidade
+ * passar do preço (taxa fixa maior que o ingresso), o repasse fica negativo e
+ * o razão não fecha. Devolve a primeira linha nessa situação, se houver.
+ * Preço 0 nunca entra (comissão 0); bearer BUYER nunca entra (comissão é paga
+ * à parte pelo comprador).
+ */
+export function lineWithNegativePayout(breakdown: Pick<FeeBreakdown, "lines">, bearer: FeeBearer): FeeLine | undefined {
+  if (bearer !== "ORGANIZER") return undefined;
+  return breakdown.lines.find((l) => l.commissionPerUnitCents > l.unitPriceCents);
+}
+
 export function computeFees(lines: FeeLineInput[], rule: FeeRule): FeeBreakdown {
   const out: FeeLine[] = lines.map((l) => {
     if (!Number.isInteger(l.quantity) || l.quantity <= 0) throw new RangeError("Quantidade inválida");
