@@ -141,13 +141,18 @@ Executado nesta worktree (banco embutido descartável na porta 5461; testes na 5
 - 37 cenários SQL contra os CHECKs/gatilhos (12 aceitos e 25 recusados, todos
   como esperado).
 - `npm run db:generate`, `npx next typegen`, `npm run typecheck`.
-- `TEST_DB_PORT=5460 npm test`: 19 arquivos, 135 testes passando.
+- `tests/integration/u-compliance-schema.test.ts` (9 testes): backfill e
+  gatilho de `holderUserId` (executa o `UPDATE` da própria migração), transição
+  PENDING → decidida e imutabilidade de `TicketTransfer`, CHECKs de titular e de
+  reversão pelo admin, ausência de cascata a partir de ingresso/usuário/evento,
+  `EventChange`/`TermsVersion`/`TermsAcceptance` somente inserção, protocolo
+  único e com formato, um pedido aberto por compra, `Refund_event_change_link` e
+  `maxTicketsPerAccount`.
+- `TEST_DB_PORT=5460 npm test`: 20 arquivos, 144 testes passando.
+- `npm run lint` e `npm run build`: sem erros.
 - Banco novo: `migrate deploy` + `db:seed` duas vezes (a segunda sai sem
   alterar nada); 11/11 ingressos emitidos pelos serviços com
   `holderUserId = userId` (gatilho).
-
-Não executado: `npm run build`, `npm run lint`, testes de integração novos para
-os gatilhos (o quadro reserva letras de arquivo de teste; ver follow-ups).
 
 ## Riscos
 
@@ -166,5 +171,6 @@ os gatilhos (o quadro reserva letras de arquivo de teste; ver follow-ups).
 - **D2** — se pedir, status/flag "adiado" e uso de `relevant`.
 - **D3** — prazo de `respondBy`; **D7** — reembolso de ingresso transferido e prazo
   para transferir; **D8** — textos finais (nova `TermsVersion` com `isDraft = false`).
-- Testes de integração dos gatilhos e CHECKs (reservar letra no quadro).
+- Registrar no quadro (`COORDENACAO.md`) que a letra `u-` foi usada
+  (`u-compliance-schema`; a maior em uso nos outros ramos era `t-`).
 - Atualizar §23 de `.claude/agents/banco-de-dados.md` (lista de migrações).
