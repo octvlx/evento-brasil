@@ -38,13 +38,13 @@ model User {
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  sessions          Session[]
-  memberships       OrganizationMember[]
-  orders            Order[]
-  tickets           IssuedTicket[]
-  staffAssignments  EventStaffAssignment[] @relation("StaffAssignee")
-  checkins          TicketCheckin[]
-  auditLogs         AuditLog[]
+  sessions         Session[]
+  memberships      OrganizationMember[]
+  orders           Order[]
+  tickets          IssuedTicket[]
+  staffAssignments EventStaffAssignment[] @relation("StaffAssignee")
+  checkins         TicketCheckin[]
+  auditLogs        AuditLog[]
 }
 
 model Session {
@@ -117,6 +117,8 @@ model Organization {
   ledgerEntries   FinancialLedgerEntry[]
   settlements     OrganizerSettlement[]
   auditLogs       AuditLog[]
+  coupons         Coupon[]
+  trackingLinks   TrackingLink[]
 
   @@index([status])
 }
@@ -312,7 +314,11 @@ model Event {
   checkins         TicketCheckin[]
   staffAssignments EventStaffAssignment[]
   commissionRules  CommissionRule[]
+  coupons          Coupon[]
+  trackingLinks    TrackingLink[]
 
+  // Alvo das FKs compostas de Coupon e TrackingLink (evento da mesma organização).
+  @@unique([id, organizationId])
   @@index([status, startsAt])
   @@index([cityId, status, startsAt])
   @@index([organizationId, status])
@@ -387,6 +393,7 @@ model TicketType {
   reservations TicketInventoryReservation[]
   orderItems   OrderItem[]
   tickets      IssuedTicket[]
+  coupons      CouponTicketType[]
 
   @@index([eventId, sortOrder])
 }
@@ -455,11 +462,25 @@ model Order {
   cancelledAt      DateTime?   @db.Timestamptz(3)
   createdAt        DateTime    @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime    @updatedAt @db.Timestamptz(3)
+  // Instantâneos imutáveis da compra (ADR 0002). couponCode é a cópia do código usado.
+  couponId         String?
+  couponCode       String?     @db.VarChar(32)
+  // Σ discountPerUnitCents × quantity dos itens.
+  discountCents    Int         @default(0)
+  trackingLinkId   String?
+  utmSource        String?     @db.VarChar(200)
+  utmMedium        String?     @db.VarChar(200)
+  utmCampaign      String?     @db.VarChar(200)
+  utmContent       String?     @db.VarChar(200)
+  utmTerm          String?     @db.VarChar(200)
 
   user           User                         @relation(fields: [userId], references: [id])
   event          Event                        @relation(fields: [eventId], references: [id])
   organization   Organization                 @relation(fields: [organizationId], references: [id])
   commissionRule CommissionRule?              @relation(fields: [commissionRuleId], references: [id])
+  // Cupom da mesma organização do pedido; Restrict porque o cupom usado é histórico.
+  coupon         Coupon?                      @relation(fields: [couponId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  trackingLink   TrackingLink?                @relation(fields: [trackingLinkId], references: [id], onDelete: Restrict)
   items          OrderItem[]
   reservations   TicketInventoryReservation[]
   payments       Payment[]
@@ -472,6 +493,9 @@ model Order {
   @@index([organizationId, status, createdAt])
   @@index([status, expiresAt])
   @@index([userId, createdAt])
+  // Limite de usos por comprador; também cobre consultas só por couponId.
+  @@index([couponId, userId])
+  @@index([trackingLinkId])
 }
 
 model OrderItem {
@@ -481,7 +505,11 @@ model OrderItem {
   // Snapshots do momento da compra.
   ticketTypeName         String
   kind                   TicketKind
+  // Preço efetivamente cobrado = listUnitPriceCents - discountPerUnitCents (CHECK OrderItem_discount).
   unitPriceCents         Int
+  // Preço de tabela no momento da compra.
+  listUnitPriceCents     Int
+  discountPerUnitCents   Int        @default(0)
   commissionPerUnitCents Int
   serviceFeePerUnitCents Int
   quantity               Int
@@ -493,6 +521,91 @@ model OrderItem {
   tickets    IssuedTicket[]
 
   @@unique([orderId, ticketTypeId])
+}
+
+// ───────────────────────────── Cupons e links rastreados ─────────────────────────────
+// ADR 0002. Regras de uso e contadores ficam no serviço; CHECKs na migração
+// 20261027120000_coupons_tracking_links. Cupom/link usado não é apagado, só
+// desativado (disabledAt/archivedAt).
+
+enum DiscountType {
+  PERCENT
+  FIXED_PER_TICKET
+}
+
+model Coupon {
+  id             String       @id @default(cuid())
+  organizationId String
+  // Nulo = todos os eventos da organização.
+  eventId        String?
+  // Maiúsculas, ^[A-Z0-9_-]{3,32}$ (CHECK).
+  code           String       @db.VarChar(32)
+  description    String?      @db.VarChar(200)
+  discountType   DiscountType
+  percentBps     Int?
+  amountCents    Int?
+  validFrom      DateTime?    @db.Timestamptz(3)
+  validUntil     DateTime?    @db.Timestamptz(3)
+  // Nulo = ilimitado. O limite não é CHECK: pagamento tardio pode ultrapassá-lo (auditado).
+  maxUses        Int?
+  maxUsesPerUser Int?         @default(1)
+  timesReserved  Int          @default(0)
+  timesRedeemed  Int          @default(0)
+  disabledAt     DateTime?    @db.Timestamptz(3)
+  createdById    String
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  event        Event?             @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  ticketTypes  CouponTicketType[]
+  orders       Order[]
+  links        TrackingLink[]
+
+  @@unique([organizationId, code])
+  // Alvo de Order(couponId, organizationId).
+  @@unique([id, organizationId])
+  @@index([eventId])
+}
+
+// Sem linhas = todos os tipos pagos do evento. Tipos do mesmo evento do cupom: checado no serviço.
+model CouponTicketType {
+  couponId     String
+  ticketTypeId String
+
+  coupon     Coupon     @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, ticketTypeId])
+  @@index([ticketTypeId])
+}
+
+model TrackingLink {
+  id             String    @id @default(cuid())
+  organizationId String
+  eventId        String
+  // Curto, público, aleatório: ^[A-Za-z0-9]{6,16}$ (CHECK).
+  code           String    @unique @db.VarChar(16)
+  name           String    @db.VarChar(120)
+  utmSource      String?   @db.VarChar(200)
+  utmMedium      String?   @db.VarChar(200)
+  utmCampaign    String?   @db.VarChar(200)
+  utmContent     String?   @db.VarChar(200)
+  utmTerm        String?   @db.VarChar(200)
+  // Pré-aplica um cupom; mesma organização checada no serviço (FK simples por causa do SetNull).
+  couponId       String?
+  clicks         Int       @default(0)
+  archivedAt     DateTime? @db.Timestamptz(3)
+  createdById    String
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  event        Event        @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  coupon       Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  orders       Order[]
+
+  @@index([eventId])
+  @@index([couponId])
 }
 
 // ───────────────────────────── Pagamentos ─────────────────────────────
@@ -718,20 +831,20 @@ enum ProcessingFeeBearer {
 
 // Regras são imutáveis: alterar = encerrar (activeTo) e criar nova versão.
 model CommissionRule {
-  id                       String          @id @default(cuid())
+  id                       String              @id @default(cuid())
   scope                    CommissionScope
   organizationId           String?
   eventId                  String?
   percentBps               Int
-  fixedCentsPerTicket      Int             @default(0)
-  bearer                   FeeBearer       @default(ORGANIZER)
+  fixedCentsPerTicket      Int                 @default(0)
+  bearer                   FeeBearer           @default(ORGANIZER)
   processingFeeBearer      ProcessingFeeBearer @default(ORGANIZER)
-  refundCommissionOnRefund Boolean         @default(true)
-  policyVersion            String          @unique
-  activeFrom               DateTime        @default(now()) @db.Timestamptz(3)
-  activeTo                 DateTime?       @db.Timestamptz(3)
+  refundCommissionOnRefund Boolean             @default(true)
+  policyVersion            String              @unique
+  activeFrom               DateTime            @default(now()) @db.Timestamptz(3)
+  activeTo                 DateTime?           @db.Timestamptz(3)
   createdById              String?
-  createdAt                DateTime        @default(now()) @db.Timestamptz(3)
+  createdAt                DateTime            @default(now()) @db.Timestamptz(3)
 
   organization Organization? @relation(fields: [organizationId], references: [id])
   event        Event?        @relation(fields: [eventId], references: [id])
