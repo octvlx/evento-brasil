@@ -108,6 +108,46 @@ após restaurar, provedor que estornou de fato, evento cancelado, detecção de
 invariante, restauração × check-in, reprocessar × restaurar, retentativa ×
 check-in), todos terminando com `checkFinancialInvariants() == []`.
 
+## Decreto 13.108/2026 — Fase 1 (L1a, L3, L4a)
+
+Plano em `docs/conformidade-decreto-13108.md`.
+
+### Prévia de preço ao comprador (R1, L1a)
+`buyerPricePreview(rule, priceCents)` em `@/server/services/commission` →
+`{ priceCents, serviceFeeCents, totalCents }` por ingresso, com `rule` vindo de
+`resolveCommissionRule(db, organizationId, eventId)`. Usa o mesmo `computeFees`
+do `createOrder`; equivale a `rule.bearer === "BUYER" ? commissionPerUnit(preço, rule) : 0`
+para a taxa. Gratuito sempre 0; bearer `ORGANIZER` não tem taxa para o comprador.
+`tests/integration/r-price-preview.test.ts` prova que a prévia é o que o pedido
+grava e o que vai ao provedor (BUYER e ORGANIZER, percentual + fixo,
+gratuitos, regra de organização e de evento).
+
+### Preço congelado na reserva (R3, L3)
+O pedido grava preço, taxa e regra (`OrderItem.unitPriceCents`,
+`serviceFeePerUnitCents`, `Order.commissionRuleId`) na criação; o pagamento
+usa `Order.totalCents`. `tests/integration/s-price-freeze.test.ts` muda o preço
+do tipo e as regras (plataforma e evento) com a reserva ativa — antes de iniciar
+o pagamento e depois do PIX gerado — e confere pedido, valor no provedor, razão
+e `checkFinancialInvariants`.
+
+### Limites de pedido e pagamento (R4, L4a)
+`src/features/orders/limits.ts`, aplicados em `createOrderAction` e
+`startPaymentAction` antes de tocar o banco. Janela fixa de 10 minutos; cada
+chamada conta (inclusive repetição com a mesma chave de idempotência e PIX
+reaproveitado). Erro `RATE_LIMITED` com mensagem pt-BR.
+
+| Ação | Por conta | Por IP | Por quê |
+|---|---|---|---|
+| Criar pedido | 10 / 10 min | 30 / 10 min | Compra normal usa 1–3 tentativas (trocar quantidade substitui o pedido pendente). 10 dá folga a quem erra; um robô fica em ~1 pedido/min. |
+| Iniciar pagamento | 15 / 10 min | 40 / 10 min | Cartão recusado + nova tentativa + troca PIX/cartão; cada tentativa de cartão no provedor tem custo e risco de teste de cartão roubado. |
+
+O limite por IP é mais folgado porque redes móveis e Wi-Fi de evento
+compartilham IP. Limitações: limitador em memória por processo
+(`src/server/rate-limit.ts`; com várias instâncias, mover para Redis/Postgres);
+o IP vem do primeiro `x-forwarded-for`, confiável só atrás de proxy que
+sobrescreve o cabeçalho — o limite por conta vale sempre. Limite de ingressos
+por conta por evento e sinal anti-robô continuam pendentes (R4, Fase 2/3).
+
 ## Contratos com outras áreas
 
 ### `paginas-publicas` (checkout e pedido)
