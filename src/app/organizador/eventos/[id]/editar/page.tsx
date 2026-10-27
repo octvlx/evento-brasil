@@ -9,8 +9,13 @@ import { PageTitle } from "@/components/site/panel-shell";
 import { EventForm } from "@/features/organizer/event-form";
 import { EventStatusActions } from "@/features/organizer/event-status-actions";
 import { TicketTypesManager } from "@/features/organizer/ticket-types-manager";
+import { CouponsManager } from "@/features/organizer/coupons-manager";
+import { TrackingLinksManager } from "@/features/organizer/tracking-links-manager";
 import { eventFormOptions } from "@/features/organizer/form-data";
 import { db } from "@/server/db";
+import { env } from "@/server/env";
+import { listEventCoupons } from "@/server/services/coupons";
+import { listEventTrackingLinks } from "@/server/services/tracking-links";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { utcToZonedLocalInput } from "@/lib/datetime";
 import { EVENT_STATUS } from "@/lib/labels";
@@ -27,7 +32,7 @@ export default function EditEventPage({ params }: PageProps<"/organizador/evento
 
 async function Content({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { org, can } = await requireOrganizer(`/organizador/eventos/${id}/editar`);
+  const { user, org, can } = await requireOrganizer(`/organizador/eventos/${id}/editar`);
   // Escopo por organização: evento de outra organização → 404.
   const event = await db.event.findFirst({ where: { id, organizationId: org.id }, include: { ticketTypes: { orderBy: { sortOrder: "asc" } } } });
   if (!event) notFound();
@@ -36,6 +41,8 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   const tz = event.timezone;
   const locked = !["DRAFT", "PENDING_REVIEW", "PUBLISHED"].includes(event.status) || !can("event:write");
   const st = EVENT_STATUS[event.status];
+  const canWrite = can("event:write");
+  const [coupons, links] = canWrite ? await Promise.all([listEventCoupons(db, user, id), listEventTrackingLinks(db, user, id)]) : [[], []];
 
   return (
     <>
@@ -95,6 +102,34 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
         />
       </Card>
 
+      {canWrite && (
+        <>
+          <Card className="mb-6 p-6">
+            <h2 className="mb-4 font-display text-lg font-bold">Cupons de desconto</h2>
+            <CouponsManager
+              eventId={event.id}
+              locked={locked}
+              ticketTypes={event.ticketTypes.filter((t) => t.priceCents > 0 && t.kind !== "HALF_PRICE").map((t) => ({ id: t.id, name: t.name }))}
+              items={coupons.map((c) => ({
+                ...c,
+                validFromLocal: c.validFrom ? utcToZonedLocalInput(c.validFrom, tz) : "",
+                validUntilLocal: c.validUntil ? utcToZonedLocalInput(c.validUntil, tz) : "",
+              }))}
+            />
+          </Card>
+
+          <Card className="mb-6 p-6">
+            <h2 className="mb-4 font-display text-lg font-bold">Links de divulgação</h2>
+            <TrackingLinksManager
+              eventId={event.id}
+              locked={locked}
+              coupons={coupons.filter((c) => !c.disabled).map((c) => ({ id: c.id, code: c.code }))}
+              items={links.map((l) => ({ ...l, url: `${env().APP_URL}/r/${l.code}` }))}
+            />
+          </Card>
+        </>
+      )}
+
       <Card className="p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Dados do evento</h2>
         <EventForm
@@ -119,6 +154,8 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             capacity: event.capacity,
             halfPriceQuotaPercent: event.halfPriceQuotaBps === null ? undefined : event.halfPriceQuotaBps / 100,
             refundPolicy: event.refundPolicy,
+            refundWindowDays: event.refundWindowDays,
+            refundMinHoursBeforeEvent: event.refundMinHoursBeforeEvent,
             accessibilityInfo: event.accessibilityInfo ?? undefined,
             coverImageUrl: event.coverImageUrl ?? undefined,
           }}

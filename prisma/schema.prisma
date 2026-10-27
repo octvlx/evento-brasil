@@ -283,42 +283,47 @@ model EventCategory {
 }
 
 model Event {
-  id                   String       @id @default(cuid())
-  organizationId       String
-  slug                 String       @unique
-  title                String
-  summary              String?
-  description          String
-  categoryId           String
-  coverImageUrl        String?
-  locationType         LocationType @default(VENUE)
-  venueId              String?
-  onlineUrl            String?
-  cityId               String?
-  startsAt             DateTime     @db.Timestamptz(3)
-  endsAt               DateTime     @db.Timestamptz(3)
-  timezone             String
+  id                        String       @id @default(cuid())
+  organizationId            String
+  slug                      String       @unique
+  title                     String
+  summary                   String?
+  description               String
+  categoryId                String
+  coverImageUrl             String?
+  locationType              LocationType @default(VENUE)
+  venueId                   String?
+  onlineUrl                 String?
+  cityId                    String?
+  startsAt                  DateTime     @db.Timestamptz(3)
+  endsAt                    DateTime     @db.Timestamptz(3)
+  timezone                  String
   // 0 = livre; caso contrário idade mínima.
-  ageRestriction       Int          @default(0)
-  salesStartAt         DateTime     @db.Timestamptz(3)
-  salesEndAt           DateTime     @db.Timestamptz(3)
-  capacity             Int
+  ageRestriction            Int          @default(0)
+  salesStartAt              DateTime     @db.Timestamptz(3)
+  salesEndAt                DateTime     @db.Timestamptz(3)
+  capacity                  Int
   // Cota de meia-entrada em pontos-base da capacidade (ex.: 4000 = 40%).
   // Nulo = sem cota configurada. Requer revisão jurídica.
-  halfPriceQuotaBps    Int?
+  halfPriceQuotaBps         Int?
   // Limite de ingressos por conta neste evento (R4, Decreto 13.108/2026). Nulo = sem
   // limite; CHECK > 0. Contagem e exceções ficam no serviço (L4b).
-  maxTicketsPerAccount Int?
-  status               EventStatus  @default(DRAFT)
-  isFeatured           Boolean      @default(false)
-  refundPolicy         String
-  accessibilityInfo    String?
-  moderationNote       String?
-  publishedAt          DateTime?    @db.Timestamptz(3)
-  cancelledAt          DateTime?    @db.Timestamptz(3)
-  cancellationReason   String?
-  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
+  maxTicketsPerAccount      Int?
+  status                    EventStatus  @default(DRAFT)
+  isFeatured                Boolean      @default(false)
+  refundPolicy              String
+  // Reembolso a pedido do comprador: até N dias após a compra E até N horas antes do
+  // início. Definido pelo organizador; com vendas, só pode ficar mais generoso.
+  // CHECKs: dias 0–365, horas 0–720. Requer revisão jurídica (CDC art. 49).
+  refundWindowDays          Int          @default(7)
+  refundMinHoursBeforeEvent Int          @default(48)
+  accessibilityInfo         String?
+  moderationNote            String?
+  publishedAt               DateTime?    @db.Timestamptz(3)
+  cancelledAt               DateTime?    @db.Timestamptz(3)
+  cancellationReason        String?
+  createdAt                 DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime     @updatedAt @db.Timestamptz(3)
 
   organization     Organization           @relation(fields: [organizationId], references: [id])
   category         EventCategory          @relation(fields: [categoryId], references: [id])
@@ -511,6 +516,7 @@ model Order {
   termsAcceptances TermsAcceptance[]
 
   @@unique([userId, idempotencyKey])
+  @@unique([id, eventId, organizationId])
   @@index([eventId, status])
   @@index([organizationId, status, createdAt])
   @@index([status, expiresAt])
@@ -1000,7 +1006,7 @@ model CancellationRequest {
   createdAt             DateTime                  @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime                  @updatedAt @db.Timestamptz(3)
 
-  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  order        Order        @relation(fields: [orderId, eventId, organizationId], references: [id, eventId, organizationId], onDelete: Restrict)
   event        Event        @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   requestedBy  User         @relation("CancellationRequester", fields: [requestedById], references: [id], onDelete: Restrict)

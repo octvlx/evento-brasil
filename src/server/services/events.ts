@@ -80,6 +80,8 @@ function eventData(input: ReturnType<typeof eventInputSchema.parse>) {
     capacity: input.capacity,
     halfPriceQuotaBps: input.halfPriceQuotaPercent === undefined ? null : Math.round(input.halfPriceQuotaPercent * 100),
     refundPolicy: input.refundPolicy,
+    refundWindowDays: input.refundWindowDays,
+    refundMinHoursBeforeEvent: input.refundMinHoursBeforeEvent,
     accessibilityInfo: input.accessibilityInfo ?? null,
     coverImageUrl: input.coverImageUrl || null,
   };
@@ -110,6 +112,12 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
     const sold = await tx.ticketType.aggregate({ where: { eventId }, _sum: { quantitySold: true, quantityReserved: true } });
     const committed = (sold._sum.quantitySold ?? 0) + (sold._sum.quantityReserved ?? 0);
     if (input.capacity < committed) throw new AppError("VALIDATION", `Capacidade não pode ser menor que ${committed} ingressos já vendidos/reservados.`);
+    // Quem já comprou não pode perder direito de reembolso: com vendas, a política
+    // só pode ficar mais generosa (mais dias após a compra, menos horas de antecedência).
+    if (committed > 0 && input.refundWindowDays < current.refundWindowDays)
+      throw new AppError("VALIDATION", `Já há ingressos vendidos: o prazo de reembolso não pode ser menor que ${current.refundWindowDays} dias após a compra.`);
+    if (committed > 0 && input.refundMinHoursBeforeEvent > current.refundMinHoursBeforeEvent)
+      throw new AppError("VALIDATION", `Já há ingressos vendidos: a antecedência para reembolso não pode passar de ${current.refundMinHoursBeforeEvent} horas antes do evento.`);
     const loc = await resolveLocation(tx, organizationId, input);
     const event = await tx.event.update({ where: { id: eventId }, data: { ...eventData(input), ...loc } });
     await audit(tx, { actorUserId: actor.id, organizationId, action: "event.updated", entityType: "Event", entityId: eventId });

@@ -30,6 +30,22 @@ test("compra com PIX simulado → ingresso com QR → check-in → leitura dupli
   await ticketLink.click();
   await expect(buyer.getByRole("img", { name: "QR code do ingresso" })).toBeVisible();
   await expect(buyer.getByText(code)).toBeVisible();
+  // Voltar, imprimir e salvar em PDF (abre no visualizador do navegador).
+  await expect(buyer.getByRole("link", { name: "Meus ingressos" }).first()).toBeVisible();
+  await expect(buyer.getByRole("button", { name: "Imprimir" })).toBeVisible();
+  const pdfLink = buyer.getByRole("link", { name: "Salvar PDF" });
+  await expect(pdfLink).toHaveAttribute("target", "_blank");
+  const pdf = await buyer.request.get((await pdfLink.getAttribute("href"))!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  expect(pdf.headers()["content-disposition"]).toMatch(/^inline;/);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+  await buyer.getByRole("link", { name: "Ver pedido" }).click();
+  await expect(buyer.getByRole("link", { name: "Salvar todos (PDF)" })).toBeVisible();
+  const all = await buyer.request.get((await buyer.getByRole("link", { name: "Salvar todos (PDF)" }).getAttribute("href"))!);
+  expect(all.status()).toBe(200);
+  await buyer.goBack();
+  await expect(buyer.getByRole("img", { name: "QR code do ingresso" })).toBeVisible();
 
   // Organizador valida na entrada
   const staff = await (await browser.newContext()).newPage();

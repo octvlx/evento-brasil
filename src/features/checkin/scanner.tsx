@@ -71,17 +71,29 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     let stream: MediaStream | null = null;
     let raf = 0;
     let last = 0;
+    // A limpeza pode rodar antes de a câmera abrir (desligar ou sair da página durante
+    // getUserMedia/play): sem esta marca o laço começaria depois, com os refs já nulos.
+    let cancelled = false;
+    const stop = () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((tr) => tr.stop());
+    };
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-        const video = videoRef.current!;
-        video.srcObject = stream;
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        stream = s;
+        const video = videoRef.current;
+        if (cancelled || !video) return stop();
+        video.srcObject = s;
         await video.play();
+        if (cancelled) return stop();
         const tick = (t: number) => {
+          const canvas = canvasRef.current;
+          if (cancelled || !canvas || !videoRef.current) return;
           raf = requestAnimationFrame(tick);
-          if (t - last < 200 || busy.current || video.readyState < 2) return;
+          if (t - last < 200 || busy.current || video.readyState < 2 || !video.videoWidth) return;
           last = t;
-          const canvas = canvasRef.current!;
           const w = Math.min(640, video.videoWidth);
           const h = Math.round((video.videoHeight / video.videoWidth) * w);
           canvas.width = w;
@@ -93,14 +105,12 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
         };
         raf = requestAnimationFrame(tick);
       } catch {
+        if (cancelled) return stop();
         setCameraError("Não foi possível acessar a câmera. Verifique a permissão do navegador ou use a digitação manual.");
         setCameraOn(false);
       }
     })();
-    return () => {
-      cancelAnimationFrame(raf);
-      stream?.getTracks().forEach((tr) => tr.stop());
-    };
+    return stop;
   }, [cameraOn, submit]);
 
   return (

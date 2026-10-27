@@ -56,3 +56,12 @@ const REVOCATION_TEXT: Record<string, string> = {
 export function revocationText(reason: string | null | undefined): string {
   return (reason && REVOCATION_TEXT[reason]) || "Ingresso cancelado";
 }
+
+/**
+ * Erro de createOrder que é do cupom (exibido junto ao campo do cupom). Os textos
+ * vêm do serviço; o limite de tentativas só é aplicado quando há cupom.
+ */
+export function isCouponError(err: { error: string; code?: string }, sentCoupon: boolean): boolean {
+  if (!sentCoupon) return false;
+  return err.code === "RATE_LIMITED" || /cupom|desconto/i.test(err.error);
+}

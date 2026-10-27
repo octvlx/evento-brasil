@@ -29,7 +29,7 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
   const [venueMode, setVenueMode] = useState<"existing" | "new">(defaults.venueId || !venues.length ? (defaults.venueId ? "existing" : "new") : "existing");
   const form = useForm<EventInput>({
     resolver: zodResolver(eventInputSchema),
-    defaultValues: { locationType: "VENUE", timezone: "America/Sao_Paulo", ageRestriction: 0, ...defaults },
+    defaultValues: { locationType: "VENUE", timezone: "America/Sao_Paulo", ageRestriction: 0, refundWindowDays: 7, refundMinHoursBeforeEvent: 48, ...defaults },
   });
   const { errors } = form.formState;
   const locationType = useWatch({ control: form.control, name: "locationType" });
@@ -239,6 +239,30 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
           <Textarea id="refundPolicy" className="mt-1.5" {...field("refundPolicy")} {...form.register("refundPolicy")} />
           <FieldError message={errors.refundPolicy?.message} />
         </div>
+        <div>
+          <Label htmlFor="refundWindowDays">Reembolso: dias após a compra</Label>
+          <Input id="refundWindowDays" type="number" min={0} max={365} step="1" inputMode="numeric" className="mt-1.5" {...field("refundWindowDays")} {...form.register("refundWindowDays")} />
+          <FieldError message={errors.refundWindowDays?.message} />
+        </div>
+        <div>
+          <Label htmlFor="refundMinHoursBeforeEvent">Reembolso: horas antes do evento</Label>
+          <Input
+            id="refundMinHoursBeforeEvent"
+            type="number"
+            min={0}
+            max={720}
+            step="1"
+            inputMode="numeric"
+            className="mt-1.5"
+            {...field("refundMinHoursBeforeEvent")}
+            {...form.register("refundMinHoursBeforeEvent")}
+          />
+          <FieldError message={errors.refundMinHoursBeforeEvent?.message} />
+        </div>
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          O comprador pode pedir reembolso integral até esse número de dias após a compra e até essas horas antes do início (padrão: 7 dias e 48 horas). Depois que houver ingressos vendidos, os prazos só podem
+          ficar mais favoráveis ao comprador. Configure conforme orientação jurídica.
+        </p>
         <div className="sm:col-span-2">
           <Label htmlFor="accessibilityInfo">Acessibilidade</Label>
           <Textarea id="accessibilityInfo" className="mt-1.5" placeholder="Rampas, banheiros adaptados, Libras, espaço para cadeirantes…" {...form.register("accessibilityInfo")} />

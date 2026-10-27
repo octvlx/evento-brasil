@@ -267,3 +267,48 @@ export async function getPublicOrganizer(db: Db, slug: string, now = new Date())
   const rows = await db.event.findMany({ where: { ...publicEventWhere(now), organizationId: org.id }, include: cardInclude, orderBy: { startsAt: "asc" } });
   return { org, events: await toCards(db, rows, now) };
 }
+
+// ───────────────────────────── Links rastreados (ADR 0002, D5) ─────────────────────────────
+
+// Mesmo formato do CHECK TrackingLink_code_format.
+const TRACKING_CODE = /^[A-Za-z0-9]{6,16}$/;
+
+/**
+ * Clique num link rastreado: conta o clique (incremento atômico) e devolve o
+ * destino e os UTMs do link. Código desconhecido, link arquivado ou evento que
+ * não está público → null (o clique não é contado).
+ */
+export async function recordTrackingClick(db: Db, code: string, now = new Date()) {
+  if (!TRACKING_CODE.test(code)) return null;
+  const link = await db.trackingLink.findFirst({
+    where: { code, archivedAt: null, event: publicEventWhere(now) },
+    select: { id: true, utmSource: true, utmMedium: true, utmCampaign: true, utmContent: true, utmTerm: true, event: { select: { slug: true } } },
+  });
+  if (!link) return null;
+  await db.trackingLink.update({ where: { id: link.id }, data: { clicks: { increment: 1 } } });
+  return link;
+}
+
+/** Código do cupom pré-aplicado por um link deste evento (null se não houver ou estiver desativado). */
+export async function trackingLinkCouponCode(db: Db, linkId: string, eventId: string) {
+  const link = await db.trackingLink.findFirst({
+    where: { id: linkId, eventId, archivedAt: null, coupon: { disabledAt: null } },
+    select: { coupon: { select: { code: true } } },
+  });
+  return link?.coupon?.code ?? null;
+}
+
+// Entradas para o sitemap: apenas o que é público e indexável.
+export async function listSitemapEntries(db: Db, now = new Date()) {
+  const [events, cities, organizers] = await Promise.all([
+    db.event.findMany({ where: publicEventWhere(now), select: { slug: true, updatedAt: true }, orderBy: { startsAt: "asc" } }),
+    // Só cidades com evento público: páginas vazias não entram no índice (a base do IBGE tem milhares).
+    db.city.findMany({
+      where: { OR: [{ events: { some: publicEventWhere(now) } }, { venues: { some: { events: { some: publicEventWhere(now) } } } }] },
+      select: { slug: true },
+      orderBy: { slug: "asc" },
+    }),
+    db.organization.findMany({ where: { status: "APPROVED" }, select: { slug: true, updatedAt: true }, orderBy: { slug: "asc" } }),
+  ]);
+  return { events, cities, organizers };
+}

@@ -17,7 +17,9 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/tickets/[code]/
   return new Response(Buffer.from(pdf), {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `attachment; filename="ingresso-${code}.pdf"`,
+      // inline: abre no visualizador do navegador, que oferece salvar/compartilhar (download
+      // forçado não funciona bem no iPhone, principalmente com o app instalado na tela inicial).
+      "content-disposition": `inline; filename="ingresso-${code}.pdf"`,
       "cache-control": "private, no-store",
     },
   });

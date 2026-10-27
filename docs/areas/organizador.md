@@ -20,6 +20,10 @@ meia-entrada por evento (L7b do plano de conformidade com o Decreto nº 13.108/2
 | Perfil, conta de recebimento (simulada), equipe, convites, atribuição de check-in | `/organizador/configuracoes`, `/convite/[token]` | Pronto |
 | Convites: lista de pendentes (com vencidos), revogar, reenviar (novo token; o anterior deixa de valer), recusar pelo convidado | `/organizador/configuracoes`, `/convite/[token]`, `listPendingInvitations`, `revokeInvitation`, `resendInvitation`, `declineInvitation` | Pronto |
 | Alterar papel de membro | `/organizador/configuracoes`, `changeMemberRole` | Pronto |
+| Cupons de desconto (criar, editar, desativar, excluir se nunca usado; avisos de taxa e meia-entrada) | `/organizador/eventos/[id]/editar`, `coupons.ts` | Pronto (ADR 0002, passo 3); aplicar no checkout é o passo 2 (`pagamentos-financeiro`) |
+| Links de divulgação rastreados (UTMs, cupom pré-aplicado, cliques, arquivar) | `/organizador/eventos/[id]/editar`, `tracking-links.ts` | Pronto (passo 3); `/r/[code]` e cookie de atribuição são do passo 4 (`paginas-publicas`) |
+| Relatórios "Vendas por origem" e "Uso de cupons" (só pedidos pagos, valores líquidos de desconto) | `/organizador/vendas`, `salesBySource`, `couponUsage` | Pronto |
+| Recusa de preço de ingresso abaixo da taxa da plataforma (bearer ORGANIZER) | `upsertTicketType` | Pronto (ADR 0002, passo 0) |
 
 ### Relatório de meia-entrada (R7)
 
@@ -70,6 +74,10 @@ e `organizer-team.spec.ts` (convites e papéis).
 1. **Convites (complementos):** transferir a propriedade com confirmação por
    e-mail; limitar convites pendentes por organização.
 2. ~~Convites: revogar, reenviar, recusar, pendentes~~ e ~~Equipe: alterar papel~~ — feitos.
+   **Cupons e links (ADR 0002):** cupons da organização inteira (sem evento)
+   ainda não têm tela (o serviço lista, mas não cria nem edita). Os avisos do
+   cadastro usam `discountPerUnit`/`undercutHalfPrice` de
+   `src/features/fees/discount.ts`, as mesmas regras do checkout.
 3. **Página do evento no painel** (`/organizador/eventos/[id]`) com resumo de
    vendas do evento (`eventSalesSummary` já existe) e atalhos.
 4. **Relatórios:** filtros de período/evento, vendas por tipo de ingresso, ticket
