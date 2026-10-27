@@ -5,6 +5,30 @@ Nenhuma chamada à API foi implementada nem testada. Os pontos abaixo devem ser
 confirmados na documentação oficial vigente **e** com o time comercial do
 Mercado Pago (elegibilidade da conta de marketplace) antes de implementar.
 
+O adaptador anuncia zero métodos enquanto estiver desabilitado. A seleção de
+ingressos e o checkout mostram indisponibilidade, e a ação de criar pedido
+recusa pedidos pagos antes de reservar estoque. Pedidos gratuitos continuam
+funcionando. Isso não habilita nem certifica a integração real.
+
+Falhas ao criar uma cobrança são tratadas como resultado incerto: a tentativa
+permanece `PENDING`, sem permitir outra cobrança, até a reconciliação localizar
+a referência original ou confirmar que ela não existe. Adaptadores sem consulta
+por referência deixam a tentativa para revisão manual. Uma consulta que ainda
+não pode confirmar a ausência (por exemplo, por consistência eventual) deve
+lançar erro, nunca retornar `null`.
+
+Snapshots de PIX pendente devem devolver as instruções da cobrança existente
+(`pixCopyPaste` e/ou `pixQrCodeBase64`, mais `expiresAt` quando disponível),
+inclusive na busca por referência. A confirmação persiste essas instruções
+após validar o valor; a recuperação não chama `createPayment` de novo.
+Sem instruções, o checkout mantém a mensagem de confirmação pendente.
+
+`processingFeeCents` no snapshot é o total conhecido da taxa em centavos;
+`null` significa ainda desconhecido. Atualizações `PAID`, inclusive posteriores
+à aprovação e na resolução de disputa, reconciliam esse total com o razão.
+Correções criam partidas pelo delta, sem editar o histórico. Repetições não
+duplicam custos, e `null` nunca apaga um custo já conhecido.
+
 ## O que o sistema já espera de qualquer provedor
 
 Contrato em `src/server/payments/types.ts`:

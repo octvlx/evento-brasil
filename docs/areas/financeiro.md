@@ -256,6 +256,19 @@ Pagamentos sem vínculo com o provedor podem aparecer com
 `failureReason = PROVIDER_LINK_MISSING` (provedor sem busca por referência) e
 reembolsos com `OVER_REFUND_BLOCKED` — ambos exigem análise humana.
 
+## Recuperação de webhooks de pagamentos confirmados
+
+Reconciliação de pagamentos confirmados: o cron também consulta pagamentos
+`PAID` e `DISPUTED` do provedor configurado, recuperando estornos, chargebacks
+e resolução de disputas mesmo quando o webhook não chega. O lote é separado
+das tentativas pendentes (limite padrão de 200 por grupo). A fila ordena por
+`Payment.updatedAt` e id; cada consulta, inclusive com erro, atualiza esse
+horário sem mudar o status financeiro. Assim todos avançam na fila e falhas
+aguardam o intervalo de `staleMinutes` (padrão: 10 minutos) antes de repetir.
+O relatório retorna `settledPaymentsSynced` e erros `settled-payment`.
+Pagamentos `REFUNDED` e `CHARGED_BACK` saem dessa fila. A recuperação usa os
+mesmos serviços transacionais e idempotentes dos webhooks.
+
 ## Pendências (em ordem)
 
 1. Integração real verificada (Mercado Pago), incluindo `findPaymentByReference`

@@ -516,6 +516,7 @@ model Order {
   termsAcceptances TermsAcceptance[]
 
   @@unique([userId, idempotencyKey])
+  @@unique([id, eventId, organizationId])
   @@index([eventId, status])
   @@index([organizationId, status, createdAt])
   @@index([status, expiresAt])
@@ -1005,7 +1006,7 @@ model CancellationRequest {
   createdAt             DateTime                  @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime                  @updatedAt @db.Timestamptz(3)
 
-  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  order        Order        @relation(fields: [orderId, eventId, organizationId], references: [id, eventId, organizationId], onDelete: Restrict)
   event        Event        @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Restrict)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   requestedBy  User         @relation("CancellationRequester", fields: [requestedById], references: [id], onDelete: Restrict)

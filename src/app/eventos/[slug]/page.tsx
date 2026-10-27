@@ -8,6 +8,7 @@ import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
 import { TicketSelector } from "@/features/orders/ticket-selector";
+import { getPaymentAdapter } from "@/server/payments";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
 import { getPublicEvent } from "@/server/services/catalog";
@@ -213,6 +214,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               buyerPaysFee={buyerPaysFee}
               user={user ? { name: user.name, email: user.email } : null}
               halfPriceLeft={halfPriceLeft}
+              paymentsAvailable={getPaymentAdapter().supportedMethods.length > 0}
             />
           </Card>
         </aside>
