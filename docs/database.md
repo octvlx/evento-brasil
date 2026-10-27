@@ -43,6 +43,14 @@ erDiagram
   OrganizerSettlement ||--o{ FinancialLedgerEntry : ""
   User ||--o{ AuditLog : "actor"
   Organization ||--o{ AuditLog : ""
+  Organization ||--o{ Coupon : ""
+  Event |o--o{ Coupon : "opcional"
+  Coupon ||--o{ CouponTicketType : ""
+  TicketType ||--o{ CouponTicketType : ""
+  Coupon |o--o{ Order : ""
+  Event ||--o{ TrackingLink : ""
+  Coupon |o--o{ TrackingLink : "pré-aplica"
+  TrackingLink |o--o{ Order : ""
 ```
 
 | Domínio | Modelos | Dono (consultar antes de mudar) |
@@ -51,6 +59,7 @@ erDiagram
 | Organizações | `Organization`, `OrganizationMember` (`OrgRole`), `OrganizationInvitation`, `OrganizerVerification` (documento cifrado com `encryptPII`) | `area-organizador`; aprovação → `admin` |
 | Catálogo | `City`, `Venue`, `EventCategory`, `Event`, `EventImage`, `TicketType` | `area-organizador` (eventos/lotes); `paginas-publicas` (cidades, categorias, busca) |
 | Pedidos e estoque | `Order`, `OrderItem`, `TicketInventoryReservation` | `pagamentos-financeiro` |
+| Cupons e atribuição (ADR 0002) | `Coupon`, `CouponTicketType`, `TrackingLink`; instantâneos em `Order` (`couponCode`, `discountCents`, `utm*`) e `OrderItem` (`listUnitPriceCents`, `discountPerUnitCents`) | Cadastro → `area-organizador`; preço, contadores e reconciliação → `pagamentos-financeiro` |
 | Pagamentos | `Payment`, `PaymentWebhookEvent`, `SimulatedProviderPayment` (só provedor simulado) | `pagamentos-financeiro` |
 | Ingressos e entrada | `IssuedTicket`, `TicketCheckin`, `EventStaffAssignment` | `check-in` |
 | Financeiro | `Refund`, `CommissionRule`, `FinancialLedgerEntry`, `OrganizerSettlement` | `pagamentos-financeiro` |
@@ -61,7 +70,19 @@ Unicidades que sustentam regras de negócio (não remover sem falar com o dono):
 `PaymentWebhookEvent(provider, externalEventId)` (deduplicação de webhook),
 `IssuedTicket(orderItemId, sequence)` (emissão única),
 `FinancialLedgerEntry(idempotencyKey, account, direction)`,
-`OrganizationMember(organizationId, userId)`, `EventStaffAssignment(eventId, userId)`.
+`OrganizationMember(organizationId, userId)`, `EventStaffAssignment(eventId, userId)`,
+`Coupon(organizationId, code)`, `TrackingLink(code)`.
+
+**Mesmo tenant por FK composta.** `Event @@unique([id, organizationId])` e
+`Coupon @@unique([id, organizationId])` existem para que
+`Coupon(eventId, organizationId)`, `TrackingLink(eventId, organizationId)` e
+`Order(couponId, organizationId)` só apontem para registros da mesma
+organização. Essas FKs são `Restrict`: com `organizationId` obrigatório, um
+`SetNull` composto tentaria anular a organização. Ficam no serviço (e na
+reconciliação): `TrackingLink.couponId` da mesma organização,
+`Order.trackingLinkId` do mesmo evento e `CouponTicketType` com tipos do evento
+do cupom. Cupom ou link usado não se apaga (`Restrict` a partir de `Order`);
+desative com `disabledAt`/`archivedAt`.
 
 ## Objetos SQL escritos à mão
 
@@ -80,6 +101,10 @@ banco migrado e o schema).
 | Gatilho `FinancialLedgerEntry_immutable` (`ledger_block_mutation()`) | idem | Razão somente inserção |
 | Índice `Event_title_lower_idx` (`lower(title)`) | idem | Busca por título sem diferenciar maiúsculas |
 | Gatilho `AuditLog_immutable` (`audit_log_block_mutation()`) | `20261026150000_audit_log_append_only` | Auditoria somente inserção |
+| `Coupon_counters_nonnegative`, `_max_uses`, `_discount_value`, `_validity`, `_code_format` | `20261027120000_coupons_tracking_links` | Contadores ≥ 0 (pega decremento duplo); limites > 0; `PERCENT` com 1–10000 bps **ou** `FIXED_PER_TICKET` com valor > 0; janela coerente; código `^[A-Z0-9_-]{3,32}$`. O limite de usos **não** é CHECK (pagamento tardio pode ultrapassá-lo, auditado). |
+| `TrackingLink_clicks_nonnegative`, `_code_format` | idem | Cliques ≥ 0; código `^[A-Za-z0-9]{6,16}$` |
+| `OrderItem_discount` | idem | `unitPriceCents = listUnitPriceCents - discountPerUnitCents`, desconto ≥ 0 (com `unitPriceCents >= 0`, desconto ≤ preço de tabela) |
+| `Order_discount` | idem | Desconto ≥ 0 e só com cupom; `couponId` e `couponCode` preenchidos juntos. `discountCents = Σ itens` fica na reconciliação. |
 
 Os dois gatilhos são `BEFORE UPDATE OR DELETE … FOR EACH ROW`:
 
@@ -128,7 +153,10 @@ check-in simultâneo, reembolso × check-in) e `checkFinancialInvariants`.
 `prisma/seed.ts` cria as 27 capitais + Franca, categorias, contas
 `…@demo.eventobrasil.test` (senha em `DEMO_PASSWORD`), organizações, eventos,
 pedidos pagos pelo provedor simulado, um check-in e um reembolso, sempre pelos
-**serviços reais**.
+**serviços reais**. Também cria o cupom `DEMO10` (10% na Noite de Samba, só nos
+tipos que não são meia-entrada) e o link rastreado `demoSamba1` (UTMs de
+Instagram, pré-aplica o `DEMO10`). Até o passo 2 do ADR 0002 eles não alteram
+preço.
 
 - Recusa `NODE_ENV=production`.
 - Se `admin@demo.eventobrasil.test` já existe, informa que o banco já tem o seed

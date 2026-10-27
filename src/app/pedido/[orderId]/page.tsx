@@ -14,6 +14,7 @@ import { getOrderForBuyer } from "@/server/services/orders";
 import { refundEligibility, refundPolicyFromEnv } from "@/server/services/refunds";
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
+import { CANCEL_HELP_HREF } from "@/lib/help-links";
 import { ORDER_STATUS, REFUND_REASON, REFUND_STATUS, TICKET_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Pedido", robots: { index: false } };
@@ -136,6 +137,9 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
           )}
           {eligibility.eligible ? <RefundButton orderId={order.id} /> : !order.refunds.length && <p className="text-sm text-muted-foreground">{eligibility.reason}</p>}
           <p className="text-xs text-muted-foreground">Política do evento: {order.event.refundPolicy}</p>
+          <Link href={CANCEL_HELP_HREF} className="inline-block text-sm font-semibold text-secondary hover:underline">
+            Cancelar compra / arrependimento: como funciona
+          </Link>
         </Card>
       </div>
     </>

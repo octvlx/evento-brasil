@@ -3,7 +3,7 @@ import { CalendarDays, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/primitives";
 import { formatEventDateTime } from "@/lib/datetime";
 import { AVAILABILITY } from "@/lib/labels";
-import { formatBRL } from "@/lib/money";
+import { priceLabel, type PriceQuote } from "@/lib/price-display";
 import { cn } from "@/lib/utils";
 import { EventCover } from "./event-cover";
 
@@ -18,18 +18,14 @@ export interface EventCardData {
   state: string | null;
   isOnline: boolean;
   categoryName: string;
-  minPriceCents: number | null;
+  /** Menor total por ingresso, calculado no servidor (com a taxa do comprador). */
+  minPrice: PriceQuote | null;
   availability: keyof typeof AVAILABILITY;
-}
-
-export function priceLabel(min: number | null) {
-  if (min === null) return "Ingressos em breve";
-  if (min === 0) return "Gratuito";
-  return `A partir de ${formatBRL(min)}`;
 }
 
 export function EventCard({ event, className, priority }: { event: EventCardData; className?: string; priority?: boolean }) {
   const av = AVAILABILITY[event.availability];
+  const price = priceLabel(event.minPrice);
   const place = event.isOnline ? "Online" : [event.venueName, event.cityName && `${event.cityName} – ${event.state}`].filter(Boolean).join(" · ");
   return (
     <Link
@@ -61,7 +57,10 @@ export function EventCard({ event, className, priority }: { event: EventCardData
           <span className="line-clamp-1">{place || "Local a definir"}</span>
         </p>
         <div className="mt-auto flex items-center justify-between pt-2">
-          <span className="text-sm font-bold">{priceLabel(event.minPriceCents)}</span>
+          <span className="text-sm font-bold" data-testid="card-price">
+            {price.label}
+            {price.detail && <span className="block text-xs font-normal text-muted-foreground"> {price.detail}</span>}
+          </span>
           {event.availability === "AVAILABLE" && <span className="text-xs font-medium text-success">{av.label}</span>}
         </div>
       </div>

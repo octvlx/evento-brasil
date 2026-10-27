@@ -11,7 +11,6 @@ import { TicketSelector } from "@/features/orders/ticket-selector";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
 import { getPublicEvent } from "@/server/services/catalog";
-import { resolveCommissionRule } from "@/server/services/commission";
 import { formatAddress } from "@/lib/br";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { AVAILABILITY } from "@/lib/labels";
@@ -55,9 +54,8 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   await connection();
   const data = await getPublicEvent(db, slug);
   if (!data) notFound();
-  const { event, availability, capacityLeft, halfPriceLeft } = data;
+  const { event, prices, buyerPaysFee, availability, capacityLeft, halfPriceLeft } = data;
   const user = await getCurrentUser();
-  const rule = await resolveCommissionRule(db, event.organizationId, event.id);
   const now = new Date();
   const city = event.venue?.city ?? event.city;
   const tz = event.timezone;
@@ -71,6 +69,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
     description: t.description,
     kind: t.kind,
     priceCents: t.priceCents,
+    serviceFeeCents: prices[t.id].serviceFeeCents,
     minPerOrder: t.minPerOrder,
     maxPerOrder: t.maxPerOrder,
     available: Math.max(0, Math.min(t.quantityTotal - t.quantityReserved - t.quantitySold, capacityLeft, t.kind === "HALF_PRICE" && halfPriceLeft !== null ? halfPriceLeft : Infinity)),
@@ -92,7 +91,8 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
         ? { "@type": "VirtualLocation", url: event.onlineUrl }
         : { "@type": "Place", name: event.venue?.name, address: { "@type": "PostalAddress", addressLocality: city?.name, addressRegion: city?.state, addressCountry: "BR" } },
     organizer: { "@type": "Organization", name: event.organization.name },
-    offers: event.ticketTypes.map((t) => ({ "@type": "Offer", name: t.name, price: (t.priceCents / 100).toFixed(2), priceCurrency: "BRL", url })),
+    // Preço total por ingresso (com a taxa do comprador), o mesmo exibido e cobrado.
+    offers: event.ticketTypes.map((t) => ({ "@type": "Offer", name: t.name, price: (prices[t.id].totalCents / 100).toFixed(2), priceCurrency: "BRL", url })),
   };
 
   // Trilha: Início › cidade › categoria na cidade (ou na busca, para eventos online).
@@ -202,7 +202,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               eventId={event.id}
               eventSlug={event.slug}
               tickets={tickets}
-              buyerFee={rule.bearer === "BUYER" ? { percentBps: rule.percentBps, fixedCents: rule.fixedCentsPerTicket } : null}
+              buyerPaysFee={buyerPaysFee}
               user={user ? { name: user.name, email: user.email } : null}
               halfPriceLeft={halfPriceLeft}
             />
