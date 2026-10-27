@@ -30,4 +30,6 @@ test("APIs protegidas recusam acesso indevido", async ({ request, page }) => {
   expect(anyEvent.ok()).toBeTruthy();
   const csv = await page.request.get("/api/organizador/eventos/qualquer-id/participantes");
   expect(csv.status()).toBe(403);
+  // …nem o relatório de meia-entrada
+  expect((await page.request.get("/api/organizador/eventos/qualquer-id/meia-entrada")).status()).toBe(403);
 });

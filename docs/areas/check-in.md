@@ -11,11 +11,12 @@ vazamento de dados de titular em leituras de ingresso de outra organização.
 | Leitor com câmera (`jsqr`, 5 quadros/s, câmera traseira) e entrada manual; resposta verde/âmbar/vermelho, vibração, contadores | `/check-in/[eventId]`, `src/features/checkin/scanner.tsx` | Pronto |
 | Server Action com limite de 120 leituras/min por operador e payload truncado em 200 caracteres | `src/features/checkin/actions.ts` | Pronto |
 | Validação online atômica, seis resultados, toda leitura registrada em `TicketCheckin` | `checkInTicket` em `src/server/services/checkin.ts` | Pronto |
+| Aviso "Meia-entrada — exigir documento comprobatório" ao admitir ou reportar DUPLICATE de ingresso `HALF_PRICE` (faixa preta/amarela, 5 s na tela; câmera e entrada manual). `ticketKind` nunca é devolvido para ingresso de outra organização (Decreto 13.108/2026, L7a) | `scanner.tsx`, `ticket.ticketKind` em `checkInTicket` | Pronto |
 | Histórico de leituras (equipe vê só as próprias; organizador vê todas) | `checkinHistory`, seção "Últimas leituras" (15 itens) | Pronto |
 | Permissões da portaria | `resolveCheckinAccess` em `src/server/auth/permissions.ts`; atribuição em `assignStaffToEvent` (área organizador) | Pronto |
 | Formato do QR `EB1:<código 10 Crockford>:<token 256 bits base64url>` e emissão idempotente | `qrPayload`/`parseQrPayload`/`issueTicketsTx` em `src/server/services/tickets.ts` (área financeiro) | Pronto |
 | Visualização do ingresso (QR só se VALID; "já utilizado"/"cancelado" nos demais; aviso de pagamento simulado e meia-entrada) | `/ingressos/[code]`, lista em `/meus-ingressos` | Pronto |
-| PDF A5 por ingresso com QR (não gera para REVOKED: 410) | `src/server/tickets/pdf.ts`, `/api/tickets/[code]/pdf`, anexo do e-mail em `notifications.ts` | Pronto |
+| PDF A5 por ingresso com QR (não gera para REVOKED: 410); faixa amarela "Meia-entrada: apresente o documento comprobatório" quando `kind` = HALF_PRICE — no download; o anexo do e-mail só terá o aviso quando `loadPdfTickets` (`notifications.ts`, financeiro) passar `kind` | `src/server/tickets/pdf.ts`, `/api/tickets/[code]/pdf`, anexo do e-mail em `notifications.ts` | Pronto (e-mail pendente) |
 
 ### Como as garantias são obtidas
 

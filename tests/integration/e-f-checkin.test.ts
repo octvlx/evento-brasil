@@ -2,9 +2,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { cancelEvent } from "@/server/services/cancellation";
 import { checkInTicket, checkinHistory } from "@/server/services/checkin";
-import { handlePaymentWebhook } from "@/server/services/payments";
+import { createOrder } from "@/server/services/orders";
+import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { qrPayload } from "@/server/services/tickets";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -172,6 +173,41 @@ describe("E/F — check-in", () => {
     // O ingresso continua válido no evento certo.
     expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[1].id } })).status).toBe("VALID");
     expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[1]))).result).toBe("ADMITTED");
+  });
+
+  it("meia-entrada: devolve o tipo do ingresso ao admitir e no duplicado, mas não para outra organização", async () => {
+    const owner = await makeUser();
+    const org = await makeOrg(owner);
+    const event = await makeEvent(org, {
+      halfPriceQuotaBps: 5000,
+      tickets: [
+        { name: "Inteira", priceCents: 10000, quantityTotal: 50 },
+        { name: "Meia-entrada", kind: "HALF_PRICE", priceCents: 5000, quantityTotal: 50 },
+      ],
+    });
+    const customer = await makeUser();
+    const order = await createOrder(db, customer, orderInput(event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 1 }, { ticketTypeId: event.ticketTypes[1].id, quantity: 2 }], { halfPriceDeclaration: true }), { providerIsSimulated: true });
+    const payment = await startPayment(db, adapter, customer, order.id, "PIX");
+    await handlePaymentWebhook(db, adapter, await adapter.simulate(payment.providerPaymentId!, "approve"));
+    const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id }, include: { ticketType: { select: { kind: true } } } });
+    const [full] = tickets.filter((t) => t.ticketType.kind === "GENERAL");
+    const [half, half2] = tickets.filter((t) => t.ticketType.kind === "HALF_PRICE");
+
+    const admitted = await checkInTicket(db, owner, event.id, qrPayload(half));
+    expect(admitted.result).toBe("ADMITTED");
+    expect(admitted.ticket?.ticketKind).toBe("HALF_PRICE");
+    const duplicate = await checkInTicket(db, owner, event.id, qrPayload(half));
+    expect(duplicate.result).toBe("DUPLICATE");
+    expect(duplicate.ticket?.ticketKind).toBe("HALF_PRICE");
+    expect((await checkInTicket(db, owner, event.id, qrPayload(full))).ticket?.ticketKind).toBe("GENERAL");
+
+    // Outra organização: nada do ingresso (nem o tipo) é revelado.
+    const rivalOwner = await makeUser();
+    const rivalEvent = await makeEvent(await makeOrg(rivalOwner));
+    const rival = await checkInTicket(db, rivalOwner, rivalEvent.id, qrPayload(half2));
+    expect(rival.result).toBe("WRONG_EVENT");
+    expect(rival.ticket).toBeUndefined();
+    expect(JSON.stringify(rival)).not.toContain("HALF_PRICE");
   });
 
   it("equipe só acessa eventos atribuídos; clientes não acessam", async () => {
