@@ -11,7 +11,7 @@ import { CitySelect } from "./city-select";
 
 export function SiteHeader() {
   return (
-    <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur-lg">
+    <header className="sticky top-0 z-40 print:hidden border-b border-border/70 bg-background/85 backdrop-blur-lg">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6">
         <Logo />
         <form action="/eventos" role="search" className="relative ml-4 hidden max-w-sm flex-1 md:block">
