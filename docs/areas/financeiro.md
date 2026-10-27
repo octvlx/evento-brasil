@@ -113,8 +113,9 @@ check-in), todos terminando com `checkFinancialInvariants() == []`.
 Preço:
 - `discountPerUnit(preço, cupom)` em `src/features/fees/discount.ts` (pura):
   `PERCENT` = `applyBps` meia-para-cima, `FIXED_PER_TICKET` = `min(valor, preço)`;
-  preço 0 não recebe desconto. `undercutHalfPrice(líquido, preçosDeMeia)` acusa
-  inteira com desconto abaixo da meia mais barata (cortesia de 100% fica de fora).
+  preço 0 não recebe desconto. `undercutHalfPrice(tabela, líquido, preçosDeMeia)` acusa
+  quando o cupom leva um ingresso com preço de tabela ≥ meia mais barata para baixo dela
+  (tipo que já custa menos que a meia não é afetado; cortesia de 100% fica de fora).
 - `computeFees` aceita `discountPerUnitCents` por linha; comissão e taxa BUYER
   incidem sobre o **líquido**. A linha devolve `listUnitPriceCents`,
   `discountPerUnitCents`, `unitPriceCents` (líquido) e `lineDiscountCents`; o

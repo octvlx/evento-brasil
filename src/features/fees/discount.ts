@@ -30,15 +30,17 @@ export function discountPerUnit(unitPriceCents: number, coupon: DiscountSpec): n
 }
 
 /**
- * Meia-entrada (pendência jurídica, ADR 0002 D3): um cupom não pode deixar uma
- * inteira mais barata que a meia-entrada mais barata do evento. Devolve o
- * menor preço de meia que seria "furado" pelo preço líquido, se houver.
- * Cortesia (cupom de 100%, preço líquido 0) não é preço de venda e fica de fora.
+ * Meia-entrada (pendência jurídica, ADR 0002 D3): o CUPOM não pode levar um
+ * ingresso para baixo da meia-entrada mais barata do evento. Acusa só quando o
+ * preço de tabela está na meia ou acima e o líquido fica abaixo dela; um tipo
+ * que já custa menos que a meia sem cupom não é afetado. Devolve o preço da
+ * meia "furada", se houver. Cortesia (cupom de 100%, líquido 0) não é preço de
+ * venda e fica de fora. Mesma regra no checkout e no aviso do organizador.
  */
-export function undercutHalfPrice(netUnitPriceCents: number, halfPricesCents: number[]): number | undefined {
+export function undercutHalfPrice(listUnitPriceCents: number, netUnitPriceCents: number, halfPricesCents: number[]): number | undefined {
   if (netUnitPriceCents === 0) return undefined;
   const paidHalf = halfPricesCents.filter((p) => p > 0);
   if (!paidHalf.length) return undefined;
   const cheapest = Math.min(...paidHalf);
-  return netUnitPriceCents < cheapest ? cheapest : undefined;
+  return listUnitPriceCents >= cheapest && netUnitPriceCents < cheapest ? cheapest : undefined;
 }
