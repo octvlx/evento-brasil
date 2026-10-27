@@ -281,8 +281,6 @@ async function main() {
   // Um check-in e um reembolso para os relatórios.
   const t1 = await db.issuedTicket.findFirstOrThrow({ where: { orderId: o1.id } });
   await checkInTicket(db, producer, events[0].id, qrPayload(t1));
-  process.env.REFUND_WINDOW_DAYS ??= "7";
-  process.env.REFUND_MIN_HOURS_BEFORE_EVENT ??= "48";
   try {
     await requestCustomerRefund(db, adapter, customer, o4.id);
   } catch (e) {
