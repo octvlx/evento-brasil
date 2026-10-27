@@ -8,7 +8,7 @@ import "server-only";
 import type { OrderStatus } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { createOrderSchema, type CreateOrderInput } from "@/features/schemas";
-import { computeFees } from "@/features/fees/policy";
+import { computeFees, lineWithNegativePayout } from "@/features/fees/policy";
 import { onlyDigits } from "@/lib/br";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
@@ -189,6 +189,9 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
         [...merged.values()].map((i) => ({ ticketTypeId: i.ticketTypeId, unitPriceCents: byId.get(i.ticketTypeId)!.priceCents, quantity: i.quantity })),
         rule,
       );
+      // Guarda B1 (ADR 0002): repasse negativo quebraria o razão na confirmação do pagamento.
+      if (lineWithNegativePayout(fees, rule.bearer))
+        throw new AppError("VALIDATION", "O preço deste ingresso é menor que a taxa da plataforma.");
       const isFree = fees.totalCents === 0;
       if (!isFree && !["CONNECTED", "SIMULATED"].includes(event.organization.paymentAccountStatus))
         throw new AppError("SALES_CLOSED", "O organizador ainda não está habilitado para vender ingressos pagos.");
