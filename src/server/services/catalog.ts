@@ -1,9 +1,12 @@
 // Consultas públicas: apenas eventos PUBLICADOS, não encerrados, de
 // organizações aprovadas.
 import "server-only";
-import type { Prisma } from "@/generated/prisma/client";
+import type { CommissionRule, Prisma } from "@/generated/prisma/client";
+import { computeFees } from "@/features/fees/policy";
 import { localDayRange, weekendRange } from "@/lib/datetime";
+import type { PriceQuote } from "@/lib/price-display";
 import type { Db } from "../db";
+import { resolveCommissionRule } from "./commission";
 
 export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
@@ -23,6 +26,35 @@ const cardInclude = {
 
 type CardRow = Prisma.EventGetPayload<{ include: typeof cardInclude }>;
 
+export type { PriceQuote };
+
+/**
+ * Prévia do preço unitário com a MESMA regra e o MESMO cálculo do pedido
+ * (`resolveCommissionRule` + `computeFees`): o valor ofertado é o cobrado.
+ */
+export function quoteUnitPrice(priceCents: number, rule: Pick<CommissionRule, "policyVersion" | "percentBps" | "fixedCentsPerTicket" | "bearer">): PriceQuote {
+  const fees = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1 }], rule);
+  return { priceCents, serviceFeeCents: fees.serviceFeeCents, totalCents: fees.totalCents };
+}
+
+/** Menor total por ingresso entre os tipos visíveis (null sem ingressos). */
+export function minPriceQuote(prices: number[], rule: Parameters<typeof quoteUnitPrice>[1]): PriceQuote | null {
+  if (!prices.length) return null;
+  return prices.map((p) => quoteUnitPrice(p, rule)).reduce((min, q) => (q.totalCents < min.totalCents ? q : min));
+}
+
+/** Regra de comissão vigente de cada evento (uma consulta por evento distinto). */
+async function rulesFor(db: Db, rows: { id: string; organizationId: string }[], now: Date) {
+  const unique = [...new Map(rows.map((r) => [r.id, r])).values()];
+  const rules = await Promise.all(unique.map((r) => resolveCommissionRule(db, r.organizationId, r.id, now)));
+  return new Map(unique.map((r, i) => [r.id, rules[i]]));
+}
+
+async function toCards(db: Db, rows: CardRow[], now: Date): Promise<EventCard[]> {
+  const rules = await rulesFor(db, rows, now);
+  return rows.map((r) => toCard(r, rules.get(r.id)!, now));
+}
+
 export type Availability = "AVAILABLE" | "LOW" | "SOLD_OUT" | "NOT_STARTED" | "CLOSED";
 
 export interface EventCard {
@@ -39,6 +71,8 @@ export interface EventCard {
   categoryName: string;
   categorySlug: string;
   minPriceCents: number | null;
+  /** Menor total por ingresso com a taxa de serviço do comprador. */
+  minPrice: PriceQuote | null;
   availability: Availability;
 }
 
@@ -57,7 +91,7 @@ export function availabilityOf(
   return "AVAILABLE";
 }
 
-function toCard(e: CardRow, now: Date): EventCard {
+function toCard(e: CardRow, rule: CommissionRule, now: Date): EventCard {
   const city = e.venue?.city ?? e.city;
   return {
     id: e.id,
@@ -73,6 +107,7 @@ function toCard(e: CardRow, now: Date): EventCard {
     categoryName: e.category.name,
     categorySlug: e.category.slug,
     minPriceCents: e.ticketTypes.length ? Math.min(...e.ticketTypes.map((t) => t.priceCents)) : null,
+    minPrice: minPriceQuote(e.ticketTypes.map((t) => t.priceCents), rule),
     availability: availabilityOf(e, e.ticketTypes, now),
   };
 }
@@ -130,7 +165,7 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
     db.event.count({ where }),
     db.event.findMany({ where, include: cardInclude, orderBy: [{ startsAt: "asc" }, { id: "asc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
   ]);
-  return { total, page, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), events: rows.map((r) => toCard(r, now)) };
+  return { total, page, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), events: await toCards(db, rows, now) };
 }
 
 export async function featuredEvents(db: Db, limit = 6, now = new Date()) {
@@ -140,7 +175,7 @@ export async function featuredEvents(db: Db, limit = 6, now = new Date()) {
     orderBy: { startsAt: "asc" },
     take: limit,
   });
-  return rows.map((r) => toCard(r, now));
+  return toCards(db, rows, now);
 }
 
 export async function eventsInCity(db: Db, citySlug: string, limit = 8, now = new Date()) {
@@ -164,17 +199,22 @@ export async function cityShowcase(db: Db, citySlug: string, perShelf = 10, now 
     orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     take: 300,
   });
-  const byCategory = new Map<string, { sortOrder: number; shelf: CityShelf }>();
+  const byCategory = new Map<string, { sortOrder: number; category: CityShelf["category"]; total: number; rows: typeof rows }>();
   for (const r of rows) {
-    const entry = byCategory.get(r.category.slug) ?? { sortOrder: r.category.sortOrder, shelf: { category: { slug: r.category.slug, name: r.category.name }, total: 0, events: [] } };
-    entry.shelf.total++;
-    if (entry.shelf.events.length < perShelf) entry.shelf.events.push(toCard(r, now));
+    const entry = byCategory.get(r.category.slug) ?? { sortOrder: r.category.sortOrder, category: { slug: r.category.slug, name: r.category.name }, total: 0, rows: [] };
+    entry.total++;
+    if (entry.rows.length < perShelf) entry.rows.push(r);
     byCategory.set(r.category.slug, entry);
   }
+  const featuredRows = rows.filter((r) => r.isFeatured).slice(0, 5);
+  const groups = [...byCategory.values()].sort((a, b) => a.sortOrder - b.sortOrder);
+  // Só os eventos exibidos precisam de preço com taxa.
+  const rules = await rulesFor(db, [...featuredRows, ...groups.flatMap((g) => g.rows)], now);
+  const card = (r: (typeof rows)[number]) => toCard(r, rules.get(r.id)!, now);
   return {
     total: rows.length,
-    featured: rows.filter((r) => r.isFeatured).slice(0, 5).map((r) => toCard(r, now)),
-    shelves: [...byCategory.values()].sort((a, b) => a.sortOrder - b.sortOrder).map((e) => e.shelf),
+    featured: featuredRows.map(card),
+    shelves: groups.map((g): CityShelf => ({ category: g.category, total: g.total, events: g.rows.map(card) })),
   };
 }
 
@@ -206,8 +246,12 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
   const halfUsed = event.ticketTypes.filter((t) => t.kind === "HALF_PRICE").reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
   const halfQuota = event.halfPriceQuotaBps === null ? null : Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000);
   const committed = event.ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
+  const rule = await resolveCommissionRule(db, event.organizationId, event.id, now);
   return {
     event,
+    /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
+    prices: Object.fromEntries(event.ticketTypes.map((t) => [t.id, quoteUnitPrice(t.priceCents, rule)])) as Record<string, PriceQuote>,
+    buyerPaysFee: rule.bearer === "BUYER",
     availability: availabilityOf(event, event.ticketTypes, now),
     capacityLeft: Math.max(0, event.capacity - committed),
     halfPriceLeft: halfQuota === null ? null : Math.max(0, halfQuota - halfUsed),
@@ -221,5 +265,5 @@ export async function getPublicOrganizer(db: Db, slug: string, now = new Date())
   });
   if (!org) return null;
   const rows = await db.event.findMany({ where: { ...publicEventWhere(now), organizationId: org.id }, include: cardInclude, orderBy: { startsAt: "asc" } });
-  return { org, events: rows.map((r) => toCard(r, now)) };
+  return { org, events: await toCards(db, rows, now) };
 }

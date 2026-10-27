@@ -52,3 +52,30 @@ test("compra com PIX simulado → ingresso com QR → check-in → leitura dupli
   await buyer.reload();
   await expect(buyer.getByText("Ingresso já utilizado")).toBeVisible();
 });
+
+test("meia-entrada: a portaria vê o aviso para exigir o documento, também no duplicado", async ({ browser }) => {
+  const buyer = await (await browser.newContext()).newPage();
+  await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
+  const meia = buyer.locator("li").filter({ hasText: "Meia-entrada" });
+  await meia.getByRole("button", { name: "Aumentar" }).click();
+  await buyer.getByRole("checkbox", { name: /direito à meia-entrada/ }).check();
+  await buyer.getByRole("button", { name: "Continuar para o pagamento" }).click();
+  await buyer.waitForURL(/\/checkout\//);
+  await buyer.getByRole("button", { name: "Gerar PIX" }).click();
+  await buyer.getByRole("button", { name: "Aprovar PIX" }).click();
+  await buyer.waitForURL(/\/pedido\//);
+  const code = (await buyer.locator('a[href^="/ingressos/"]').first().getAttribute("href"))!.split("/").pop()!;
+
+  const staff = await (await browser.newContext()).newPage();
+  const { payload, eventId } = await qrPayloadFor(code);
+  await login(staff, USERS.producer, `/check-in/${eventId}`);
+  const input = staff.getByPlaceholder(/Colar conteúdo do QR/);
+  const result = (text: string) => staff.getByRole("alert").filter({ hasText: text });
+  await input.fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(result("Entrada liberada")).toContainText("Meia-entrada — exigir documento comprobatório");
+  await staff.waitForTimeout(5400);
+  await input.fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(result("Ingresso JÁ UTILIZADO")).toContainText("Meia-entrada — exigir documento comprobatório");
+});
