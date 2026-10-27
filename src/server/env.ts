@@ -23,8 +23,6 @@ const schema = z.object({
   MERCADO_PAGO_WEBHOOK_SECRET: z.string().optional(),
   SETTLEMENT_ENABLED: bool,
   RESERVATION_MINUTES: int(15),
-  REFUND_WINDOW_DAYS: int(7),
-  REFUND_MIN_HOURS_BEFORE_EVENT: int(48),
   EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
   EMAIL_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default("Evento Brasil <nao-responda@example.com>"),

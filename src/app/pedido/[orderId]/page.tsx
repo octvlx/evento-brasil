@@ -11,7 +11,7 @@ import { cancelOrderAction } from "@/features/orders/actions";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
-import { refundEligibility, refundPolicyFromEnv } from "@/server/services/refunds";
+import { refundEligibility } from "@/server/services/refunds";
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { CANCEL_HELP_HREF } from "@/lib/help-links";
@@ -34,7 +34,7 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
   const user = await requireUser(`/pedido/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
   const st = ORDER_STATUS[order.status];
-  const eligibility = refundEligibility(order, order.event, order.tickets, new Date(), refundPolicyFromEnv());
+  const eligibility = refundEligibility(order, order.event, order.tickets, new Date());
   const refund = refundView(order.status, order.refunds);
   const isRefund = order.status === "REFUND_PENDING" || order.status === "REFUNDED";
   const Icon = order.status === "PAID" ? CheckCircle2 : order.status === "PENDING_PAYMENT" ? Clock : isRefund ? RotateCcw : XCircle;
