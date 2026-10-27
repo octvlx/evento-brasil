@@ -2,13 +2,16 @@ import "server-only";
 import type { EventStatus } from "@/generated/prisma/client";
 import { eventInputSchema, ticketTypeInputSchema, type EventInput, type TicketTypeInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
+import { commissionPerUnit } from "@/features/fees/policy";
 import { zonedLocalToUtc } from "@/lib/datetime";
+import { formatBRL } from "@/lib/money";
 import { slugify } from "@/lib/utils";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
 import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
 import { randomToken } from "../crypto";
 import { AppError, invalidState, notFound } from "../errors";
+import { resolveCommissionRule } from "./commission";
 
 /** Transições permitidas do ciclo de vida do evento. */
 export const EVENT_TRANSITIONS: Record<EventStatus, readonly EventStatus[]> = {
@@ -114,6 +117,24 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
   });
 }
 
+/**
+ * Com a comissão descontada do repasse (bearer ORGANIZER), um preço menor que a
+ * comissão por unidade daria repasse negativo e o ingresso nunca poderia ser
+ * vendido (createOrder recusa). Avisa já no cadastro. Gratuito (0) é sempre válido.
+ */
+async function assertPriceCoversCommission(tx: Tx, organizationId: string, eventId: string, priceCents: number) {
+  if (priceCents === 0) return;
+  const rule = await resolveCommissionRule(tx, organizationId, eventId);
+  if (rule.bearer !== "ORGANIZER") return;
+  const commission = commissionPerUnit(priceCents, rule);
+  if (commission > priceCents) {
+    throw new AppError(
+      "VALIDATION",
+      `A taxa da plataforma para este preço é ${formatBRL(commission)}, maior que o próprio preço. Aumente o preço ou torne o ingresso gratuito.`,
+    );
+  }
+}
+
 export async function upsertTicketType(db: Db, actor: Actor, eventId: string, raw: TicketTypeInput) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
   const input = ticketTypeInputSchema.parse(raw);
@@ -139,11 +160,13 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
     if (input.id) {
       const tt = await tx.ticketType.findFirst({ where: { id: input.id, eventId } });
       if (!tt) throw notFound("Tipo de ingresso não encontrado.");
+      if (tt.priceCents !== input.priceCents) await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
       if (input.quantityTotal < tt.quantitySold + tt.quantityReserved)
         throw new AppError("VALIDATION", `Quantidade mínima: ${tt.quantitySold + tt.quantityReserved} (vendidos + reservados).`);
       if (tt.quantitySold > 0 && tt.kind !== input.kind) throw new AppError("VALIDATION", "Não é possível mudar o tipo após vendas.");
       result = await tx.ticketType.update({ where: { id: tt.id }, data });
     } else {
+      await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
       const count = await tx.ticketType.count({ where: { eventId } });
       result = await tx.ticketType.create({ data: { ...data, eventId, sortOrder: count } });
     }
