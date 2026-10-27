@@ -28,7 +28,8 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Action
   const client = await clientKey();
   return toActionResult(async () => {
     assertCanCreateOrder(user.id, client);
-    const order = await createOrder(db, user, input, { providerIsSimulated: getPaymentAdapter().isSimulated });
+    const adapter = getPaymentAdapter();
+    const order = await createOrder(db, user, input, { providerIsSimulated: adapter.isSimulated, paymentsAvailable: adapter.supportedMethods.length > 0 });
     return { orderId: order.id };
   });
 }

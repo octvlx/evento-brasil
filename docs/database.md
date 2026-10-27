@@ -97,6 +97,11 @@ reconciliação): `TrackingLink.couponId` da mesma organização,
 do cupom. Cupom ou link usado não se apaga (`Restrict` a partir de `Order`);
 desative com `disabledAt`/`archivedAt`.
 
+`CancellationRequest(orderId, eventId, organizationId)` referencia a mesma
+tripla em `Order`, impedindo cancelamentos associados a outro evento ou tenant.
+A migração aditiva `20261027200000_cancellation_order_integrity` valida os dados
+existentes e aborta se encontrar inconsistências, sem reescrever histórico.
+
 ## Objetos SQL escritos à mão
 
 O Prisma não modela os objetos abaixo. Eles vivem só nas migrações e são

@@ -33,9 +33,10 @@ interface Props {
   buyerPaysFee: boolean;
   user: { name: string; email: string } | null;
   halfPriceLeft: number | null;
+  paymentsAvailable: boolean;
 }
 
-export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user, halfPriceLeft }: Props) {
+export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user, halfPriceLeft, paymentsAvailable }: Props) {
   const router = useRouter();
   const [qty, setQty] = useState<Record<string, number>>({});
   const [attendees, setAttendees] = useState<Record<string, string[]>>({});
@@ -95,6 +96,7 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
 
   return (
     <div className="space-y-4">
+      {!paymentsAvailable && <Alert variant="warning">A compra de ingressos pagos está temporariamente indisponível. Ingressos gratuitos continuam disponíveis.</Alert>}
       <ul className="space-y-3">
         {tickets.map((t) => {
           const n = qty[t.id] ?? 0;
@@ -113,8 +115,8 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
                   </p>
                   {breakdown && <p className="text-xs text-muted-foreground">{breakdown} de serviço</p>}
                 </div>
-                {!t.onSale || soldOut ? (
-                  <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{soldOut ? "Esgotado" : "Fora do período"}</span>
+                {!t.onSale || soldOut || (!paymentsAvailable && t.priceCents > 0) ? (
+                  <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{soldOut ? "Esgotado" : !t.onSale ? "Fora do período" : "Indisponível"}</span>
                 ) : (
                   <div className="flex shrink-0 items-center gap-2" role="group" aria-label={`Quantidade de ${t.name}`}>
                     <Button type="button" variant="outline" size="icon" onClick={() => change(t, -1)} disabled={n === 0} aria-label="Diminuir">

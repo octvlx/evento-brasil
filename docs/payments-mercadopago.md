@@ -5,6 +5,18 @@ Nenhuma chamada à API foi implementada nem testada. Os pontos abaixo devem ser
 confirmados na documentação oficial vigente **e** com o time comercial do
 Mercado Pago (elegibilidade da conta de marketplace) antes de implementar.
 
+O adaptador anuncia zero métodos enquanto estiver desabilitado. A seleção de
+ingressos e o checkout mostram indisponibilidade, e a ação de criar pedido
+recusa pedidos pagos antes de reservar estoque. Pedidos gratuitos continuam
+funcionando. Isso não habilita nem certifica a integração real.
+
+Falhas ao criar uma cobrança são tratadas como resultado incerto: a tentativa
+permanece `PENDING`, sem permitir outra cobrança, até a reconciliação localizar
+a referência original ou confirmar que ela não existe. Adaptadores sem consulta
+por referência deixam a tentativa para revisão manual. Uma consulta que ainda
+não pode confirmar a ausência (por exemplo, por consistência eventual) deve
+lançar erro, nunca retornar `null`.
+
 ## O que o sistema já espera de qualquer provedor
 
 Contrato em `src/server/payments/types.ts`:
