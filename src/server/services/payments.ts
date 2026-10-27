@@ -44,7 +44,11 @@ export async function startPayment(
     if (pending) {
       // PIX pendente é reaproveitado (mesmo QR). Qualquer outra combinação aguardaria
       // uma tentativa em andamento — recusada para não gerar cobrança dupla.
-      if (pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id && pending.providerPaymentId) return { kind: "reuse", payment: pending } as const;
+      const samePix = pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id;
+      if (samePix && pending.providerPaymentId) return { kind: "reuse", payment: pending } as const;
+      // PIX ainda sendo criado por outra requisição (duplo clique): espera o id do
+      // provedor fora da transação. Se a criação ficou incerta, não reaproveita.
+      if (samePix && !pending.failureReason) return { kind: "await", paymentId: pending.id } as const;
       throw invalidState(
         pending.method === "PIX"
           ? "Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva."
@@ -65,6 +69,7 @@ export async function startPayment(
     return { kind: "new", payment, order } as const;
   }, TX_OPTIONS);
   if (decision.kind === "reuse") return decision.payment;
+  if (decision.kind === "await") return awaitPixInFlight(db, decision.paymentId);
   const { payment, order } = decision;
 
   // Chamada externa FORA da transação; a chave de idempotência torna a repetição segura.
@@ -103,6 +108,26 @@ export async function startPayment(
   // Resultado síncrono (ex.: cartão) é revalidado na consulta autoritativa.
   if (created.status !== "PENDING") await syncPaymentFromProvider(db, adapter, created.providerPaymentId);
   return db.payment.findUniqueOrThrow({ where: { id: updated.id } });
+}
+
+const PIX_IN_FLIGHT_WAIT_MS = 10_000;
+const PIX_IN_FLIGHT_POLL_MS = 100;
+
+/**
+ * Espera a requisição concorrente terminar de criar o PIX e devolve o mesmo
+ * pagamento (mesmo QR). Só reaproveita quando o provedor confirmou a cobrança
+ * (`providerPaymentId`); criação incerta, falha ou demora → recusa, sem nova cobrança.
+ */
+async function awaitPixInFlight(db: Db, paymentId: string) {
+  const deadline = Date.now() + PIX_IN_FLIGHT_WAIT_MS;
+  for (;;) {
+    const p = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    if (p.providerPaymentId && p.status !== "FAILED" && p.status !== "CANCELLED" && p.status !== "EXPIRED") return p;
+    if (p.failureReason || p.status !== "PENDING" || Date.now() >= deadline) {
+      throw invalidState("Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva.");
+    }
+    await new Promise((r) => setTimeout(r, PIX_IN_FLIGHT_POLL_MS));
+  }
 }
 
 /** Consulta o provedor e aplica o status retornado. */
