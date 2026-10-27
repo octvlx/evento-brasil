@@ -11,7 +11,9 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/tickets/[code]/
   if (!owner || owner.userId !== user.id) return new Response("Não encontrado", { status: 404 });
   const tickets = await loadPdfTickets(db, { code });
   if (!tickets.length) return new Response("Ingresso indisponível", { status: 410 });
-  const pdf = await renderTicketsPdf(tickets);
+  // O tipo do ingresso (meia-entrada exige documento na portaria) não vem de loadPdfTickets.
+  const kinds = await db.issuedTicket.findMany({ where: { code: { in: tickets.map((t) => t.code) } }, select: { code: true, ticketType: { select: { kind: true } } } });
+  const pdf = await renderTicketsPdf(tickets.map((t) => ({ ...t, kind: kinds.find((k) => k.code === t.code)?.ticketType.kind })));
   return new Response(Buffer.from(pdf), {
     headers: {
       "content-type": "application/pdf",
