@@ -1,5 +1,6 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { CreateOrderInput } from "@/features/schemas";
@@ -12,14 +13,26 @@ import { cancelPendingOrder, createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/server/services/payments";
 import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
+import { ATTR_COOKIE, attributionCookieOptions, decodeAttribution, encodeAttribution, utmsFromParams } from "./attribution";
 
 export async function createOrderAction(input: CreateOrderInput): Promise<ActionResult<{ orderId: string }>> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Entre na sua conta para continuar.", code: "UNAUTHENTICATED" };
+  // Atribuição só do cookie primário eb_attr; a enviada pelo cliente é descartada.
+  const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
   return toActionResult(async () => {
-    const order = await createOrder(db, user, input, { providerIsSimulated: getPaymentAdapter().isSimulated });
+    const order = await createOrder(db, user, { ...input, attribution }, { providerIsSimulated: getPaymentAdapter().isSimulated });
     return { orderId: order.id };
   });
+}
+
+/**
+ * UTMs soltos na URL do evento (sem link rastreado): grava no mesmo cookie de
+ * atribuição, substituindo o anterior (último clique vence).
+ */
+export async function captureUtmAction(params: Record<string, string>): Promise<void> {
+  const utms = utmsFromParams(params);
+  if (utms) (await cookies()).set(ATTR_COOKIE, encodeAttribution(utms), attributionCookieOptions());
 }
 
 export async function startPaymentAction(orderId: string, method: "PIX" | "CREDIT_CARD", simulatedCardOutcome?: "approve" | "decline") {

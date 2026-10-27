@@ -110,7 +110,7 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
       <div className="mt-8 grid gap-6 md:grid-cols-2">
         <Card className="p-5">
           <h2 className="mb-3 font-display text-lg font-bold">Resumo</h2>
-          <OrderSummary items={order.items} subtotalCents={order.subtotalCents} serviceFeeCents={order.serviceFeeCents} totalCents={order.totalCents} />
+          <OrderSummary items={order.items} subtotalCents={order.subtotalCents} serviceFeeCents={order.serviceFeeCents} totalCents={order.totalCents} discountCents={order.discountCents} couponCode={order.couponCode} />
         </Card>
         <Card className="space-y-3 p-5">
           <h2 className="font-display text-lg font-bold">Reembolso</h2>

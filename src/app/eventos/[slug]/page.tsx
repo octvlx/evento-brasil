@@ -7,10 +7,13 @@ import { Accessibility, CalendarDays, ChevronRight, Clock, MapPin, Share2, Shiel
 import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
+import { cookies } from "next/headers";
 import { TicketSelector } from "@/features/orders/ticket-selector";
+import { UtmCapture } from "@/features/orders/utm-capture";
+import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
-import { getPublicEvent } from "@/server/services/catalog";
+import { getPublicEvent, trackingLinkCouponCode } from "@/server/services/catalog";
 import { resolveCommissionRule } from "@/server/services/commission";
 import { formatAddress } from "@/lib/br";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
@@ -57,6 +60,9 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   if (!data) notFound();
   const { event, availability, capacityLeft, halfPriceLeft } = data;
   const user = await getCurrentUser();
+  // Cupom pré-aplicado pelo link rastreado desta visita (cookie eb_attr), se for deste evento.
+  const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
+  const linkCoupon = attribution?.trackingLinkId ? await trackingLinkCouponCode(db, attribution.trackingLinkId, event.id) : null;
   const rule = await resolveCommissionRule(db, event.organizationId, event.id);
   const now = new Date();
   const city = event.venue?.city ?? event.city;
@@ -205,7 +211,9 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               buyerFee={rule.bearer === "BUYER" ? { percentBps: rule.percentBps, fixedCents: rule.fixedCentsPerTicket } : null}
               user={user ? { name: user.name, email: user.email } : null}
               halfPriceLeft={halfPriceLeft}
+              initialCouponCode={linkCoupon}
             />
+            <UtmCapture />
           </Card>
         </aside>
       </div>
