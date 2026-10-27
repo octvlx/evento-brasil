@@ -157,7 +157,7 @@ async function ledgerBalances(db: Db, where: { organizationId?: string; order?: 
     chargebackCents: sum("CUSTOMER_FUNDS", "CREDIT", "CHARGEBACK"),
     platformFeeCents:
       sum("PLATFORM_COMMISSION", "CREDIT") - sum("PLATFORM_COMMISSION", "DEBIT") + sum("PLATFORM_SERVICE_FEE", "CREDIT") - sum("PLATFORM_SERVICE_FEE", "DEBIT"),
-    processingFeeCents: sum("PROCESSING_FEES", "CREDIT"),
+    processingFeeCents: sum("PROCESSING_FEES", "CREDIT") - sum("PROCESSING_FEES", "DEBIT"),
     organizerNetCents: sum("ORGANIZER_PAYABLE", "CREDIT") - sum("ORGANIZER_PAYABLE", "DEBIT"),
     includesSimulated: simulated > 0,
   };

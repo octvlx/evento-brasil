@@ -42,6 +42,10 @@ export interface ProviderPaymentSnapshot {
   rawStatus: string;
   amountCents: number;
   processingFeeCents: number | null;
+  /** Instruções da cobrança existente, inclusive na recuperação por referência. */
+  pixCopyPaste?: string;
+  pixQrCodeBase64?: string;
+  expiresAt?: Date;
 }
 
 export interface RefundResult {
