@@ -26,17 +26,24 @@ describe("QR code", () => {
 });
 
 describe("elegibilidade de reembolso", () => {
-  const cfg = { windowDays: 7, minHoursBeforeEvent: 48 };
   const now = new Date("2026-11-01T12:00:00Z");
   const paid = { status: "PAID", paidAt: new Date("2026-10-30T12:00:00Z"), totalCents: 1000 };
-  const event = { status: "PUBLISHED", startsAt: new Date("2026-11-20T23:00:00Z") };
-  it("elegível dentro das janelas", () => expect(refundEligibility(paid, event, [{ status: "VALID" }], now, cfg).eligible).toBe(true));
+  const event = { status: "PUBLISHED", startsAt: new Date("2026-11-20T23:00:00Z"), refundWindowDays: 7, refundMinHoursBeforeEvent: 48 };
+  it("elegível dentro das janelas", () => expect(refundEligibility(paid, event, [{ status: "VALID" }], now).eligible).toBe(true));
   it("fora do prazo da compra", () =>
-    expect(refundEligibility({ ...paid, paidAt: new Date("2026-10-20T12:00:00Z") }, event, [], now, cfg).eligible).toBe(false));
+    expect(refundEligibility({ ...paid, paidAt: new Date("2026-10-20T12:00:00Z") }, event, [], now).eligible).toBe(false));
   it("muito perto do evento", () =>
-    expect(refundEligibility(paid, { ...event, startsAt: new Date("2026-11-02T12:00:00Z") }, [], now, cfg).eligible).toBe(false));
-  it("ingresso já utilizado", () => expect(refundEligibility(paid, event, [{ status: "CHECKED_IN" }], now, cfg).eligible).toBe(false));
-  it("pedido não pago", () => expect(refundEligibility({ ...paid, status: "PENDING_PAYMENT" }, event, [], now, cfg).eligible).toBe(false));
+    expect(refundEligibility(paid, { ...event, startsAt: new Date("2026-11-02T12:00:00Z") }, [], now).eligible).toBe(false));
+  it("ingresso já utilizado", () => expect(refundEligibility(paid, event, [{ status: "CHECKED_IN" }], now).eligible).toBe(false));
+  it("pedido não pago", () => expect(refundEligibility({ ...paid, status: "PENDING_PAYMENT" }, event, [], now).eligible).toBe(false));
+  it("usa os prazos do próprio evento", () => {
+    // Pago há 2 dias, evento em 19 dias: fora com 1 dia de prazo; fora com 500h de antecedência.
+    expect(refundEligibility(paid, { ...event, refundWindowDays: 1 }, [], now)).toEqual({ eligible: false, reason: "O prazo de 1 dia após a compra terminou." });
+    expect(refundEligibility(paid, { ...event, refundMinHoursBeforeEvent: 500 }, [], now)).toEqual({ eligible: false, reason: "Reembolsos só até 500h antes do evento." });
+    // Prazos mais generosos tornam elegível o que o padrão recusaria.
+    expect(refundEligibility({ ...paid, paidAt: new Date("2026-10-20T12:00:00Z") }, { ...event, refundWindowDays: 30 }, [], now).eligible).toBe(true);
+    expect(refundEligibility(paid, { ...event, startsAt: new Date("2026-11-02T12:00:00Z"), refundMinHoursBeforeEvent: 0 }, [], now).eligible).toBe(true);
+  });
 });
 
 describe("disponibilidade e papéis", () => {

@@ -148,7 +148,8 @@ test.describe("preço total com taxa (Decreto 13.108/2026)", () => {
 
     // Pedido pendente: o canal de cancelamento aparece; cancela para liberar a reserva.
     await page.goto(page.url().replace("/checkout/", "/pedido/"));
-    await expect(page.getByRole("link", { name: /Cancelar compra \/ arrependimento/ })).toHaveAttribute("href", "/ajuda#cancelamento");
+    // O rodapé tem um link com o mesmo nome: só o da página do pedido.
+    await expect(page.getByRole("main").getByRole("link", { name: /Cancelar compra \/ arrependimento/ })).toHaveAttribute("href", "/ajuda#cancelamento");
     await page.getByRole("button", { name: "Cancelar pedido" }).click();
     await expect(page.getByRole("button", { name: "Cancelar pedido" })).toHaveCount(0);
   });

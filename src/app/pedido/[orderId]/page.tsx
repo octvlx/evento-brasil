@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { CheckCircle2, Clock, RotateCcw, Ticket, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Download, RotateCcw, Ticket, XCircle } from "lucide-react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { OrderSummary } from "@/components/site/order-summary";
@@ -11,7 +11,7 @@ import { cancelOrderAction } from "@/features/orders/actions";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
-import { refundEligibility, refundPolicyFromEnv } from "@/server/services/refunds";
+import { refundEligibility } from "@/server/services/refunds";
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { CANCEL_HELP_HREF } from "@/lib/help-links";
@@ -34,7 +34,7 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
   const user = await requireUser(`/pedido/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
   const st = ORDER_STATUS[order.status];
-  const eligibility = refundEligibility(order, order.event, order.tickets, new Date(), refundPolicyFromEnv());
+  const eligibility = refundEligibility(order, order.event, order.tickets, new Date());
   const refund = refundView(order.status, order.refunds);
   const isRefund = order.status === "REFUND_PENDING" || order.status === "REFUNDED";
   const Icon = order.status === "PAID" ? CheckCircle2 : order.status === "PENDING_PAYMENT" ? Clock : isRefund ? RotateCcw : XCircle;
@@ -86,7 +86,14 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
 
       {order.tickets.length > 0 && (
         <section className="mt-8">
-          <h2 className="mb-3 font-display text-xl font-bold">Ingressos</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-display text-xl font-bold">Ingressos</h2>
+            {order.tickets.some((t) => t.status !== "REVOKED") && (
+              <a href={`/api/orders/${order.id}/pdf`} target="_blank" rel="noopener" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                <Download aria-hidden /> Salvar todos (PDF)
+              </a>
+            )}
+          </div>
           <ul className="grid gap-3 sm:grid-cols-2">
             {order.tickets.map((t) => {
               const ts = TICKET_STATUS[t.status];

@@ -32,7 +32,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
   const order = await getOrderForBuyer(db, user, orderId);
   if (order.status !== "PENDING_PAYMENT") redirect(`/pedido/${orderId}`);
   const step = checkoutStep(order.payments);
-  const confirmingPayment = order.payments.some((p) => p.status === "PENDING" && !p.providerPaymentId);
+  const confirmingPayment = order.payments.some((p) => p.status === "PENDING" && (!p.providerPaymentId || (p.method === "PIX" && !p.pixCopyPaste && !p.pixQrCodeBase64)));
   const pix = step === "pix" ? order.payments.find((p) => p.status === "PENDING" && p.method === "PIX") : undefined;
   // Para PIX real o provedor envia o QR; no simulado geramos o QR do texto "SIMULADO".
   const qrDataUrl = pix?.pixQrCodeBase64
