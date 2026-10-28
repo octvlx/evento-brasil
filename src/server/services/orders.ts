@@ -245,10 +245,11 @@ async function resolveAttributionTx(tx: Tx, eventId: string, a: CreateOrderInput
  * decisão, chame com a trava do evento (`lockEvent`) já tomada: é a mesma trava
  * que serializa `createOrder`.
  */
-export async function ticketsHeldByAccount(client: Db | Tx, userId: string, eventId: string): Promise<number> {
+export async function ticketsHeldByAccount(client: Db | Tx, userId: string, eventId: string, now = new Date()): Promise<number> {
   const [held, pending] = await Promise.all([
     client.issuedTicket.count({ where: { eventId, holderUserId: userId, status: { in: ["VALID", "CHECKED_IN"] } } }),
-    client.orderItem.aggregate({ where: { order: { eventId, userId, status: "PENDING_PAYMENT" } }, _sum: { quantity: true } }),
+    // Reserva vencida ainda não liberada pela manutenção não conta.
+    client.orderItem.aggregate({ where: { order: { eventId, userId, status: "PENDING_PAYMENT", expiresAt: { gt: now } } }, _sum: { quantity: true } }),
   ]);
   return held + (pending._sum.quantity ?? 0);
 }
@@ -327,7 +328,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       // Limite por conta (R4). Sob a trava do evento e depois de liberar o pedido
       // pendente anterior do comprador, que seria substituído por este.
       if (event.maxTicketsPerAccount !== null) {
-        const held = await ticketsHeldByAccount(tx, actor.id, event.id);
+        const held = await ticketsHeldByAccount(tx, actor.id, event.id, now);
         if (held + requested > event.maxTicketsPerAccount) {
           const left = Math.max(0, event.maxTicketsPerAccount - held);
           throw new AppError(

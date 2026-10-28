@@ -230,7 +230,8 @@ todos terminando com `checkFinancialInvariants() == []`).
 ### Limite de ingressos por conta (R4, L4b)
 - `ticketsHeldByAccount(client, userId, eventId)` em `@/server/services/orders`:
   ingressos `VALID`/`CHECKED_IN` com `holderUserId = userId` + quantidades dos
-  pedidos `PENDING_PAYMENT` da conta no evento.
+  pedidos `PENDING_PAYMENT` da conta no evento com reserva não vencida (`expiresAt > now`).
+  Ingresso comprado e transferido conta só para o novo titular.
 - `createOrder` recusa com `LIMIT_EXCEEDED` quando `ticketsHeldByAccount +
   quantidade pedida > Event.maxTicketsPerAccount` (NULL = sem limite), sob a
   trava do evento e depois de liberar o pedido pendente anterior do comprador.
