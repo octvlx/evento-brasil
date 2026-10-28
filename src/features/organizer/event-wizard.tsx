@@ -639,6 +639,7 @@ function Review(
       <Section title="Ingressos e preços" n={3} onEdit={props.onEdit}>
         <Row k="Capacidade">{v.capacity}</Row>
         <Row k="Cota de meia">{v.halfPriceQuotaPercent ? `${v.halfPriceQuotaPercent}%` : "Não configurada"}</Row>
+        <Row k="Limite por conta">{v.maxTicketsPerAccount ? `${v.maxTicketsPerAccount} ingresso(s)` : "Sem limite"}</Row>
         <Row k="Vendas">
           {fmt(v.salesStartLocal)} até {fmt(v.salesEndLocal)}
         </Row>

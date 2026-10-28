@@ -105,6 +105,18 @@ export const eventInputSchema = z
     ageRestriction: z.coerce.number().int().min(0).max(21),
     capacity: z.coerce.number().int().positive("Capacidade deve ser positiva").max(1_000_000),
     halfPriceQuotaPercent: z.coerce.number().min(0).max(100).optional(),
+    // R4: vazio = sem limite. Com vendas, o servidor recusa valor abaixo do que uma conta já tem.
+    maxTicketsPerAccount: z.preprocess(
+      (v) => (v === "" || v === null ? undefined : v),
+      z.coerce
+        .number({ message: "Informe um número de ingressos" })
+        .int("Use um número inteiro de ingressos")
+        .min(1, "O limite deve ser de pelo menos 1 ingresso")
+        .max(1000, "Máximo de 1000 ingressos por conta")
+        .optional(),
+    ),
+    // Só exigido (no servidor) em alteração relevante de evento publicado com vendas (R8).
+    changeReason: optionalText(2000),
     refundPolicy: trimmed(10, 4000, "Descreva a política de reembolso"),
     refundWindowDays: z.coerce
       .number({ message: "Informe os dias após a compra" })

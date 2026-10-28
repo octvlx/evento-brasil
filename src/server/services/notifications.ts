@@ -3,8 +3,10 @@
 import "server-only";
 import type { Db } from "../db";
 import { env } from "../env";
-import { escapeHtml, getEmailAdapter } from "../email";
-import { formatEventDateTime } from "@/lib/datetime";
+import { escapeHtml, getEmailAdapter, type EmailAdapter } from "../email";
+import { audit } from "../audit";
+import { describeChangeValue, isRelevantField, RELEVANT_FIELD_LABELS, type ChangeSnapshotJson } from "@/features/organizer/event-change-rules";
+import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { renderTicketsPdf, type PdfTicket } from "../tickets/pdf";
 import { appleWallet, buildApplePass, googleWallet, toWalletTickets } from "../tickets/wallet";
@@ -88,4 +90,78 @@ ${walletHtml}
 
 export function notifyOrderPaid(db: Db, orderId: string) {
   sendOrderTicketsEmail(db, orderId).catch((err) => console.error(`[notificações] falha ao enviar ingressos do pedido ${orderId}:`, err));
+}
+
+/**
+ * Avisa compradores (pedido pago antes da alteração) e titulares atuais dos ingressos
+ * sobre uma alteração relevante ou a prorrogação da janela de reembolso (R8).
+ * Um e-mail por endereço. Registra `event.change_notified` com a quantidade enviada.
+ */
+export async function notifyEventChange(db: Db, changeId: string, adapter: EmailAdapter = getEmailAdapter()): Promise<{ sent: number; failed: number }> {
+  const change = await db.eventChange.findUniqueOrThrow({ where: { id: changeId }, include: { event: true, extends: true } });
+  const root = change.extends ?? change;
+  const orders = await db.order.findMany({
+    where: { eventId: change.eventId, status: "PAID", paidAt: { lt: root.createdAt } },
+    select: { buyerEmail: true, tickets: { where: { status: { not: "REVOKED" } }, select: { holder: { select: { email: true } } } } },
+  });
+  const recipients = [...new Set(orders.flatMap((o) => [o.buyerEmail, ...o.tickets.map((t) => t.holder.email)]).map((e) => e.trim().toLowerCase()))];
+  const ev = change.event;
+  const tz = ev.timezone;
+  const title = escapeHtml(ev.title);
+  const until = change.refundUntil ? formatDateTimeShort(change.refundUntil, tz) : null;
+  const ordersUrl = `${env().APP_URL}/meus-pedidos`;
+  const before = change.before as ChangeSnapshotJson;
+  const after = change.after as ChangeSnapshotJson;
+  const lines = change.changedFields.filter(isRelevantField).map((f) => ({
+    label: RELEVANT_FIELD_LABELS[f],
+    from: describeChangeValue(f, before, tz),
+    to: describeChangeValue(f, after, tz),
+  }));
+  const isExtension = !!change.extendsChangeId;
+  const subject = isExtension ? `Prazo de reembolso prorrogado: ${ev.title}` : `Alteração no evento: ${ev.title}`;
+  const intro = isExtension
+    ? `<p>O organizador prorrogou o prazo para pedir reembolso integral por causa da alteração de <strong>${title}</strong>.</p>`
+    : `<p>O organizador alterou <strong>${title}</strong>, evento para o qual você tem ingresso.</p>`;
+  const html = `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#14112b">
+<h1 style="color:#312e81">${isExtension ? "Prazo de reembolso prorrogado" : "O evento mudou"}</h1>
+${intro}
+${lines.length ? `<ul>${lines.map((l) => `<li><strong>${escapeHtml(l.label)}:</strong> ${escapeHtml(l.from)} → <strong>${escapeHtml(l.to)}</strong></li>`).join("")}</ul>` : ""}
+<p><strong>Motivo informado pelo organizador:</strong> ${escapeHtml(change.reason)}</p>
+${until ? `<p>Se não puder ou não quiser ir, você pode pedir o <strong>reembolso integral</strong> até <strong>${escapeHtml(until)}</strong> (horário do evento) em <a href="${ordersUrl}">Meus pedidos</a>.</p>` : ""}
+<p>Se continuar com o ingresso, não precisa fazer nada: ele segue válido.</p>
+</body></html>`;
+  const text = [
+    isExtension ? "Prazo de reembolso prorrogado" : "O evento mudou",
+    ev.title,
+    ...lines.map((l) => `${l.label}: ${l.from} -> ${l.to}`),
+    `Motivo: ${change.reason}`,
+    until ? `Reembolso integral até ${until} (horário do evento): ${ordersUrl}` : "",
+    "Se continuar com o ingresso, não precisa fazer nada.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  let sent = 0;
+  let failed = 0;
+  for (const to of recipients) {
+    try {
+      await adapter.send({ to, subject, html, text });
+      sent++;
+    } catch (err) {
+      failed++;
+      console.error(`[notificações] falha ao avisar ${to} da alteração ${changeId}:`, err);
+    }
+  }
+  await audit(db, {
+    organizationId: change.organizationId,
+    action: "event.change_notified",
+    entityType: "EventChange",
+    entityId: change.id,
+    metadata: { recipients: recipients.length, sent, failed },
+  });
+  return { sent, failed };
+}
+
+export function notifyEventChangeInBackground(db: Db, changeId: string) {
+  if (env().NODE_ENV === "test") return;
+  notifyEventChange(db, changeId).catch((err) => console.error(`[notificações] falha ao avisar a alteração ${changeId}:`, err));
 }
