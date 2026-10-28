@@ -339,10 +339,7 @@ describe("V1.4 — limite por conta com transferências, cupom e pedidos pendent
     // Quem deu e não teve aceite continua com o ingresso; nenhum some.
     expect(await db.issuedTicket.count({ where: { eventId: event.id, status: "VALID" } })).toBe(6 + results.slice(6).filter((r) => r.status === "fulfilled").length);
   });
-  // TODO(check-in): `heldByAccount` em transfers.ts chama `ticketsHeldByAccount(tx, user, event)`
-  // sem repassar o `now` do aceite; com relógio injetado, uma reserva já vencida (e ainda não
-  // liberada pela manutenção) conta contra o limite. Em produção `now` = relógio (LOW).
-  it.fails("aceite com relógio injetado ignora reserva vencida não liberada (achado LOW, dono: check-in)", async () => {
+  it("aceite com relógio injetado ignora reserva vencida não liberada", async () => {
     const { event, buyer: a, tickets } = await paidSetup({ quantity: 2, maxTicketsPerAccount: 3 });
     const b = await makeUser();
     await transferAccepted(a, tickets[0].id, b);
