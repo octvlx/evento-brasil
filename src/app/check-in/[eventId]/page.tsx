@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { Skeleton } from "@/components/ui/primitives";
@@ -16,6 +19,9 @@ export const metadata: Metadata = { title: "Leitor de check-in", robots: { index
 export default function ScannerPage({ params }: PageProps<"/check-in/[eventId]">) {
   return (
     <div className="mx-auto max-w-md px-4 py-6">
+      <Link href="/check-in" className={buttonVariants({ variant: "ghost", className: "mb-4" })}>
+        <ArrowLeft aria-hidden /> Voltar aos eventos
+      </Link>
       <Suspense fallback={<Skeleton className="h-[640px]" />}>
         <Content params={params} />
       </Suspense>
