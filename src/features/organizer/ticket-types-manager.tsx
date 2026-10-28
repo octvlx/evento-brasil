@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Copy, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import { TICKET_KINDS, type TicketTypeInput } from "@/features/schemas";
@@ -29,16 +29,35 @@ export interface ManagedTicketType {
 
 const empty = { name: "", description: "", kind: "GENERAL", price: "", quantityTotal: "100", minPerOrder: "1", maxPerOrder: "10", salesStartLocal: "", salesEndLocal: "", requiresAttendeeInfo: false, isHidden: false };
 
-export function TicketTypesManager({ eventId, items, locked }: { eventId: string; items: ManagedTicketType[]; locked?: boolean }) {
+/** Estimativa por ingresso calculada no servidor com a regra de comissão vigente. */
+export interface TicketEstimate {
+  buyerPaysCents: number;
+  organizerGetsCents: number;
+  bearer: "ORGANIZER" | "BUYER";
+}
+
+export function TicketTypesManager({
+  eventId,
+  items,
+  locked,
+  estimates,
+  allowDuplicate,
+}: {
+  eventId: string;
+  items: ManagedTicketType[];
+  locked?: boolean;
+  estimates?: Record<string, TicketEstimate>;
+  allowDuplicate?: boolean;
+}) {
   const [editing, setEditing] = useState<string | null>(null);
   const [f, setF] = useState(empty);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
-  const edit = (t: ManagedTicketType) => {
-    setEditing(t.id);
+  const edit = (t: ManagedTicketType, copy = false) => {
+    setEditing(copy ? "new" : t.id);
     setF({
-      name: t.name,
+      name: copy ? `${t.name} (cópia)` : t.name,
       description: t.description ?? "",
       kind: t.kind,
       price: centsToInput(t.priceCents),
@@ -97,12 +116,23 @@ export function TicketTypesManager({ eventId, items, locked }: { eventId: string
               <p className="text-xs text-muted-foreground">
                 {TICKET_KIND[t.kind]} · {t.priceCents ? formatBRL(t.priceCents) : "Gratuito"} · vendidos {t.quantitySold} · reservados {t.quantityReserved} · reembolsados {t.quantityRefunded} · total {t.quantityTotal}
               </p>
+              {estimates?.[t.id] && (
+                <p className="text-xs text-muted-foreground">
+                  Comprador paga {formatBRL(estimates[t.id].buyerPaysCents)} · você recebe ≈ {formatBRL(estimates[t.id].organizerGetsCents)} por ingresso
+                  {estimates[t.id].bearer === "BUYER" ? " (taxa de serviço cobrada do comprador)" : " (taxa da plataforma descontada do repasse)"}
+                </p>
+              )}
             </div>
             {!locked && (
               <div className="flex gap-1">
                 <Button variant="ghost" size="sm" onClick={() => edit(t)}>
                   <Pencil aria-hidden /> Editar
                 </Button>
+                {allowDuplicate && (
+                  <Button variant="ghost" size="sm" onClick={() => edit(t, true)} aria-label={`Duplicar ${t.name}`}>
+                    <Copy aria-hidden /> Duplicar
+                  </Button>
+                )}
                 {t.quantitySold + t.quantityReserved === 0 && (
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => remove(t.id)} disabled={pending}>
                     <Trash2 aria-hidden /> Excluir

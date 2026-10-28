@@ -4,6 +4,8 @@ import { defineConfig, devices } from "@playwright/test";
 // (npm run db:seed). Usa o Microsoft Edge instalado (canal "msedge") por padrão;
 // defina PW_CHANNEL=chromium após `npx playwright install chromium` se preferir.
 const channel = process.env.PW_CHANNEL ?? "msedge";
+const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
+const port = new URL(baseURL).port || "3000";
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -13,7 +15,7 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+    baseURL,
     locale: "pt-BR",
     timezoneId: "America/Sao_Paulo",
     trace: "retain-on-failure",
@@ -23,9 +25,9 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 7"], channel: channel === "chromium" ? undefined : channel }, testMatch: /public\.spec\.ts/ },
   ],
   webServer: {
-    command: "npm run dev",
-    url: "http://localhost:3000",
-    reuseExistingServer: true,
+    command: `npm run dev -- --port ${port}`,
+    url: baseURL,
+    reuseExistingServer: process.env.E2E_ISOLATED !== "1",
     timeout: 180_000,
   },
 });

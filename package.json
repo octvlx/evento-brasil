@@ -20,6 +20,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
+    "test:e2e:isolated": "node scripts/test-e2e.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {
