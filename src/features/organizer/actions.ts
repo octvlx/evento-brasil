@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { OrgRole } from "@/generated/prisma/client";
-import type { EventInput, OrganizerApplicationInput, TicketTypeInput } from "@/features/schemas";
+import type { CouponInput, EventInput, OrganizerApplicationInput, TicketTypeInput, TrackingLinkInput } from "@/features/schemas";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
@@ -15,7 +15,11 @@ import { getPaymentAdapter } from "@/server/payments";
 import { getEmailAdapter, escapeHtml } from "@/server/email";
 import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
+import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
+import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, upsertTicketType } from "@/server/services/events";
+import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
+import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
 import {
   acceptInvitation,
   assignStaffToEvent,
@@ -76,6 +80,41 @@ export async function saveEventAction(eventId: string | null, input: EventInput)
   return toActionResult(async () => {
     const event = eventId ? await updateEvent(db, user, eventId, input) : await createEvent(db, user, await activeOrgId(user.id), input);
     return { id: event.id };
+  });
+}
+
+// ── Assistente de criação de evento ──
+
+/** Etapa 1: cria (ou recupera, pela mesma `draftKey`) o rascunho na organização ativa. */
+export async function startEventDraftAction(input: { draftKey: string } & Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
+  const user = await requireUser("/organizador/eventos/novo");
+  return toActionResult(async () => {
+    rateLimit(`event-draft:${user.id}`, 30, 60 * 60_000);
+    const { event } = await startEventDraft(db, user, await activeOrgId(user.id), input);
+    return { id: event.id };
+  });
+}
+
+export async function saveEventWizardStepAction(
+  eventId: string,
+  step: DataStep,
+  input: Record<string, unknown>,
+  complete: boolean,
+): Promise<ActionResult<{ completed: DataStep[]; savedAt: string }>> {
+  const user = await requireUser("/organizador/eventos/novo");
+  return toActionResult(async () => {
+    if (!isDataStep(step)) throw new AppError("VALIDATION", "Etapa inválida.");
+    const { progress } = await saveEventWizardStep(db, user, eventId, step, input, { complete });
+    return { completed: progress.completed, savedAt: new Date().toISOString() };
+  });
+}
+
+export async function recordWizardVisitAction(eventId: string, step: WizardStep): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos/novo");
+  return toActionResult(async () => {
+    if (!Number.isInteger(step) || step < 1 || step > 6) throw new AppError("VALIDATION", "Etapa inválida.");
+    await recordWizardVisit(db, user, eventId, step);
+    return undefined;
   });
 }
 
@@ -238,6 +277,59 @@ export async function removeMemberAction(userId: string): Promise<ActionResult> 
   const user = await requireUser("/organizador/configuracoes");
   const res = await toActionResult(async () => {
     await removeMember(db, user, await activeOrgId(user.id), userId);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+// ── Cupons e links de divulgação ──
+
+/** Cria (couponId nulo) ou edita um cupom; devolve avisos que não impedem salvar. */
+export async function saveCouponAction(eventId: string, couponId: string | null, input: CouponInput): Promise<ActionResult<{ warnings: string[] }>> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    const { warnings } = couponId ? await updateCoupon(db, user, couponId, input) : await createCoupon(db, user, eventId, input);
+    return { warnings };
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function setCouponDisabledAction(couponId: string, disabled: boolean): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await setCouponDisabled(db, user, couponId, disabled);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function deleteCouponAction(couponId: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await deleteCoupon(db, user, couponId);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function createTrackingLinkAction(eventId: string, input: TrackingLinkInput): Promise<ActionResult<{ url: string }>> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    const link = await createTrackingLink(db, user, eventId, input);
+    return { url: `${env().APP_URL}/r/${link.code}` };
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function setTrackingLinkArchivedAction(linkId: string, archived: boolean): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await setTrackingLinkArchived(db, user, linkId, archived);
     return undefined;
   });
   if (res.ok) refresh();

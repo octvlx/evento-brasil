@@ -1,6 +1,6 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { CreateOrderInput } from "@/features/schemas";
@@ -13,6 +13,7 @@ import { cancelPendingOrder, createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/server/services/payments";
 import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
+import { ATTR_COOKIE, attributionCookieOptions, decodeAttribution, encodeAttribution, utmsFromParams } from "./attribution";
 import { assertCanCreateOrder, assertCanStartPayment } from "./limits";
 
 // Mesmo critério das ações de autenticação. O primeiro x-forwarded-for só é
@@ -25,12 +26,24 @@ async function clientKey() {
 export async function createOrderAction(input: CreateOrderInput): Promise<ActionResult<{ orderId: string }>> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Entre na sua conta para continuar.", code: "UNAUTHENTICATED" };
+  // Atribuição só do cookie primário eb_attr; a enviada pelo cliente é descartada.
+  const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
   const client = await clientKey();
   return toActionResult(async () => {
     assertCanCreateOrder(user.id, client);
-    const order = await createOrder(db, user, input, { providerIsSimulated: getPaymentAdapter().isSimulated });
+    const adapter = getPaymentAdapter();
+    const order = await createOrder(db, user, { ...input, attribution }, { providerIsSimulated: adapter.isSimulated, paymentsAvailable: adapter.supportedMethods.length > 0 });
     return { orderId: order.id };
   });
+}
+
+/**
+ * UTMs soltos na URL do evento (sem link rastreado): grava no mesmo cookie de
+ * atribuição, substituindo o anterior (último clique vence).
+ */
+export async function captureUtmAction(params: Record<string, string>): Promise<void> {
+  const utms = utmsFromParams(params);
+  if (utms) (await cookies()).set(ATTR_COOKIE, encodeAttribution(utms), attributionCookieOptions());
 }
 
 export async function startPaymentAction(orderId: string, method: "PIX" | "CREDIT_CARD", simulatedCardOutcome?: "approve" | "decline") {

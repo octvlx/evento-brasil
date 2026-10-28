@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Suspense } from "react";
-import { connection } from "next/server";
 import { ProsePage } from "@/components/site/prose-page";
-import { refundPolicyFromEnv } from "@/server/services/refunds";
+import { DEFAULT_REFUND_POLICY } from "@/server/services/refunds";
 
 export const metadata: Metadata = { title: "Central de ajuda" };
 
@@ -31,9 +29,7 @@ export default function HelpPage() {
       <h2 id="cancelamento">Cancelar compra / arrependimento</h2>
       {/* TODO(jurídico): texto provisório — revisar prazos e redação (CDC art. 49, Decreto nº 13.108/2026; D3 em docs/conformidade-decreto-13108.md). */}
       <p className="rounded-xl border border-warning/40 bg-warning-soft px-4 py-3 text-sm text-warning">Texto provisório, pendente de revisão jurídica.</p>
-      <Suspense fallback={<p>Carregando a política de cancelamento…</p>}>
-        <CancellationPolicy />
-      </Suspense>
+      <CancellationPolicy />
       <h2>Reembolsos</h2>
       <p>Cada evento exibe sua política na página do evento. O pedido de reembolso e o andamento do estorno ficam na página do pedido (veja “Cancelar compra / arrependimento” acima).</p>
       <h2 id="contato">Atendimento</h2>
@@ -42,10 +38,9 @@ export default function HelpPage() {
   );
 }
 
-/** Prazos lidos da configuração em tempo de requisição — os mesmos que a elegibilidade de reembolso aplica. */
-async function CancellationPolicy() {
-  await connection();
-  const { windowDays, minHoursBeforeEvent } = refundPolicyFromEnv();
+/** Prazos padrão de um evento novo; cada evento pode definir os seus (mostrados na página do evento). */
+function CancellationPolicy() {
+  const { refundWindowDays: windowDays, refundMinHoursBeforeEvent: minHoursBeforeEvent } = DEFAULT_REFUND_POLICY;
   return (
     <>
       <p>
@@ -60,6 +55,10 @@ async function CancellationPolicy() {
         </li>
         <li>nenhum ingresso do pedido tenha sido usado na entrada.</li>
       </ul>
+      <p>
+        Esses são os prazos padrão. Cada evento pode definir prazos próprios, mostrados na página do evento e aplicados ao seu pedido; depois que há ingressos vendidos, o organizador só pode torná-los mais
+        favoráveis a você.
+      </p>
       <p>
         <strong>Como pedir:</strong> entre em{" "}
         <Link href="/meus-ingressos" className="font-semibold text-secondary hover:underline">

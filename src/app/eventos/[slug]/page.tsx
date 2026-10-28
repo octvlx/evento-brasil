@@ -7,10 +7,15 @@ import { Accessibility, CalendarDays, ChevronRight, Clock, MapPin, Share2, Shiel
 import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
+import { cookies } from "next/headers";
 import { TicketSelector } from "@/features/orders/ticket-selector";
+import { UtmCapture } from "@/features/orders/utm-capture";
+import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
+import { getPaymentAdapter } from "@/server/payments";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
-import { getPublicEvent } from "@/server/services/catalog";
+import { getPublicEvent, trackingLinkCouponCode } from "@/server/services/catalog";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { formatAddress } from "@/lib/br";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { AVAILABILITY } from "@/lib/labels";
@@ -28,7 +33,7 @@ export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">)
     title: `${e.title}${where}`,
     description: e.summary ?? `Ingressos para ${e.title}${where}.`,
     alternates: { canonical: `/eventos/${slug}` },
-    openGraph: { title: e.title, description: e.summary ?? undefined, images: e.coverImageUrl ? [e.coverImageUrl] : undefined },
+    openGraph: { title: e.title, description: e.summary ?? undefined, images: [e.coverImageUrl ?? DEFAULT_OG_IMAGE] },
   };
 }
 
@@ -56,6 +61,9 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   if (!data) notFound();
   const { event, prices, buyerPaysFee, availability, capacityLeft, halfPriceLeft } = data;
   const user = await getCurrentUser();
+  // Cupom pré-aplicado pelo link rastreado desta visita (cookie eb_attr), se for deste evento.
+  const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
+  const linkCoupon = attribution?.trackingLinkId ? await trackingLinkCouponCode(db, attribution.trackingLinkId, event.id) : null;
   const now = new Date();
   const city = event.venue?.city ?? event.city;
   const tz = event.timezone;
@@ -182,7 +190,14 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
             <h2 className="mb-3 flex items-center gap-2 font-display text-xl font-bold">
               <ShieldAlert className="size-5 text-secondary" aria-hidden /> Política de reembolso
             </h2>
-            <p className="text-[15px] text-foreground/90">{event.refundPolicy}</p>
+            <p className="text-[15px] text-foreground/90" data-testid="refund-deadlines">
+              Reembolso integral a pedido do comprador até <strong>{event.refundWindowDays} {event.refundWindowDays === 1 ? "dia" : "dias"}</strong> após a compra e até{" "}
+              <strong>
+                {event.refundMinHoursBeforeEvent} {event.refundMinHoursBeforeEvent === 1 ? "hora" : "horas"}
+              </strong>{" "}
+              antes do início, se nenhum ingresso do pedido tiver sido usado.
+            </p>
+            <p className="mt-2 text-[15px] text-foreground/90">{event.refundPolicy}</p>
             {event.halfPriceQuotaBps !== null && (
               <p className="mt-2 text-sm text-muted-foreground">
                 Meia-entrada disponível conforme a legislação aplicável, mediante comprovação na entrada. Cota: {event.halfPriceQuotaBps / 100}% da capacidade.
@@ -205,7 +220,10 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               buyerPaysFee={buyerPaysFee}
               user={user ? { name: user.name, email: user.email } : null}
               halfPriceLeft={halfPriceLeft}
+              initialCouponCode={linkCoupon}
+              paymentsAvailable={getPaymentAdapter().supportedMethods.length > 0}
             />
+            <UtmCapture />
           </Card>
         </aside>
       </div>
