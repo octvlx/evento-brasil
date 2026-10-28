@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useForm, useWatch } from "react-hook-form";
@@ -130,6 +131,9 @@ export function ApplicationForm({
         </Button>
         <p className="mt-2 text-xs text-muted-foreground">
           A equipe da plataforma analisa o cadastro. A verificação de identidade para recebimentos é feita pelo provedor de pagamento na conexão da conta.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Ao enviar, você aceita os <Link href="/termos" target="_blank" className="text-secondary underline">termos para organizadores</Link> em nome da organização.
         </p>
       </div>
     </form>

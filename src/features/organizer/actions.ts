@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { OrgRole } from "@/generated/prisma/client";
@@ -17,7 +17,10 @@ import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
 import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
+import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, upsertTicketType } from "@/server/services/events";
+import { extendEventChangeWindow } from "@/server/services/event-changes";
+import { zonedLocalToUtc } from "@/lib/datetime";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
 import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
 import {
@@ -45,12 +48,20 @@ async function setActiveOrg(organizationId: string) {
   (await cookies()).set(ACTIVE_ORG_COOKIE, organizationId, { path: "/", httpOnly: true, sameSite: "lax", secure: env().NODE_ENV === "production" });
 }
 
+/** Aceite dos termos do organizador pela organização (R10; agente paginas-publicas). */
+async function recordOrganizerTerms(userId: string, organizationId: string) {
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || null;
+  await recordAcceptance(db, userId, ["ORGANIZER"], { context: "ORGANIZER_SIGNUP", organizationId, ip, userAgent: h.get("user-agent") });
+}
+
 /** Cria uma NOVA organização (primeira ou adicional) e a torna ativa. */
 export async function createOrganizationAction(input: OrganizerApplicationInput): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser("/organizador/organizacoes/nova");
   return toActionResult(async () => {
     rateLimit(`org-create:${user.id}`, 5, 60 * 60_000);
     const org = await submitOrganizerApplication(db, user, input);
+    await recordOrganizerTerms(user.id, org.id);
     await setActiveOrg(org.id);
     return { id: org.id };
   });
@@ -61,6 +72,7 @@ export async function resubmitApplicationAction(organizationId: string, input: O
   const user = await requireUser("/organizador/cadastro");
   return toActionResult(async () => {
     const org = await resubmitOrganizerApplication(db, user, organizationId, input);
+    await recordOrganizerTerms(user.id, org.id);
     await setActiveOrg(org.id);
     return { id: org.id };
   });
@@ -81,6 +93,20 @@ export async function saveEventAction(eventId: string | null, input: EventInput)
     const event = eventId ? await updateEvent(db, user, eventId, input) : await createEvent(db, user, await activeOrgId(user.id), input);
     return { id: event.id };
   });
+}
+
+/** Prorroga a janela de reembolso de uma alteração relevante (prazo no horário local do evento). */
+export async function extendEventChangeAction(changeId: string, refundUntilLocal: string, reason: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(refundUntilLocal)) throw new AppError("VALIDATION", "Informe a data e o horário do novo prazo.");
+    const change = await db.eventChange.findUnique({ where: { id: changeId }, select: { event: { select: { timezone: true } } } });
+    if (!change) throw new AppError("NOT_FOUND", "Alteração não encontrada.");
+    await extendEventChangeWindow(db, user, changeId, { refundUntil: zonedLocalToUtc(refundUntilLocal, change.event.timezone), reason });
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
 }
 
 // ── Assistente de criação de evento ──

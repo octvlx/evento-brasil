@@ -6,6 +6,7 @@ import { Copy, CreditCard, FlaskConical, Loader2, QrCode, TimerReset } from "luc
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import { TermsReaccept } from "@/features/auth/terms-reaccept";
 import { simulatePaymentAction, startPaymentAction } from "./actions";
 
 interface Props {
@@ -15,6 +16,8 @@ interface Props {
   pendingPix: { copyPaste: string | null; qrDataUrl: string | null } | null;
   /** Há uma tentativa com cartão pendente no provedor: não oferecer nova tentativa. */
   cardProcessing: boolean;
+  /** Há versão vigente dos termos não aceita pelo comprador (R10). */
+  termsPending: boolean;
 }
 
 function useCountdown(target: string) {
@@ -26,12 +29,14 @@ function useCountdown(target: string) {
   return Math.max(0, left);
 }
 
-export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, cardProcessing }: Props) {
+export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, cardProcessing, termsPending }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<"PIX" | "CREDIT_CARD">("PIX");
   const [cardOutcome, setCardOutcome] = useState<"approve" | "decline">("approve");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [termsRequired, setTermsRequired] = useState(termsPending);
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [pending, start] = useTransition();
   const left = useCountdown(expiresAt);
   const mm = String(Math.floor(left / 60000)).padStart(2, "0");
@@ -41,9 +46,10 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, car
   const pay = () =>
     start(async () => {
       setError(null);
-      const res = await startPaymentAction(orderId, method, method === "CREDIT_CARD" && isSimulated ? cardOutcome : undefined);
+      const res = await startPaymentAction(orderId, method, method === "CREDIT_CARD" && isSimulated ? cardOutcome : undefined, termsRequired ? acceptTerms : undefined);
       if (!res.ok) {
         setError(res.error);
+        if (res.code === "TERMS_REQUIRED") setTermsRequired(true);
         // O pedido mudou de estado (pago, expirado ou tentativa em andamento): a página
         // recarregada mostra o estado real ou leva ao pedido.
         if (res.code === "INVALID_STATE") router.refresh();
@@ -149,7 +155,8 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, car
               </div>
             </div>
           )}
-          <Button size="lg" variant="accent" className="w-full" onClick={pay} disabled={pending || expired}>
+          {termsRequired && <TermsReaccept checked={acceptTerms} onChange={setAcceptTerms} />}
+          <Button size="lg" variant="accent" className="w-full" onClick={pay} disabled={pending || expired || (termsRequired && !acceptTerms)}>
             {pending ? "Processando…" : method === "PIX" ? "Gerar PIX" : "Pagar com cartão"}
           </Button>
         </div>

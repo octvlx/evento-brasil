@@ -51,6 +51,7 @@ const BLANK: WizardValues = {
   onlineUrl: "",
   capacity: "",
   halfPriceQuotaPercent: "",
+  maxTicketsPerAccount: "",
   salesStartLocal: "",
   salesEndLocal: "",
   description: "",
@@ -168,6 +169,7 @@ async function Content({ searchParams }: { searchParams: Search }) {
     onlineUrl: has(2) ? (event.onlineUrl ?? "") : "",
     capacity: has(3) ? String(event.capacity) : "",
     halfPriceQuotaPercent: has(3) && event.halfPriceQuotaBps !== null ? String(event.halfPriceQuotaBps / 100) : "",
+    maxTicketsPerAccount: has(3) && event.maxTicketsPerAccount !== null ? String(event.maxTicketsPerAccount) : "",
     // Sem a etapa 3, o período provisório (agora → início do evento) vira sugestão.
     salesStartLocal: has(2) ? local(event.salesStartAt) : "",
     salesEndLocal: has(2) ? local(event.salesEndAt) : "",

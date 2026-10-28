@@ -11,7 +11,9 @@ export type AppErrorCode =
   | "LIMIT_EXCEEDED"
   | "INVALID_STATE"
   | "PROVIDER_ERROR"
-  | "RATE_LIMITED";
+  | "RATE_LIMITED"
+  // Há versão vigente dos termos ainda não aceita (R10).
+  | "TERMS_REQUIRED";
 
 export class AppError extends Error {
   constructor(

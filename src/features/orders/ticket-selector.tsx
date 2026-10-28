@@ -8,6 +8,7 @@ import { Alert, Input, Label } from "@/components/ui/primitives";
 import { formatBRL } from "@/lib/money";
 import { feeBreakdownText } from "@/lib/price-display";
 import { TICKET_KIND } from "@/lib/labels";
+import { TermsReaccept } from "@/features/auth/terms-reaccept";
 import { createOrderAction } from "./actions";
 import { isCouponError } from "./status-view";
 
@@ -46,6 +47,9 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
   const [buyerName, setBuyerName] = useState(user?.name ?? "");
   const [buyerEmail, setBuyerEmail] = useState(user?.email ?? "");
   const [halfDecl, setHalfDecl] = useState(false);
+  // O servidor pede o aceite quando há versão vigente dos termos não aceita.
+  const [termsRequired, setTermsRequired] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [coupon, setCoupon] = useState(initialCouponCode ?? "");
   const [couponOpen, setCouponOpen] = useState(Boolean(initialCouponCode));
@@ -95,9 +99,10 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
         halfPriceDeclaration: halfDecl,
         idempotencyKey,
         couponCode: couponCode || undefined,
-      });
+      }, { acceptTerms: termsRequired ? acceptTerms : undefined });
       if (res.ok) router.push(`/checkout/${res.data.orderId}`);
       else {
+        if (res.code === "TERMS_REQUIRED") setTermsRequired(true);
         if (isCouponError(res, Boolean(couponCode))) setCouponError(res.error);
         else setError(res.error);
         setKey(crypto.randomUUID());
@@ -268,9 +273,10 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
         </div>
       </dl>
 
+      {termsRequired && <TermsReaccept checked={acceptTerms} onChange={setAcceptTerms} />}
       {error && <Alert variant="danger">{error}</Alert>}
 
-      <Button size="lg" className="w-full" variant="accent" onClick={submit} disabled={pending || totals.count === 0 || (hasHalf && !halfDecl)}>
+      <Button size="lg" className="w-full" variant="accent" onClick={submit} disabled={pending || totals.count === 0 || (hasHalf && !halfDecl) || (termsRequired && !acceptTerms)}>
         {pending ? "Reservando…" : !user ? "Entrar para comprar" : totals.count === 0 ? "Selecione os ingressos" : "Continuar para o pagamento"}
       </Button>
       <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
