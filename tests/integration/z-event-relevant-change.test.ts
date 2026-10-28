@@ -247,4 +247,13 @@ describe("Z — limite de ingressos por conta (R4)", () => {
     await expect(updateEvent(db, owner, event.id, { ...input, maxTicketsPerAccount: 3 })).rejects.toThrow(/Uma conta já tem 4 ingressos/);
     expect((await updateEvent(db, owner, event.id, { ...input, maxTicketsPerAccount: 4 })).maxTicketsPerAccount).toBe(4);
   });
+
+  it("ingresso transferido conta só para o novo titular (mesma regra de ticketsHeldByAccount)", async () => {
+    const { owner, input, event, customer } = await soldEvent(); // 2 ingressos pagos
+    const recipient = await makeUser();
+    const [first] = await db.issuedTicket.findMany({ where: { eventId: event.id, userId: customer.id } });
+    await db.issuedTicket.update({ where: { id: first.id }, data: { holderUserId: recipient.id } });
+    // Comprador fica com 1 e o titular novo com 1: limite 1 passa.
+    expect((await updateEvent(db, owner, event.id, { ...input, maxTicketsPerAccount: 1 })).maxTicketsPerAccount).toBe(1);
+  });
 });

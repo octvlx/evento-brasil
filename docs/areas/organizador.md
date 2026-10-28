@@ -123,10 +123,11 @@ publicar).
 - Campo opcional "Limite de ingressos por conta" na etapa 3 do assistente e na edição
   (`Event.maxTicketsPerAccount`; vazio = sem limite; 1–1000).
 - Com vendas, o servidor recusa limite menor que o que uma conta já tem
-  (`maxTicketsHeldBySingleAccount`): ingressos não revogados em que a conta é
-  compradora ou titular (cada ingresso conta uma vez por conta) + itens de pedidos
-  PENDING_PAYMENT ainda não vencidos. Regra provisória até o `ticketsHeldByAccount` do
-  `pagamentos-financeiro` chegar ao main — então trocar por ele.
+  (`maxTicketsHeldBySingleAccount`), com a mesma regra do `ticketsHeldByAccount` do
+  `pagamentos-financeiro` (PR #54): ingressos VALID/CHECKED_IN de que a conta é
+  **titular** (transferido conta só para o novo titular) + itens dos pedidos
+  PENDING_PAYMENT da conta ainda não vencidos. Quando o PR #54 estiver no main, trocar
+  pela função dele; o `createOrder` de lá já aplica o limite no checkout.
 
 ### Relatório de meia-entrada (R7)
 

@@ -114,23 +114,23 @@ export async function createEvent(db: Db, actor: Actor, organizationId: string, 
 }
 
 /**
- * Maior quantidade de ingressos que uma única conta já tem no evento (R4): ingressos não
- * revogados em que ela é compradora ou titular (cada ingresso conta uma vez por conta) +
- * itens de pedidos aguardando pagamento ainda não vencidos.
- * Regra provisória do lado do organizador; quando `ticketsHeldByAccount` do
- * `pagamentos-financeiro` estiver no main, passar a usá-lo.
+ * Maior quantidade de ingressos que uma única conta já tem no evento (R4), com a mesma
+ * regra de `ticketsHeldByAccount` do `pagamentos-financeiro` (PR #54): ingressos
+ * VALID/CHECKED_IN de que a conta é titular (`holderUserId`; transferido conta só para o
+ * novo titular) + itens dos pedidos PENDING_PAYMENT da conta ainda não vencidos.
+ * Quando o PR #54 estiver no main, trocar por `ticketsHeldByAccount` por conta.
  */
-export async function maxTicketsHeldBySingleAccount(client: Db | Tx, eventId: string): Promise<number> {
+export async function maxTicketsHeldBySingleAccount(client: Db | Tx, eventId: string, now = new Date()): Promise<number> {
   const [row] = await client.$queryRaw<{ max: number | null }[]>`
     SELECT max(n)::int AS max FROM (
       SELECT account, sum(q) AS n FROM (
-        SELECT DISTINCT t.id::text AS ref, a.account, 1 AS q
-          FROM "IssuedTicket" t CROSS JOIN LATERAL (VALUES (t."userId"), (t."holderUserId")) AS a(account)
-         WHERE t."eventId" = ${eventId} AND t.status <> 'REVOKED'
+        SELECT t."holderUserId" AS account, 1 AS q
+          FROM "IssuedTicket" t
+         WHERE t."eventId" = ${eventId} AND t.status IN ('VALID', 'CHECKED_IN')
         UNION ALL
-        SELECT i.id::text AS ref, o."userId" AS account, i.quantity AS q
+        SELECT o."userId" AS account, i.quantity AS q
           FROM "Order" o JOIN "OrderItem" i ON i."orderId" = o.id
-         WHERE o."eventId" = ${eventId} AND o.status = 'PENDING_PAYMENT' AND o."expiresAt" > now()
+         WHERE o."eventId" = ${eventId} AND o.status = 'PENDING_PAYMENT' AND o."expiresAt" > ${now}
       ) held GROUP BY account
     ) per_account`;
   return row?.max ?? 0;
