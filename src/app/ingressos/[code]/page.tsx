@@ -35,7 +35,8 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
     include: { ticketType: true, order: { select: { id: true, publicCode: true, isSimulated: true } }, event: { include: { venue: { include: { city: true } }, city: true } } },
   });
   // Mesma resposta para inexistente e de outra pessoa (não revela existência).
-  if (!t || t.userId !== user.id) notFound();
+  // Só o titular atual (R6): após uma transferência, o comprador perde o acesso ao QR.
+  if (!t || t.holderUserId !== user.id) notFound();
   const st = TICKET_STATUS[t.status];
   const tz = t.event.timezone;
   const city = t.event.venue?.city ?? t.event.city;

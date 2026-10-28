@@ -13,26 +13,92 @@ import { lockEvent, lockOrder } from "./orders";
 /** Padrões da política de reembolso de um evento novo (iguais aos defaults do banco). */
 export const DEFAULT_REFUND_POLICY = { refundWindowDays: 7, refundMinHoursBeforeEvent: 48 } as const;
 
+/** Janela de reembolso integral aberta por uma alteração relevante do evento (R8). */
+export interface ChangeRefundWindow {
+  /** Alteração que abriu a janela (a original, mesmo quando a janela vem de uma prorrogação). */
+  eventChangeId: string;
+  /** Linha que concede o prazo vigente (a própria alteração ou a prorrogação mais longa). */
+  grantedById: string;
+  changedAt: Date;
+  refundUntil: Date;
+}
+
+const dateTimeBR = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" });
+
 /**
- * Elegibilidade para reembolso solicitado pelo comprador, pela política do
- * próprio evento: até `refundWindowDays` dias após a compra E até
- * `refundMinHoursBeforeEvent` horas antes do início. PRECISA de revisão jurídica
- * (CDC art. 49 e normas aplicáveis a eventos).
+ * Janela de reembolso integral aberta para um pedido pago em `paidAt`: alteração
+ * relevante (`relevant = true`) do evento registrada DEPOIS do pagamento, com
+ * `now <= refundUntil`. Uma prorrogação (`extendsChangeId`) vale para os mesmos
+ * pedidos da alteração original. Havendo várias, vence o prazo mais longo.
+ * O que é "relevante" e o tamanho da janela são decididos por `area-organizador` (D2).
+ */
+export async function openChangeRefundWindow(client: Db | Tx, eventId: string, paidAt: Date | null, now = new Date()): Promise<ChangeRefundWindow | null> {
+  if (!paidAt) return null;
+  const rows = await client.eventChange.findMany({
+    where: { eventId },
+    select: { id: true, relevant: true, refundUntil: true, createdAt: true, extendsChangeId: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const root = (r: (typeof rows)[number]) => {
+    let cur = r;
+    for (let hops = 0; cur.extendsChangeId && hops < rows.length; hops++) {
+      const parent = byId.get(cur.extendsChangeId);
+      if (!parent) break;
+      cur = parent;
+    }
+    return cur;
+  };
+  let best: ChangeRefundWindow | null = null;
+  for (const r of rows) {
+    if (!r.refundUntil || now.getTime() > r.refundUntil.getTime()) continue;
+    const origin = root(r);
+    if (origin.relevant !== true || paidAt.getTime() >= origin.createdAt.getTime()) continue;
+    if (!best || r.refundUntil > best.refundUntil) {
+      best = { eventChangeId: origin.id, grantedById: r.id, changedAt: origin.createdAt, refundUntil: r.refundUntil };
+    }
+  }
+  return best;
+}
+
+export type RefundEligibility =
+  | { eligible: true; basis: "EVENT_POLICY" }
+  | { eligible: true; basis: "EVENT_CHANGED"; window: ChangeRefundWindow; message: string }
+  | { eligible: false; reason: string };
+
+/**
+ * Elegibilidade para reembolso solicitado pelo comprador.
+ *
+ * - Com janela de alteração relevante aberta (`changeWindow`, de
+ *   `openChangeRefundWindow`): reembolso integral, taxas incluídas,
+ *   independentemente dos prazos normais do evento (R8).
+ * - Senão, pela política do próprio evento: até `refundWindowDays` dias após a
+ *   compra E até `refundMinHoursBeforeEvent` horas antes do início.
+ *
+ * PRECISA de revisão jurídica (CDC art. 49, Decreto 13.108/2026 e normas aplicáveis a eventos).
  */
 export function refundEligibility(
   order: { status: string; paidAt: Date | null; totalCents: number },
   event: { startsAt: Date; status: string; refundWindowDays: number; refundMinHoursBeforeEvent: number },
   tickets: { status: string }[],
   now: Date,
-): { eligible: true } | { eligible: false; reason: string } {
+  changeWindow: ChangeRefundWindow | null = null,
+): RefundEligibility {
   if (order.status !== "PAID") return { eligible: false, reason: "Somente pedidos pagos podem ser reembolsados." };
   if (event.status === "CANCELLED") return { eligible: false, reason: "Evento cancelado: o reembolso é processado automaticamente." };
   if (tickets.some((t) => t.status === "CHECKED_IN")) return { eligible: false, reason: "Há ingressos já utilizados neste pedido." };
+  if (changeWindow && now.getTime() <= changeWindow.refundUntil.getTime()) {
+    return {
+      eligible: true,
+      basis: "EVENT_CHANGED",
+      window: changeWindow,
+      message: `O evento foi alterado depois da sua compra: você pode pedir o reembolso integral, com as taxas, até ${dateTimeBR.format(changeWindow.refundUntil)}.`,
+    };
+  }
   if (!order.paidAt || now.getTime() - order.paidAt.getTime() > event.refundWindowDays * 86_400_000)
     return { eligible: false, reason: `O prazo de ${event.refundWindowDays} ${event.refundWindowDays === 1 ? "dia" : "dias"} após a compra terminou.` };
   if (event.startsAt.getTime() - now.getTime() < event.refundMinHoursBeforeEvent * 3_600_000)
     return { eligible: false, reason: `Reembolsos só até ${event.refundMinHoursBeforeEvent}h antes do evento.` };
-  return { eligible: true };
+  return { eligible: true, basis: "EVENT_POLICY" };
 }
 
 /**
@@ -49,50 +115,95 @@ async function committedRefundCents(client: Db | Tx, orderId: string, statuses: 
 
 export class OverRefundError extends Error {}
 
-async function createRefundRequest(db: Db, orderId: string, reason: RefundReason, requestedById: string | null, note?: string) {
+/** Motivos pedidos pelo comprador: ingresso já usado impede o reembolso. */
+const BUYER_REASONS: RefundReason[] = ["CUSTOMER_REQUEST", "EVENT_CHANGED"];
+
+export interface RefundRequestLinks {
+  note?: string;
+  eventChangeId?: string;
+  cancellationRequestId?: string;
+}
+
+/**
+ * Abre o reembolso integral de um pedido pago. Pré-condição: travas do evento e
+ * do pedido (nessa ordem). Recusa se o pedido não está PAID ou se já há
+ * reembolso em aberto/concluído — é a guarda contra reembolso em dobro.
+ */
+export async function createRefundRequestTx(tx: Tx, orderId: string, reason: RefundReason, requestedById: string | null, links: RefundRequestLinks = {}) {
+  const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: { where: { status: "PAID" } } } });
+  if (order.status !== "PAID") throw invalidState("Pedido não está pago.");
+  // Reembolsos são integrais (MVP): qualquer outro em aberto ou concluído impede um novo.
+  if ((await committedRefundCents(tx, orderId, ["REQUESTED", "PROCESSING", "SUCCEEDED"])) > 0) {
+    throw invalidState("Este pedido já tem um reembolso em andamento.");
+  }
+  // Revoga os ingressos AGORA, sob as travas: um check-in concorrente
+  // (UPDATE … WHERE status='VALID') não consegue mais usar o ingresso, e um
+  // check-in que chegou antes é detectado abaixo. Antes, a verificação era
+  // feita fora da trava e o comprador podia entrar E ser reembolsado.
+  // Vale também para ingressos transferidos: o dinheiro volta a quem pagou (D7).
+  const now = new Date();
+  await tx.issuedTicket.updateMany({ where: { orderId, status: "VALID" }, data: { status: "REVOKED", revokedAt: now, revocationReason: "REFUNDED" } });
+  if (BUYER_REASONS.includes(reason)) {
+    const used = await tx.issuedTicket.count({ where: { orderId, status: "CHECKED_IN" } });
+    if (used > 0) throw new AppError("VALIDATION", "Há ingressos já utilizados neste pedido.");
+  }
+  // Um reembolso anterior com o mesmo motivo pode ter sido encerrado como
+  // REJECTED (admin restaurou os ingressos): o novo pedido precisa de chave própria.
+  const rejected = await tx.refund.count({ where: { orderId, reason, status: "REJECTED" } });
+  const key = `refund:${orderId}:${reason.toLowerCase()}${rejected ? `:${rejected + 1}` : ""}`;
+  const refund = await tx.refund.upsert({
+    where: { idempotencyKey: key },
+    create: {
+      orderId,
+      paymentId: order.payments[0]?.id ?? null,
+      amountCents: order.totalCents,
+      reason,
+      requestedById,
+      note: links.note,
+      eventChangeId: links.eventChangeId,
+      cancellationRequestId: links.cancellationRequestId,
+      idempotencyKey: key,
+    },
+    update: {},
+  });
+  await tx.order.update({ where: { id: orderId }, data: { status: "REFUND_PENDING" } });
+  await audit(tx, {
+    actorUserId: requestedById,
+    organizationId: order.organizationId,
+    action: "refund.requested",
+    entityType: "Refund",
+    entityId: refund.id,
+    metadata: { reason, ...(links.eventChangeId ? { eventChangeId: links.eventChangeId } : {}), ...(links.cancellationRequestId ? { cancellationRequestId: links.cancellationRequestId } : {}) },
+  });
+  return refund;
+}
+
+async function createRefundRequest(db: Db, orderId: string, reason: RefundReason, requestedById: string | null, links?: RefundRequestLinks) {
   return db.$transaction(async (tx) => {
     const ref = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { eventId: true } });
     await lockEvent(tx, ref.eventId);
     await lockOrder(tx, orderId);
-    const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: { where: { status: "PAID" } } } });
-    if (order.status !== "PAID") throw invalidState("Pedido não está pago.");
-    // Reembolsos são integrais (MVP): qualquer outro em aberto ou concluído impede um novo.
-    if ((await committedRefundCents(tx, orderId, ["REQUESTED", "PROCESSING", "SUCCEEDED"])) > 0) {
-      throw invalidState("Este pedido já tem um reembolso em andamento.");
-    }
-    // Revoga os ingressos AGORA, sob as travas: um check-in concorrente
-    // (UPDATE … WHERE status='VALID') não consegue mais usar o ingresso, e um
-    // check-in que chegou antes é detectado abaixo. Antes, a verificação era
-    // feita fora da trava e o comprador podia entrar E ser reembolsado.
-    const now = new Date();
-    await tx.issuedTicket.updateMany({ where: { orderId, status: "VALID" }, data: { status: "REVOKED", revokedAt: now, revocationReason: "REFUNDED" } });
-    if (reason === "CUSTOMER_REQUEST") {
-      const used = await tx.issuedTicket.count({ where: { orderId, status: "CHECKED_IN" } });
-      if (used > 0) throw new AppError("VALIDATION", "Há ingressos já utilizados neste pedido.");
-    }
-    // Um reembolso anterior com o mesmo motivo pode ter sido encerrado como
-    // REJECTED (admin restaurou os ingressos): o novo pedido precisa de chave própria.
-    const rejected = await tx.refund.count({ where: { orderId, reason, status: "REJECTED" } });
-    const key = `refund:${orderId}:${reason.toLowerCase()}${rejected ? `:${rejected + 1}` : ""}`;
-    const refund = await tx.refund.upsert({
-      where: { idempotencyKey: key },
-      create: { orderId, paymentId: order.payments[0]?.id ?? null, amountCents: order.totalCents, reason, requestedById, note, idempotencyKey: key },
-      update: {},
-    });
-    await tx.order.update({ where: { id: orderId }, data: { status: "REFUND_PENDING" } });
-    await audit(tx, { actorUserId: requestedById, organizationId: order.organizationId, action: "refund.requested", entityType: "Refund", entityId: refund.id, metadata: { reason } });
-    return refund;
+    return createRefundRequestTx(tx, orderId, reason, requestedById, links);
   }, TX_OPTIONS);
 }
 
+/**
+ * Reembolso pedido pelo comprador (quem pagou o pedido). Com janela de alteração
+ * relevante aberta, o motivo é `EVENT_CHANGED` e o reembolso fica ligado à
+ * alteração; senão vale a política normal do evento (`CUSTOMER_REQUEST`).
+ */
 export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdapter, actor: Actor, orderId: string, now = new Date()) {
   assertActive(actor);
   const order = await db.order.findUnique({ where: { id: orderId }, include: { event: true, tickets: { select: { status: true } } } });
   if (!order) throw notFound();
   if (order.userId !== actor.id) throw forbidden();
-  const check = refundEligibility(order, order.event, order.tickets, now);
+  const window = await openChangeRefundWindow(db, order.eventId, order.paidAt, now);
+  const check = refundEligibility(order, order.event, order.tickets, now, window);
   if (!check.eligible) throw new AppError("VALIDATION", check.reason);
-  const refund = await createRefundRequest(db, orderId, "CUSTOMER_REQUEST", actor.id);
+  const refund =
+    check.basis === "EVENT_CHANGED"
+      ? await createRefundRequest(db, orderId, "EVENT_CHANGED", actor.id, { eventChangeId: check.window.eventChangeId })
+      : await createRefundRequest(db, orderId, "CUSTOMER_REQUEST", actor.id);
   await processRefund(db, adapter, refund.id);
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
 }
@@ -100,7 +211,7 @@ export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdap
 export async function adminRefundOrder(db: Db, adapter: PaymentProviderAdapter, admin: Actor, orderId: string, note: string) {
   assertPlatformAdmin(admin);
   if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo do reembolso.");
-  const refund = await createRefundRequest(db, orderId, "ADMIN", admin.id, note);
+  const refund = await createRefundRequest(db, orderId, "ADMIN", admin.id, { note });
   await processRefund(db, adapter, refund.id);
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
 }
@@ -251,7 +362,7 @@ export async function retryFailedRefunds(db: Db, adapter: PaymentProviderAdapter
   return report;
 }
 
-const RESTORABLE_REASONS: RefundReason[] = ["CUSTOMER_REQUEST", "ADMIN"];
+const RESTORABLE_REASONS: RefundReason[] = ["CUSTOMER_REQUEST", "ADMIN", "EVENT_CHANGED"];
 
 /** Motivo pelo qual os ingressos NÃO podem ser restaurados; nulo se podem. */
 export function restoreBlockedReason(reason: RefundReason, event: { status: string; endsAt: Date }, now = new Date()): string | null {

@@ -152,6 +152,24 @@ Os gatilhos de imutabilidade são `BEFORE UPDATE OR DELETE … FOR EACH ROW`:
   ingresso, evento e pedido: o histórico (transferências ≥ 2 anos) impede a
   exclusão desses registros. A anonimização depende de D6 e ainda não tem colunas.
 
+## Índices das consultas da Fase 3
+
+Revisados para os serviços da Fase 3; nenhum índice novo foi necessário.
+
+| Consulta | Índice |
+| --- | --- |
+| "Meus ingressos" pelo titular atual | `IssuedTicket(holderUserId, issuedAt)` |
+| Limite por conta (R4): ingressos do evento comprados ou em mãos | `IssuedTicket(eventId, userId)`, `IssuedTicket(eventId, holderUserId)` |
+| Transferência pendente de um ingresso | único parcial `TicketTransfer_one_pending_per_ticket (ticketId) WHERE PENDING` |
+| Histórico de transferências do ingresso | `TicketTransfer(ticketId, createdAt)` |
+| Transferências enviadas / recebidas | `TicketTransfer(fromUserId, createdAt)`, `(toUserId, createdAt)`, `(toEmail, status)` (convites para quem ainda não tem conta) |
+| Expiração de pendentes (cron) | `TicketTransfer(status, expiresAt)` |
+| Janela aberta de um evento (`refundUntil > agora`) | `EventChange(eventId, refundUntil)` |
+| Janelas abertas em toda a plataforma | `EventChange(refundUntil)` |
+| Pedidos de cancelamento do comprador | `CancellationRequest(requestedById, createdAt)` (poucos por usuário; o status é filtrado na leitura) |
+| Pedido aberto de uma compra | único parcial `CancellationRequest_one_open_per_order (orderId) WHERE OPEN` |
+| Fila do admin / do organizador | `CancellationRequest(status, createdAt)`, `(status, respondBy)`, `(organizationId, status, createdAt)`, `(eventId, status)` |
+
 ## Ambiente local
 
 Pré-requisitos: Node 24, `npm ci`, `.env` copiado de `.env.example` (nunca versionar).
@@ -191,6 +209,26 @@ pedidos pagos pelo provedor simulado, um check-in e um reembolso, sempre pelos
 tipos que não são meia-entrada) e o link rastreado `demoSamba1` (UTMs de
 Instagram, pré-aplica o `DEMO10`). Até o passo 2 do ADR 0002 eles não alteram
 preço.
+
+Dados de conformidade (ADR 0003), gravados por INSERT direto (os serviços são
+da Fase 3) e dentro dos CHECKs e gatilhos:
+
+| Dado | Conteúdo |
+| --- | --- |
+| `TermsVersion` | `BUYER` (`/termos`), `PRIVACY` (`/privacidade`) e `ORGANIZER` (sem página), todas `version = "v1"`, `isDraft = true`, publicadas há 30 dias. **Rascunhos pendentes de revisão jurídica (D8).** As páginas ainda são JSX provisório, então `textHash` é um marcador documentado: `sha256("evento-brasil:termos:<KIND>:v1:rascunho")` (constante `DEMO_TERMS` em `prisma/seed.ts`), não o hash do texto exibido. O texto final entra como linha nova com `isDraft = false`. |
+| `TermsAcceptance` | Toda conta demo aceitou `BUYER` e `PRIVACY` (`SIGNUP`); cada dono de organização aceitou `ORGANIZER` (`ORGANIZER_SIGNUP` com a organização); cada pedido da cliente tem o aceite `BUYER` no `CHECKOUT`. Assim os logins do e2e não caem num pedido de reaceite. |
+| Limite por conta | "Jazz no Mirante": `maxTicketsPerAccount = 2`, e a cliente já tem 2 ingressos (limite atingido). |
+| `EventChange` | "Pôr do Sol Eletrônico" (pedido pago da cliente) começa 1 h mais tarde: `changedFields = [startsAt, endsAt]`, `relevant = true`, `refundUntil` = seed + 7 dias. O evento já tem os horários novos; o aviso aos compradores está em `AuditLog` (`event.change.buyers_notified`). |
+| `TicketTransfer` aceita | Um ingresso Inteira da "Noite de Samba" da cliente passou para `amiga@demo.eventobrasil.test`: `holderUserId`/nome/e-mail atualizados, QR novo (`previousTokenHash` = hash do anterior), `userId` continua a cliente; `AuditLog` `ticket.transfer.accepted`. |
+| `TicketTransfer` pendente | Um ingresso do "Axé de Rua" para `convidado@demo.eventobrasil.test` (sem conta), vence em 3 dias. |
+| `CancellationRequest` | Pedido aberto `CAN-<AAAAMMDD>-SEED01` na compra do "Festival Litoral Sonoro" (`autoEligibleAtRequest = true`, `respondBy` nulo até D3). |
+
+Nova conta demo: `amiga@demo.eventobrasil.test` (mesma senha).
+
+`tests/integration/z-seed.test.ts` cria um banco próprio no PostgreSQL de
+testes, aplica as migrações, roda o seed duas vezes (a segunda é no-op) e
+confere `checkFinancialInvariants() == []` e as linhas acima. Precisa de
+permissão de `CREATE DATABASE` (o banco embutido dos testes tem).
 
 - Recusa `NODE_ENV=production`.
 - Se `admin@demo.eventobrasil.test` já existe, informa que o banco já tem o seed

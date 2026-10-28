@@ -19,6 +19,8 @@ import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/s
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, upsertTicketType } from "@/server/services/events";
+import { extendEventChangeWindow } from "@/server/services/event-changes";
+import { zonedLocalToUtc } from "@/lib/datetime";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
 import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
 import {
@@ -91,6 +93,20 @@ export async function saveEventAction(eventId: string | null, input: EventInput)
     const event = eventId ? await updateEvent(db, user, eventId, input) : await createEvent(db, user, await activeOrgId(user.id), input);
     return { id: event.id };
   });
+}
+
+/** Prorroga a janela de reembolso de uma alteração relevante (prazo no horário local do evento). */
+export async function extendEventChangeAction(changeId: string, refundUntilLocal: string, reason: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(refundUntilLocal)) throw new AppError("VALIDATION", "Informe a data e o horário do novo prazo.");
+    const change = await db.eventChange.findUnique({ where: { id: changeId }, select: { event: { select: { timezone: true } } } });
+    if (!change) throw new AppError("NOT_FOUND", "Alteração não encontrada.");
+    await extendEventChangeWindow(db, user, changeId, { refundUntil: zonedLocalToUtc(refundUntilLocal, change.event.timezone), reason });
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
 }
 
 // ── Assistente de criação de evento ──
