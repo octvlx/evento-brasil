@@ -44,7 +44,11 @@ export async function startPayment(
     if (pending) {
       // PIX pendente é reaproveitado (mesmo QR). Qualquer outra combinação aguardaria
       // uma tentativa em andamento — recusada para não gerar cobrança dupla.
-      if (pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id) return { kind: "reuse", payment: pending } as const;
+      const samePix = pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id;
+      if (samePix && pending.providerPaymentId) return { kind: "reuse", payment: pending } as const;
+      // PIX ainda sendo criado por outra requisição (duplo clique): espera o id do
+      // provedor fora da transação. Se a criação ficou incerta, não reaproveita.
+      if (samePix && !pending.failureReason) return { kind: "await", paymentId: pending.id } as const;
       throw invalidState(
         pending.method === "PIX"
           ? "Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva."
@@ -65,6 +69,7 @@ export async function startPayment(
     return { kind: "new", payment, order } as const;
   }, TX_OPTIONS);
   if (decision.kind === "reuse") return decision.payment;
+  if (decision.kind === "await") return awaitPixInFlight(db, decision.paymentId);
   const { payment, order } = decision;
 
   // Chamada externa FORA da transação; a chave de idempotência torna a repetição segura.
@@ -82,9 +87,11 @@ export async function startPayment(
       simulatedCardOutcome: opts.simulatedCardOutcome,
     });
   } catch (err) {
-    await db.payment.update({ where: { id: payment.id }, data: { status: "FAILED", failureReason: "provider_create_failed" } });
+    // Uma falha de transporte não prova que o provedor deixou de cobrar.
+    // Mantém a tentativa bloqueando novas cobranças até a reconciliação resolver a referência.
+    await db.payment.updateMany({ where: { id: payment.id, status: "PENDING" }, data: { failureReason: "PROVIDER_CREATE_UNCERTAIN" } });
     if (err instanceof AppError) throw err;
-    throw new AppError("PROVIDER_ERROR", "Não foi possível iniciar o pagamento. Tente novamente.");
+    throw new AppError("PROVIDER_ERROR", "Estamos confirmando o pagamento com o provedor. Acompanhe seu pedido antes de tentar novamente.");
   }
   const updated = await db.payment.update({
     where: { id: payment.id },
@@ -101,6 +108,26 @@ export async function startPayment(
   // Resultado síncrono (ex.: cartão) é revalidado na consulta autoritativa.
   if (created.status !== "PENDING") await syncPaymentFromProvider(db, adapter, created.providerPaymentId);
   return db.payment.findUniqueOrThrow({ where: { id: updated.id } });
+}
+
+const PIX_IN_FLIGHT_WAIT_MS = 10_000;
+const PIX_IN_FLIGHT_POLL_MS = 100;
+
+/**
+ * Espera a requisição concorrente terminar de criar o PIX e devolve o mesmo
+ * pagamento (mesmo QR). Só reaproveita quando o provedor confirmou a cobrança
+ * (`providerPaymentId`); criação incerta, falha ou demora → recusa, sem nova cobrança.
+ */
+async function awaitPixInFlight(db: Db, paymentId: string) {
+  const deadline = Date.now() + PIX_IN_FLIGHT_WAIT_MS;
+  for (;;) {
+    const p = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    if (p.providerPaymentId && p.status !== "FAILED" && p.status !== "CANCELLED" && p.status !== "EXPIRED") return p;
+    if (p.failureReason || p.status !== "PENDING" || Date.now() >= deadline) {
+      throw invalidState("Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva.");
+    }
+    await new Promise((r) => setTimeout(r, PIX_IN_FLIGHT_POLL_MS));
+  }
 }
 
 /** Consulta o provedor e aplica o status retornado. */
@@ -122,6 +149,7 @@ export type ApplyOutcome =
   | "refunded"
   | "charged_back"
   | "disputed"
+  | "dispute_resolved"
   | "no_change";
 
 /** Aplica um snapshot autoritativo do provedor. Idempotente e seguro contra concorrência. */
@@ -155,12 +183,37 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     const markPayment = (data: Prisma.PaymentUpdateInput) =>
       tx.payment.update({ where: { id: payment.id }, data: { providerRawStatus: snapshot.rawStatus, ...data } });
 
+    if (payment.status === "PENDING" && snapshot.status === "PENDING" && payment.method === "PIX") {
+      await tx.payment.update({ where: { id: payment.id }, data: {
+        pixCopyPaste: snapshot.pixCopyPaste,
+        pixQrCodeBase64: snapshot.pixQrCodeBase64,
+        providerExpiresAt: snapshot.expiresAt,
+      } });
+    }
+    const syncProcessingFee = async () => {
+      // null = ainda desconhecida; nunca apaga uma taxa já confirmada.
+      if (snapshot.processingFeeCents === null) return;
+      await postProcessingFee(tx, order, payment.id, snapshot.processingFeeCents, order.commissionRule?.processingFeeBearer ?? "ORGANIZER");
+      if (payment.processingFeeCents !== snapshot.processingFeeCents) {
+        await tx.payment.update({ where: { id: payment.id }, data: { processingFeeCents: snapshot.processingFeeCents } });
+      }
+    };
+
     switch (snapshot.status) {
       case "PAID": {
+        if (payment.status === "DISPUTED") {
+          await syncProcessingFee();
+          await markPayment({ status: "PAID" });
+          if (order.status === "DISPUTED") {
+            await tx.order.update({ where: { id: order.id }, data: { status: "PAID" } });
+          }
+          await audit(tx, { organizationId: order.organizationId, action: "payment.dispute_resolved", entityType: "Payment", entityId: payment.id });
+          return "dispute_resolved";
+        }
         const wasPaid = payment.status === "PAID";
         if (!wasPaid) {
           if (!["PENDING", "FAILED", "EXPIRED", "CANCELLED"].includes(payment.status)) return "no_change";
-          await markPayment({ status: "PAID", paidAt: now, processingFeeCents: snapshot.processingFeeCents });
+          await markPayment({ status: "PAID", paidAt: now });
         }
         if (["PAID", "REFUND_PENDING", "REFUNDED", "DISPUTED"].includes(order.status)) {
           const paidByOther = await tx.payment.count({ where: { orderId: order.id, status: "PAID", NOT: { id: payment.id } } });
@@ -170,6 +223,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
             await audit(tx, { organizationId: order.organizationId, action: "payment.duplicate", entityType: "Payment", entityId: payment.id });
             return "duplicate_payment";
           }
+          if (wasPaid) await syncProcessingFee();
           return "already_processed";
         }
         let result: ApplyOutcome = "paid";
@@ -195,9 +249,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
           result = "late_payment_refund";
         }
         await postSale(tx, order, payment.id);
-        if (snapshot.processingFeeCents) {
-          await postProcessingFee(tx, order, payment.id, snapshot.processingFeeCents, order.commissionRule?.processingFeeBearer ?? "ORGANIZER");
-        }
+        await syncProcessingFee();
         await audit(tx, { organizationId: order.organizationId, action: `payment.${result}`, entityType: "Order", entityId: order.id, metadata: { paymentId: payment.id } });
         return result;
       }
@@ -216,7 +268,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         return "payment_expired";
       }
       case "REFUNDED": {
-        if (payment.status === "REFUNDED") return "no_change";
+        if (payment.status === "REFUNDED" || payment.status === "CHARGED_BACK") return "no_change";
         let refund = await tx.refund.findFirst({ where: { orderId: order.id, status: { in: ["REQUESTED", "PROCESSING", "FAILED"] } } });
         refund ??= await tx.refund.create({
           data: {
@@ -232,7 +284,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         return "refunded";
       }
       case "CHARGED_BACK": {
-        if (payment.status === "CHARGED_BACK") return "no_change";
+        if (payment.status === "CHARGED_BACK" || payment.status === "REFUNDED") return "no_change";
         await markPayment({ status: "CHARGED_BACK" });
         await tx.issuedTicket.updateMany({
           where: { orderId: order.id, status: "VALID" },
@@ -245,7 +297,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         return "charged_back";
       }
       case "DISPUTED": {
-        if (payment.status === "DISPUTED") return "no_change";
+        if (payment.status !== "PAID") return "no_change";
         await markPayment({ status: "DISPUTED" });
         if (order.status === "PAID") await tx.order.update({ where: { id: order.id }, data: { status: "DISPUTED" } });
         await audit(tx, { organizationId: order.organizationId, action: "payment.disputed", entityType: "Order", entityId: order.id });

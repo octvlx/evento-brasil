@@ -11,6 +11,7 @@ export function EventCover({ src, alt, className, priority }: { src: string | nu
       src={src ?? "/placeholder/evento.svg"}
       alt={alt}
       loading={priority ? "eager" : "lazy"}
+      fetchPriority={priority ? "high" : "auto"}
       decoding="async"
       className={cn("h-full w-full object-cover", className)}
     />

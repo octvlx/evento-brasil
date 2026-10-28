@@ -8,9 +8,23 @@ import { Select } from "@/components/ui/primitives";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { db } from "@/server/db";
 import { listCategories, listCities, searchEvents, type DateFilter, type PriceFilter } from "@/server/services/catalog";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { UFS } from "@/lib/br";
 
-export const metadata: Metadata = { title: "Explorar eventos", description: "Busque eventos por cidade, categoria, data e preço em todo o Brasil." };
+const EVENTS_DESCRIPTION = "Busque eventos por cidade, categoria, data e preço em todo o Brasil.";
+
+// searchParams só é lido aqui (generateMetadata), nunca no nível da página.
+export async function generateMetadata({ searchParams }: PageProps<"/eventos">): Promise<Metadata> {
+  const sp = await searchParams;
+  const filtered = Object.keys(sp).length > 0;
+  return {
+    title: "Explorar eventos",
+    description: EVENTS_DESCRIPTION,
+    alternates: { canonical: "/eventos" },
+    openGraph: { type: "website", title: "Explorar eventos", description: EVENTS_DESCRIPTION, url: "/eventos", images: [DEFAULT_OG_IMAGE] },
+    ...(filtered ? { robots: { index: false, follow: true } } : {}),
+  };
+}
 
 const DATE_OPTIONS: [DateFilter, string][] = [
   ["hoje", "Hoje"],

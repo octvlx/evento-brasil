@@ -2,7 +2,7 @@
 // reembolso e check-in, guarda contra estorno acima do pago, reconciliação de
 // webhooks perdidos / processos interrompidos e verificação de invariantes.
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkInTicket } from "@/server/services/checkin";
 import { createOrder, expireStaleOrders } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
@@ -35,6 +35,49 @@ describe("tentativas de pagamento concorrentes", () => {
     expect(new Set(results.map((p) => p.id)).size).toBe(1);
     expect(await db.payment.count({ where: { orderId: order.id } })).toBe(1);
     expect(await db.simulatedProviderPayment.count()).toBe(1);
+  });
+
+  it("duplo clique com provedor lento: os cliques esperam o PIX em criação e recebem o mesmo QR", async () => {
+    const { event, tt } = await setup();
+    const customer = await makeUser();
+    const order = await buy(customer, event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
+    const create = adapter.createPayment.bind(adapter);
+    // Provedor demora: os outros cliques encontram o PIX pendente ainda sem id do provedor.
+    const spy = vi.spyOn(adapter, "createPayment").mockImplementation(async (input) => {
+      await new Promise((r) => setTimeout(r, 400));
+      return create(input);
+    });
+    try {
+      const results = await Promise.all(Array.from({ length: 4 }, () => startPayment(db, adapter, customer, order.id, "PIX")));
+      expect(new Set(results.map((p) => p.id)).size).toBe(1);
+      expect(results.every((p) => p.providerPaymentId && p.pixCopyPaste)).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(await db.simulatedProviderPayment.count()).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("PIX em criação que fica incerto: quem esperava é recusado, sem segunda cobrança", async () => {
+    const { event, tt } = await setup();
+    const customer = await makeUser();
+    const order = await buy(customer, event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
+    const spy = vi.spyOn(adapter, "createPayment").mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      throw new Error("timeout");
+    });
+    try {
+      const results = await Promise.allSettled(Array.from({ length: 3 }, () => startPayment(db, adapter, customer, order.id, "PIX")));
+      expect(results.every((r) => r.status === "rejected")).toBe(true);
+      const codes = results.map((r) => ((r as PromiseRejectedResult).reason as { code: string }).code).sort();
+      expect(codes).toEqual(["INVALID_STATE", "INVALID_STATE", "PROVIDER_ERROR"]);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(await db.payment.findFirstOrThrow({ where: { orderId: order.id } })).toMatchObject({ status: "PENDING", failureReason: "PROVIDER_CREATE_UNCERTAIN" });
+      // Deixa o banco consistente para a verificação de invariantes: a reserva expira.
+      await db.order.update({ where: { id: order.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("tentativas de cartão simultâneas: só uma prossegue, as demais são recusadas", async () => {

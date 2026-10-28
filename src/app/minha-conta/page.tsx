@@ -46,6 +46,9 @@ async function Content() {
         <Link href="/meus-ingressos" className={buttonVariants({ variant: "outline" })}>
           Meus ingressos
         </Link>
+        <Link href="/meus-pedidos" className={buttonVariants({ variant: "outline" })}>
+          Meus pedidos
+        </Link>
         <form action={logoutAction}>
           <button className={buttonVariants({ variant: "ghost", className: "text-destructive" })}>Sair da conta</button>
         </form>
