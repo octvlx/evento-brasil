@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { acceptSignupTerms, login, USERS } from "./helpers";
 
-/** Envia o convite pela tela de configurações e devolve o caminho /convite/… exibido. */
+/** Envia o convite pela tela de equipe e devolve o caminho /convite/… exibido. */
 async function invite(page: Page, email: string, role: string) {
   await page.getByLabel("E-mail", { exact: true }).fill(email);
   await page.locator("#inv-role").selectOption(role);
@@ -34,7 +34,13 @@ test("organizador reenvia, revoga e altera papel; convidado aceita e recusa", as
   await member.waitForURL((url) => !url.pathname.startsWith("/registrar"));
 
   await login(page, USERS.producer, "/organizador/configuracoes");
-  await page.goto("/organizador/configuracoes");
+  await expect(page.getByRole("heading", { name: "Equipe", exact: true })).toHaveCount(0);
+  await page.getByRole("link", { name: "Equipe", exact: true }).click();
+  await expect(page).toHaveURL(/\/organizador\/equipe$/);
+  await expect(page.getByRole("heading", { name: "Equipe", exact: true })).toBeVisible();
+  const menu = page.getByRole("link", { name: "Equipe", exact: true }).locator("..");
+  const links = await menu.getByRole("link").allTextContents();
+  expect(links.indexOf("Equipe")).toBe(links.indexOf("Eventos") + 1);
 
   // Convite → reenviar troca o link.
   const firstLink = await invite(page, memberEmail, "FINANCE");

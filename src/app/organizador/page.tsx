@@ -35,7 +35,7 @@ async function Content() {
 
   const quickActions = [
     can("event:write") && { href: "/organizador/eventos/novo", label: "Criar evento", icon: CalendarPlus },
-    can("members:manage") && { href: "/organizador/configuracoes", label: "Convidar equipe", icon: UserPlus },
+    can("members:manage") && { href: "/organizador/equipe", label: "Convidar equipe", icon: UserPlus },
     can("finance:read") && { href: "/organizador/vendas", label: "Vendas e repasses", icon: BarChart3 },
     can("attendees:read") && { href: "/organizador/participantes", label: "Participantes", icon: Users },
     can("checkin:scan") && { href: "/check-in", label: "Check-in", icon: QrCode },

@@ -456,8 +456,8 @@ export function StepSettings({ form, errors }: { form: Form; errors: Errors }) {
           </li>
           <li>
             <strong className="text-foreground">Check-in:</strong> convide a equipe de portaria em{" "}
-            <Link href="/organizador/configuracoes" className="font-semibold text-secondary underline">
-              Configurações › Equipe
+            <Link href="/organizador/equipe" className="font-semibold text-secondary underline">
+              Equipe
             </Link>
             .
           </li>

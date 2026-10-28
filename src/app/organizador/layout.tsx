@@ -7,6 +7,7 @@ import { switchOrganizationAction } from "@/features/organizer/actions";
 const NAV: [string, string][] = [
   ["/organizador", "Visão geral"],
   ["/organizador/eventos", "Eventos"],
+  ["/organizador/equipe", "Equipe"],
   ["/organizador/vendas", "Vendas e repasses"],
   ["/organizador/participantes", "Participantes"],
   ["/organizador/configuracoes", "Configurações"],
