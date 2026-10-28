@@ -11,7 +11,9 @@ describe("audit: catalogue queries and stock", () => {
     const owner = await makeUser();
     const org = await makeOrg(owner);
     const otherOrg = await makeOrg(await makeUser());
-    const events = await Promise.all([makeEvent(org), makeEvent(org), makeEvent(otherOrg)]);
+    // makeEvent also creates shared city/category fixtures; initialize them in
+    // sequence so their first upserts cannot race on the unique slug in CI.
+    const events = [await makeEvent(org), await makeEvent(org), await makeEvent(otherOrg)];
     await db.commissionRule.create({ data: { scope: "ORGANIZATION", organizationId: org.id, percentBps: 1000, bearer: "BUYER", policyVersion: "audit:org" } });
     await db.commissionRule.create({ data: { scope: "EVENT", eventId: events[0].id, percentBps: 2000, bearer: "BUYER", policyVersion: "audit:event" } });
     const expected = await Promise.all(events.map((event) => resolveCommissionRule(db, event.organizationId, event.id)));
