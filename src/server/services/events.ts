@@ -15,6 +15,7 @@ import { resolveCommissionRule } from "./commission";
 import { getWizardProgress, isWizardComplete } from "./event-wizard-progress";
 import { recordRelevantChange } from "./event-changes";
 import { notifyEventChangeInBackground } from "./notifications";
+import { ticketsHeldByAccount } from "./orders";
 
 /** Transições permitidas do ciclo de vida do evento. */
 export const EVENT_TRANSITIONS: Record<EventStatus, readonly EventStatus[]> = {
@@ -114,26 +115,26 @@ export async function createEvent(db: Db, actor: Actor, organizationId: string, 
 }
 
 /**
- * Maior quantidade de ingressos que uma única conta já tem no evento (R4), com a mesma
- * regra de `ticketsHeldByAccount` do `pagamentos-financeiro` (PR #54): ingressos
- * VALID/CHECKED_IN de que a conta é titular (`holderUserId`; transferido conta só para o
- * novo titular) + itens dos pedidos PENDING_PAYMENT da conta ainda não vencidos.
- * Quando o PR #54 estiver no main, trocar por `ticketsHeldByAccount` por conta.
+ * Maior quantidade de ingressos que uma conta já tem no evento, se passar de `limit` (R4);
+ * senão `null`. A contagem por conta é a do `pagamentos-financeiro` (`ticketsHeldByAccount`).
+ * Aqui só se escolhem as contas candidatas, por um filtro mais largo que a regra (qualquer
+ * status, qualquer vencimento): se titularidade e reservas da conta ficam cada uma em até
+ * metade do limite, a soma não passa dele.
  */
-export async function maxTicketsHeldBySingleAccount(client: Db | Tx, eventId: string, now = new Date()): Promise<number> {
-  const [row] = await client.$queryRaw<{ max: number | null }[]>`
-    SELECT max(n)::int AS max FROM (
-      SELECT account, sum(q) AS n FROM (
-        SELECT t."holderUserId" AS account, 1 AS q
-          FROM "IssuedTicket" t
-         WHERE t."eventId" = ${eventId} AND t.status IN ('VALID', 'CHECKED_IN')
-        UNION ALL
-        SELECT o."userId" AS account, i.quantity AS q
-          FROM "Order" o JOIN "OrderItem" i ON i."orderId" = o.id
-         WHERE o."eventId" = ${eventId} AND o.status = 'PENDING_PAYMENT' AND o."expiresAt" > ${now}
-      ) held GROUP BY account
-    ) per_account`;
-  return row?.max ?? 0;
+export async function largestHoldingOverLimit(tx: Tx, eventId: string, limit: number, now = new Date()): Promise<number | null> {
+  const candidates = await tx.$queryRaw<{ account: string }[]>`
+    SELECT "holderUserId" AS account FROM "IssuedTicket" WHERE "eventId" = ${eventId}
+     GROUP BY "holderUserId" HAVING count(*) * 2 > ${limit}
+    UNION
+    SELECT o."userId" AS account FROM "Order" o JOIN "OrderItem" i ON i."orderId" = o.id
+     WHERE o."eventId" = ${eventId} AND o.status = 'PENDING_PAYMENT'
+     GROUP BY o."userId" HAVING sum(i.quantity) * 2 > ${limit}`;
+  let largest: number | null = null;
+  for (const { account } of candidates) {
+    const held = await ticketsHeldByAccount(tx, account, eventId, now);
+    if (held > limit && (largest === null || held > largest)) largest = held;
+  }
+  return largest;
 }
 
 export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: EventInput) {
@@ -155,8 +156,8 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
     if (committed > 0 && input.refundMinHoursBeforeEvent > current.refundMinHoursBeforeEvent)
       throw new AppError("VALIDATION", `Já há ingressos vendidos: a antecedência para reembolso não pode passar de ${current.refundMinHoursBeforeEvent} horas antes do evento.`);
     if (input.maxTicketsPerAccount !== undefined && input.maxTicketsPerAccount !== current.maxTicketsPerAccount) {
-      const held = await maxTicketsHeldBySingleAccount(tx, eventId);
-      if (input.maxTicketsPerAccount < held)
+      const held = await largestHoldingOverLimit(tx, eventId, input.maxTicketsPerAccount);
+      if (held !== null)
         throw new AppError("VALIDATION", `Uma conta já tem ${held} ingressos deste evento: o limite por conta não pode ser menor que ${held}.`);
     }
     const loc = await resolveLocation(tx, organizationId, input, current.venueId);

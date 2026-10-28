@@ -147,15 +147,28 @@ export async function extendEventChangeWindow(db: Db, actor: Actor, changeId: st
 
 export type EventChangeView = Awaited<ReturnType<typeof listEventChanges>>[number];
 
-/** Histórico do evento (mais recente primeiro) com o prazo vigente de cada alteração. */
-export async function listEventChanges(db: Db, actor: Actor, eventId: string) {
+/**
+ * Histórico do evento (mais recente primeiro) com o prazo vigente de cada alteração e,
+ * nas alterações originais, quantos compradores pediram reembolso pela janela dela
+ * (`Refund.eventChangeId`, gravado pelo `pagamentos-financeiro`; só contagens).
+ */
+export async function listEventChanges(db: Db, actor: Actor, eventId: string, now = new Date()) {
   await assertEventPermission(db, actor, eventId, "org:read");
-  const rows = await db.eventChange.findMany({
-    where: { eventId },
-    orderBy: { createdAt: "desc" },
-    include: { actor: { select: { name: true } } },
-  });
-  const now = new Date();
+  const [rows, refundRows] = await Promise.all([
+    db.eventChange.findMany({
+      where: { eventId },
+      orderBy: { createdAt: "desc" },
+      include: { actor: { select: { name: true } } },
+    }),
+    db.$queryRaw<{ eventChangeId: string; requested: number; refunded: number }[]>`
+      SELECT r."eventChangeId" AS "eventChangeId",
+             count(DISTINCT o."userId")::int AS requested,
+             count(DISTINCT o."userId") FILTER (WHERE r.status = 'SUCCEEDED')::int AS refunded
+        FROM "Refund" r JOIN "Order" o ON o.id = r."orderId"
+       WHERE o."eventId" = ${eventId} AND r."eventChangeId" IS NOT NULL
+       GROUP BY r."eventChangeId"`,
+  ]);
+  const refunds = new Map(refundRows.map((r) => [r.eventChangeId, r]));
   return rows.map((r) => {
     const rootId = r.extendsChangeId ?? r.id;
     const family = rows.filter((x) => x.id === rootId || x.extendsChangeId === rootId);
@@ -172,6 +185,7 @@ export async function listEventChanges(db: Db, actor: Actor, eventId: string) {
       extendsChangeId: r.extendsChangeId,
       effectiveRefundUntil: effective,
       windowOpen: !r.extendsChangeId && !!effective && effective > now,
+      refundRequests: r.extendsChangeId ? null : { buyers: refunds.get(r.id)?.requested ?? 0, refunded: refunds.get(r.id)?.refunded ?? 0 },
     };
   });
 }

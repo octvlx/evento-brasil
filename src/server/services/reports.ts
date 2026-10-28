@@ -30,6 +30,9 @@ export interface DashboardAlert {
 
 const PAID_LIKE = ["PAID", "REFUND_PENDING", "REFUNDED", "DISPUTED"] as const;
 
+/** Transferência ainda pendente a menos disso do início do evento vira alerta no painel. */
+export const PENDING_TRANSFER_ALERT_HOURS = 72;
+
 /**
  * Dados do painel do organizador. Cada bloco respeita a permissão do papel:
  * financeiro (pedidos recentes, receita por evento) só com `finance:read`;
@@ -41,8 +44,9 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
   const canManage = roleHas(membership.role, "org:manage");
   const canMembers = roleHas(membership.role, "members:manage");
   const canWrite = roleHas(membership.role, "event:write");
+  const canAttendees = roleHas(membership.role, "attendees:read");
 
-  const [org, upcoming, pastCount, pendingReviewCount, invitesPending] = await Promise.all([
+  const [org, upcoming, pastCount, pendingReviewCount, invitesPending, pendingTransfers, openWindows] = await Promise.all([
     db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { status: true, statusReason: true, paymentAccountStatus: true } }),
     db.event.findMany({
       where: { organizationId, endsAt: { gte: now }, status: { in: ["DRAFT", "PENDING_REVIEW", "PUBLISHED"] } },
@@ -65,6 +69,17 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
     canMembers
       ? db.organizationInvitation.count({ where: { organizationId, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } } })
       : Promise.resolve(null),
+    db.ticketTransfer.groupBy({
+      by: ["eventId"],
+      where: { status: "PENDING", event: { organizationId, startsAt: { gt: now, lte: new Date(now.getTime() + PENDING_TRANSFER_ALERT_HOURS * 3_600_000) } } },
+      _count: true,
+    }),
+    // Prorrogação só existe com a janela aberta, então qualquer linha com prazo futuro indica janela aberta.
+    db.eventChange.findMany({
+      where: { organizationId, relevant: true, refundUntil: { gt: now }, event: { status: "PUBLISHED" } },
+      distinct: ["eventId"],
+      select: { eventId: true, event: { select: { title: true } } },
+    }),
   ]);
 
   const ticketRows = upcoming.length
@@ -102,6 +117,19 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
     if (e.status === "PUBLISHED" && startsInMs < 7 * 86_400_000 && e._count.staffAssignments === 0 && canMembers)
       alerts.push({ tone: "info", text: `"${e.title}" começa em breve e não tem equipe de check-in atribuída.`, href: "/organizador/configuracoes" });
   }
+  if (pendingTransfers.length) {
+    const titles = new Map(
+      (await db.event.findMany({ where: { id: { in: pendingTransfers.map((t) => t.eventId) } }, select: { id: true, title: true } })).map((e) => [e.id, e.title]),
+    );
+    for (const t of pendingTransfers)
+      alerts.push({
+        tone: "warning",
+        text: `"${titles.get(t.eventId)}" começa em breve e tem ${t._count} transferência(s) de ingresso aguardando aceite.`,
+        href: canAttendees ? `/organizador/participantes?evento=${t.eventId}` : undefined,
+      });
+  }
+  for (const w of openWindows)
+    alerts.push({ tone: "info", text: `"${w.event.title}" tem janela de reembolso por alteração aberta.`, href: `/organizador/eventos/${w.eventId}/editar` });
   if (pendingReviewCount > 0) alerts.push({ tone: "info", text: `${pendingReviewCount} evento(s) aguardando moderação da plataforma.` });
   if (invitesPending) alerts.push({ tone: "info", text: `${invitesPending} convite(s) de equipe aguardando aceite.`, href: "/organizador/configuracoes" });
 
@@ -205,12 +233,60 @@ export async function eventSalesSummary(db: Db, actor: Actor, eventId: string) {
   };
 }
 
+/**
+ * Ingressos do evento com o titular ATUAL (R6): depois de uma transferência aceita,
+ * `holderUserId`, `holderName` e `holderEmail` são do novo titular; o comprador
+ * (quem pagou) continua no pedido. `transferred` = o titular não é mais o comprador.
+ */
 export async function listAttendees(db: Db, actor: Actor, eventId: string) {
   await assertEventPermission(db, actor, eventId, "attendees:read");
-  return db.issuedTicket.findMany({
+  const rows = await db.issuedTicket.findMany({
     where: { eventId },
-    include: { ticketType: { select: { name: true, kind: true } }, order: { select: { publicCode: true, buyerEmail: true } } },
+    include: {
+      ticketType: { select: { name: true, kind: true } },
+      order: { select: { publicCode: true, buyerEmail: true } },
+      holder: { select: { name: true, email: true } },
+      transfers: { where: { status: "PENDING" }, select: { toEmail: true, expiresAt: true }, take: 1 },
+      _count: { select: { transfers: true } },
+    },
     orderBy: [{ issuedAt: "asc" }, { sequence: "asc" }],
+  });
+  return rows.map(({ holder, transfers, _count, ...t }) => ({
+    ...t,
+    holderName: t.holderName ?? holder.name,
+    holderEmail: t.holderEmail ?? holder.email,
+    transferred: t.holderUserId !== t.userId,
+    pendingTransfer: transfers[0] ?? null,
+    transferCount: _count.transfers,
+  }));
+}
+
+export type TransferHistoryRow = Awaited<ReturnType<typeof listTransferHistory>>[number];
+
+/**
+ * Histórico de transferências dos ingressos do evento (de → para, datas, situação),
+ * mais antigo primeiro. Dados pessoais: mesma permissão da lista de participantes.
+ * Nunca devolve token, IP nem user agent. Com `ticketId`, só daquele ingresso.
+ */
+export async function listTransferHistory(db: Db, actor: Actor, eventId: string, ticketId?: string) {
+  await assertEventPermission(db, actor, eventId, "attendees:read");
+  return db.ticketTransfer.findMany({
+    where: { eventId, ticket: { eventId }, ...(ticketId ? { ticketId } : {}) },
+    select: {
+      id: true,
+      ticketId: true,
+      initiatedBy: true,
+      fromHolderName: true,
+      fromHolderEmail: true,
+      toHolderName: true,
+      toEmail: true,
+      status: true,
+      createdAt: true,
+      expiresAt: true,
+      decidedAt: true,
+      ticket: { select: { code: true } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 }
 
@@ -228,10 +304,21 @@ function toCsv(rows: unknown[][], sep = ","): string {
 }
 
 export function attendeesToCsv(rows: Awaited<ReturnType<typeof listAttendees>>): string {
-  const header = ["codigo", "participante", "email", "tipo", "status", "check_in", "pedido"];
+  const header = ["codigo", "titular", "email_titular", "conta_titular", "transferido", "transferencia_pendente", "tipo", "status", "check_in", "pedido"];
   return toCsv([
     header,
-    ...rows.map((t) => [t.code, t.holderName, t.holderEmail, t.ticketType.name, t.status, t.checkedInAt?.toISOString() ?? "", t.order.publicCode]),
+    ...rows.map((t) => [
+      t.code,
+      t.holderName,
+      t.holderEmail,
+      t.holderUserId,
+      t.transferred ? "sim" : "não",
+      t.pendingTransfer ? "sim" : "não",
+      t.ticketType.name,
+      t.status,
+      t.checkedInAt?.toISOString() ?? "",
+      t.order.publicCode,
+    ]),
   ]);
 }
 
