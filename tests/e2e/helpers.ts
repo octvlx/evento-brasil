@@ -17,6 +17,12 @@ export async function login(page: Page, email: string, next = "/") {
   await page.waitForURL((url) => !url.pathname.startsWith("/entrar"));
 }
 
+/** Marca os dois aceites do cadastro (termos de uso e política de privacidade, R10). */
+export async function acceptSignupTerms(page: Page) {
+  await page.getByRole("checkbox", { name: /termos de uso/ }).check();
+  await page.getByRole("checkbox", { name: /política de privacidade/ }).check();
+}
+
 /** Lê o conteúdo do QR direto do banco de desenvolvimento (equivale a ler o QR com a câmera). */
 export async function qrPayloadFor(code: string) {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });

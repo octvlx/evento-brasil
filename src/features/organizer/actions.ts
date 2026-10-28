@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { OrgRole } from "@/generated/prisma/client";
@@ -17,6 +17,7 @@ import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
 import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
+import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, upsertTicketType } from "@/server/services/events";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
 import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
@@ -45,12 +46,20 @@ async function setActiveOrg(organizationId: string) {
   (await cookies()).set(ACTIVE_ORG_COOKIE, organizationId, { path: "/", httpOnly: true, sameSite: "lax", secure: env().NODE_ENV === "production" });
 }
 
+/** Aceite dos termos do organizador pela organização (R10; agente paginas-publicas). */
+async function recordOrganizerTerms(userId: string, organizationId: string) {
+  const h = await headers();
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || null;
+  await recordAcceptance(db, userId, ["ORGANIZER"], { context: "ORGANIZER_SIGNUP", organizationId, ip, userAgent: h.get("user-agent") });
+}
+
 /** Cria uma NOVA organização (primeira ou adicional) e a torna ativa. */
 export async function createOrganizationAction(input: OrganizerApplicationInput): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser("/organizador/organizacoes/nova");
   return toActionResult(async () => {
     rateLimit(`org-create:${user.id}`, 5, 60 * 60_000);
     const org = await submitOrganizerApplication(db, user, input);
+    await recordOrganizerTerms(user.id, org.id);
     await setActiveOrg(org.id);
     return { id: org.id };
   });
@@ -61,6 +70,7 @@ export async function resubmitApplicationAction(organizationId: string, input: O
   const user = await requireUser("/organizador/cadastro");
   return toActionResult(async () => {
     const org = await resubmitOrganizerApplication(db, user, organizationId, input);
+    await recordOrganizerTerms(user.id, org.id);
     await setActiveOrg(org.id);
     return { id: org.id };
   });
