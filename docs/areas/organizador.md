@@ -1,7 +1,8 @@
 # Área do organizador — inventário e dependências
 
-Responsável: agente `area-organizador`. Última revisão: alteração relevante com
-janela de reembolso e limite de ingressos por conta (Fase 3 do Decreto 13.108/2026).
+Responsável: agente `area-organizador`. Última revisão: participantes com titular
+atual e histórico de transferências, janelas de alteração abertas e alertas (Fase 4
+do Decreto 13.108/2026).
 
 ## O que existe
 
@@ -17,7 +18,7 @@ janela de reembolso e limite de ingressos por conta (Fase 3 do Decreto 13.108/20
 | Publicação com moderação / publicação automática; cancelamento com reembolso | `submitEventForPublication`, `cancelEvent` (financeiro) | Pronto |
 | Vendas, repasses e cota de meia-entrada | `/organizador/vendas` | Pronto |
 | CSV de meia-entrada por evento (cota, vendidas, reservadas, reembolsadas, canceladas, check-in, cota restante, vendas por dia) — auditado, sem dados pessoais | `/organizador/vendas`, `/api/organizador/eventos/[id]/meia-entrada`, `halfPriceReport`/`halfPriceReportToCsv` em `reports.ts` | Pronto |
-| Participantes + CSV auditado | `/organizador/participantes`, `/api/organizador/eventos/[id]/participantes` | Pronto |
+| Participantes com titular atual, marcador "Transferido"/"Transferência pendente" e histórico de transferências por ingresso + CSV auditado | `/organizador/participantes`, `/api/organizador/eventos/[id]/participantes`, `listAttendees`, `listTransferHistory` | Pronto |
 | Perfil, conta de recebimento (simulada), equipe, convites, atribuição de check-in | `/organizador/configuracoes`, `/convite/[token]` | Pronto |
 | Convites: lista de pendentes (com vencidos), revogar, reenviar (novo token; o anterior deixa de valer), recusar pelo convidado | `/organizador/configuracoes`, `/convite/[token]`, `listPendingInvitations`, `revokeInvitation`, `resendInvitation`, `declineInvitation` | Pronto |
 | Alterar papel de membro | `/organizador/configuracoes`, `changeMemberRole` | Pronto |
@@ -26,7 +27,9 @@ janela de reembolso e limite de ingressos por conta (Fase 3 do Decreto 13.108/20
 | Relatórios "Vendas por origem" e "Uso de cupons" (só pedidos pagos, valores líquidos de desconto) | `/organizador/vendas`, `salesBySource`, `couponUsage` | Pronto |
 | Recusa de preço de ingresso abaixo da taxa da plataforma (bearer ORGANIZER) | `upsertTicketType` | Pronto (ADR 0002, passo 0) |
 | Alteração relevante de evento com vendas: motivo obrigatório, `EventChange` com janela de reembolso, aviso por e-mail, histórico e prorrogação (R8) | `…/[id]/editar` (formulário e "Histórico de alterações"), `updateEvent`, `event-changes.ts`, `notifyEventChange` | Pronto com padrões provisórios (D2) |
-| Limite de ingressos por conta (opcional) no assistente e na edição (R4) | `maxTicketsPerAccount` em `eventInputSchema`, `maxTicketsHeldBySingleAccount` | Pronto no organizador; a checagem no checkout é do `pagamentos-financeiro` |
+| Limite de ingressos por conta (opcional) no assistente e na edição (R4) | `maxTicketsPerAccount` em `eventInputSchema`, `largestHoldingOverLimit` (usa `ticketsHeldByAccount`) | Pronto no organizador; a checagem no checkout é do `pagamentos-financeiro` |
+| Janelas de reembolso por alteração abertas, com compradores que pediram reembolso por elas | `…/[id]/editar` (aviso no topo e "Histórico de alterações"), `listEventChanges` | Pronto (só leitura) |
+| Alertas no painel: transferência pendente a menos de 72 h do início; janela de alteração aberta | `organizerDashboard` (`PENDING_TRANSFER_ALERT_HOURS`) | Pronto |
 
 ### Assistente de criação de evento
 
@@ -123,11 +126,42 @@ publicar).
 - Campo opcional "Limite de ingressos por conta" na etapa 3 do assistente e na edição
   (`Event.maxTicketsPerAccount`; vazio = sem limite; 1–1000).
 - Com vendas, o servidor recusa limite menor que o que uma conta já tem
-  (`maxTicketsHeldBySingleAccount`), com a mesma regra do `ticketsHeldByAccount` do
-  `pagamentos-financeiro` (PR #54): ingressos VALID/CHECKED_IN de que a conta é
-  **titular** (transferido conta só para o novo titular) + itens dos pedidos
-  PENDING_PAYMENT da conta ainda não vencidos. Quando o PR #54 estiver no main, trocar
-  pela função dele; o `createOrder` de lá já aplica o limite no checkout.
+  (`largestHoldingOverLimit`). A contagem por conta é o `ticketsHeldByAccount` do
+  `pagamentos-financeiro`: ingressos VALID/CHECKED_IN de que a conta é **titular**
+  (transferido conta só para o novo titular) + itens dos pedidos PENDING_PAYMENT da
+  conta ainda não vencidos. Aqui só se escolhem as contas candidatas (titularidade ou
+  reservas acima de metade do limite, em qualquer status/vencimento), para não chamar a
+  função para cada comprador. O `createOrder` de lá aplica o limite no checkout.
+
+### Participantes e transferências (R6, T-TRANSF — lado do organizador)
+
+- `listAttendees` (`attendees:read`: OWNER, ADMIN, EVENT_MANAGER, FINANCE) mostra o
+  **titular atual**: `holderUserId`, `holderName`/`holderEmail` do ingresso (o aceite os
+  troca para o novo titular) ou, sem eles, nome/e-mail da conta titular. `transferred` =
+  titular ≠ comprador (`userId`, que nunca muda); `pendingTransfer` = transferência
+  PENDING (e-mail do destinatário e validade). O pedido continua do comprador.
+- `listTransferHistory(db, actor, eventId, ticketId?)`: de → para (nome/e-mail copiados
+  na transferência), criação, validade, decisão, situação e se foi pela plataforma
+  (`initiatedBy = ADMIN`). Nunca devolve token, hash, IP nem user agent. Filtra por
+  `eventId` do evento autorizado (ingresso de outra organização não aparece).
+  Na tela, fica num "Histórico de transferências (n)" recolhível em cada ingresso.
+- CSV: `codigo, titular, email_titular, conta_titular, transferido, transferencia_pendente,
+  tipo, status, check_in, pedido`, com `csvCell` (fórmulas neutralizadas). Cada download
+  grava `attendees.exported`.
+- Equipe de check-in (`CHECKIN_STAFF`) não vê participantes nem histórico.
+
+### Janelas de alteração abertas e alertas
+
+- `listEventChanges` devolve, em cada alteração original, `refundRequests = { buyers,
+  refunded }`: compradores distintos com `Refund.eventChangeId` daquela alteração (gravado
+  pelo `pagamentos-financeiro` em `requestCustomerRefund`) e quantos já com reembolso
+  SUCCEEDED. Só contagens; permissão `org:read`. A página de gestão mostra um aviso no topo
+  com as janelas abertas e a contagem no histórico.
+- Painel: alerta "warning" por evento com transferência PENDING e início em até
+  `PENDING_TRANSFER_ALERT_HOURS` (72 h), com link para os participantes se o papel tiver
+  `attendees:read`; alerta "info" por evento PUBLISHED com `EventChange` de prazo futuro.
+- Testes: `tests/integration/z-organizer-participants-transfers.test.ts` e
+  `tests/e2e/organizer-participants.spec.ts` (com os dados do seed).
 
 ### Relatório de meia-entrada (R7)
 
@@ -191,8 +225,7 @@ e `organizer-team.spec.ts` (convites e papéis).
 5. **Eventos:** duplicar evento, despublicar, galeria de imagens (`EventImage`
    existe mas não é usado), busca/filtro na lista, paginação.
 6. ~~Avisar compradores quando data/local de evento com vendas mudar~~ — feito (R8).
-   Falta: reenvio manual do aviso e outbox durável (T7); usar `ticketsHeldByAccount`
-   do financeiro quando estiver no main.
+   Falta: reenvio manual do aviso e outbox durável (T7).
 7. **Organização:** logo e capa (ver dependências), links sociais adicionais.
 
 8. **Assistente de evento (complementos):** preencher endereço pelo CEP quando

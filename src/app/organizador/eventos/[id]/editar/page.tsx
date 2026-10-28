@@ -8,7 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
 import { EventForm } from "@/features/organizer/event-form";
 import { EventChangesHistory } from "@/features/organizer/event-changes-history";
-import type { ChangeSnapshotJson } from "@/features/organizer/event-change-rules";
+import { refundRequestsText, type ChangeSnapshotJson } from "@/features/organizer/event-change-rules";
 import { EventStatusActions } from "@/features/organizer/event-status-actions";
 import { TicketTypesManager } from "@/features/organizer/ticket-types-manager";
 import { CouponsManager } from "@/features/organizer/coupons-manager";
@@ -22,7 +22,7 @@ import { listEventTrackingLinks } from "@/server/services/tracking-links";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { getWizardProgress, isWizardComplete } from "@/server/services/event-wizard-progress";
 import { firstIncompleteStep } from "@/features/organizer/wizard-steps";
-import { utcToZonedLocalInput } from "@/lib/datetime";
+import { formatDateTimeShort, utcToZonedLocalInput } from "@/lib/datetime";
 import { EVENT_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Gerenciar evento", robots: { index: false } };
@@ -53,6 +53,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   const st = EVENT_STATUS[event.status];
   const canWrite = can("event:write");
   const changes = await listEventChanges(db, user, id);
+  const openWindows = changes.filter((c) => c.windowOpen);
   const [coupons, links] = canWrite ? await Promise.all([listEventCoupons(db, user, id), listEventTrackingLinks(db, user, id)]) : [[], []];
 
   return (
@@ -82,6 +83,18 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
       </div>
       {event.status === "PENDING_REVIEW" && <Alert variant="warning" className="mb-6">Aguardando moderação da plataforma.</Alert>}
       {event.status === "CANCELLED" && <Alert variant="danger" className="mb-6">Evento cancelado: {event.cancellationReason}</Alert>}
+      {openWindows.length > 0 && (
+        <Alert variant="warning" className="mb-6">
+          <p className="font-semibold">Janelas de reembolso por alteração abertas</p>
+          <ul className="mt-1 space-y-1">
+            {openWindows.map((c) => (
+              <li key={c.id}>
+                Alteração de {formatDateTimeShort(c.createdAt, tz)}: reembolso integral até {formatDateTimeShort(c.effectiveRefundUntil!, tz)}. {c.refundRequests && refundRequestsText(c.refundRequests)}
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      )}
 
       <Card className="mb-6 p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Publicação</h2>

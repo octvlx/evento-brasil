@@ -78,3 +78,9 @@ export function describeChangeValue(field: RelevantField, snap: ChangeSnapshotJs
 export function isRelevantField(f: string): f is RelevantField {
   return f in RELEVANT_FIELD_LABELS;
 }
+
+/** Resumo dos pedidos de reembolso feitos pela janela de uma alteração relevante. */
+export function refundRequestsText({ buyers, refunded }: { buyers: number; refunded: number }): string {
+  if (buyers === 0) return "Nenhum comprador pediu reembolso por esta alteração.";
+  return `${buyers} ${buyers === 1 ? "comprador pediu" : "compradores pediram"} reembolso por esta alteração (${refunded} já ${refunded === 1 ? "reembolsado" : "reembolsados"}).`;
+}

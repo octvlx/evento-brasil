@@ -7,7 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
-import { listAttendees } from "@/server/services/reports";
+import { listAttendees, listTransferHistory, type TransferHistoryRow } from "@/server/services/reports";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { TICKET_KIND, TICKET_STATUS } from "@/lib/labels";
 
@@ -28,6 +28,9 @@ async function Content({ searchParams }: { searchParams: Promise<{ evento?: stri
   const events = await db.event.findMany({ where: { organizationId: org.id }, select: { id: true, title: true, timezone: true }, orderBy: { startsAt: "desc" } });
   const selected = events.find((e) => e.id === evento) ?? events[0];
   const rows = selected ? await listAttendees(db, user, selected.id) : [];
+  const history = selected && rows.some((r) => r.transferCount > 0) ? await listTransferHistory(db, user, selected.id) : [];
+  const historyByTicket = new Map<string, TransferHistoryRow[]>();
+  for (const h of history) historyByTicket.set(h.ticketId, [...(historyByTicket.get(h.ticketId) ?? []), h]);
   return (
     <>
       <PageTitle
@@ -55,14 +58,14 @@ async function Content({ searchParams }: { searchParams: Promise<{ evento?: stri
             <button className={buttonVariants({ variant: "secondary" })}>Ver</button>
           </form>
           <p className="mb-3 text-sm text-muted-foreground">
-            {rows.length} ingresso(s) · {rows.filter((r) => r.status === "CHECKED_IN").length} check-in(s)
+            {rows.length} ingresso(s) · {rows.filter((r) => r.status === "CHECKED_IN").length} check-in(s) · {rows.filter((r) => r.transferred).length} transferido(s)
           </p>
           <div className="overflow-x-auto rounded-2xl border border-border">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="p-3">Código</th>
-                  <th className="p-3">Participante</th>
+                  <th className="p-3">Titular atual</th>
                   <th className="p-3">Ingresso</th>
                   <th className="p-3">Pedido</th>
                   <th className="p-3">Status</th>
@@ -76,8 +79,13 @@ async function Content({ searchParams }: { searchParams: Promise<{ evento?: stri
                     <tr key={t.id} className="border-t border-border">
                       <td className="p-3 font-mono">{t.code}</td>
                       <td className="p-3">
-                        <p>{t.holderName}</p>
+                        <p>
+                          {t.holderName}{" "}
+                          {t.transferred && <Badge variant="warning">Transferido</Badge>}{" "}
+                          {t.pendingTransfer && <Badge>Transferência pendente</Badge>}
+                        </p>
                         <p className="text-xs text-muted-foreground">{t.holderEmail}</p>
+                        {historyByTicket.has(t.id) && <TransferHistory items={historyByTicket.get(t.id)!} timezone={selected!.timezone} />}
                       </td>
                       <td className="p-3">
                         {t.ticketType.name} <span className="text-xs text-muted-foreground">({TICKET_KIND[t.ticketType.kind]})</span>
@@ -96,5 +104,31 @@ async function Content({ searchParams }: { searchParams: Promise<{ evento?: stri
         </>
       )}
     </>
+  );
+}
+
+const TRANSFER_STATUS: Record<TransferHistoryRow["status"], string> = {
+  PENDING: "Pendente",
+  ACCEPTED: "Aceita",
+  CANCELLED: "Cancelada",
+  EXPIRED: "Expirada",
+};
+
+function TransferHistory({ items, timezone }: { items: TransferHistoryRow[]; timezone: string }) {
+  return (
+    <details className="mt-1 text-xs">
+      <summary className="cursor-pointer text-primary">Histórico de transferências ({items.length})</summary>
+      <ol className="mt-1 space-y-1">
+        {items.map((h) => (
+          <li key={h.id}>
+            {formatDateTimeShort(h.createdAt, timezone)}: {h.fromHolderName} ({h.fromHolderEmail}) → {h.toHolderName ? `${h.toHolderName} (${h.toEmail})` : h.toEmail}
+            {" · "}
+            {TRANSFER_STATUS[h.status]}
+            {h.decidedAt && ` em ${formatDateTimeShort(h.decidedAt, timezone)}`}
+            {h.initiatedBy === "ADMIN" && " · pela plataforma"}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }

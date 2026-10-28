@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge, FieldError, Input, Label, Textarea } from "@/components/ui/primitives";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { extendEventChangeAction } from "./actions";
-import { CHANGE_REASON_MIN, describeChangeValue, isRelevantField, RELEVANT_FIELD_LABELS, type ChangeSnapshotJson } from "./event-change-rules";
+import { CHANGE_REASON_MIN, describeChangeValue, refundRequestsText, isRelevantField, RELEVANT_FIELD_LABELS, type ChangeSnapshotJson } from "./event-change-rules";
 
 export interface EventChangeItem {
   id: string;
@@ -19,6 +19,8 @@ export interface EventChangeItem {
   extendsChangeId: string | null;
   effectiveRefundUntil: string | null;
   windowOpen: boolean;
+  /** Compradores que pediram reembolso por esta alteração (nulo numa prorrogação). */
+  refundRequests: { buyers: number; refunded: number } | null;
   /** Prazo vigente no formato do campo datetime-local (horário do evento). */
   effectiveRefundUntilLocal: string | null;
 }
@@ -60,6 +62,7 @@ export function EventChangesHistory({ items, timezone, maxLocal, canExtend }: { 
               <span className="text-muted-foreground">Reembolso integral até:</span> {formatDateTimeShort(new Date(c.effectiveRefundUntil), timezone)} (pedidos pagos antes da alteração)
             </p>
           )}
+          {c.refundRequests && <p className="mt-1">{refundRequestsText(c.refundRequests)}</p>}
           {canExtend && c.windowOpen && <ExtendForm change={c} maxLocal={maxLocal} />}
         </li>
       ))}
