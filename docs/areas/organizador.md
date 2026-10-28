@@ -19,9 +19,10 @@ do Decreto 13.108/2026).
 | Vendas, repasses e cota de meia-entrada | `/organizador/vendas` | Pronto |
 | CSV de meia-entrada por evento (cota, vendidas, reservadas, reembolsadas, canceladas, check-in, cota restante, vendas por dia) — auditado, sem dados pessoais | `/organizador/vendas`, `/api/organizador/eventos/[id]/meia-entrada`, `halfPriceReport`/`halfPriceReportToCsv` em `reports.ts` | Pronto |
 | Participantes com titular atual, marcador "Transferido"/"Transferência pendente" e histórico de transferências por ingresso + CSV auditado | `/organizador/participantes`, `/api/organizador/eventos/[id]/participantes`, `listAttendees`, `listTransferHistory` | Pronto |
-| Perfil, conta de recebimento (simulada), equipe, convites, atribuição de check-in | `/organizador/configuracoes`, `/convite/[token]` | Pronto |
-| Convites: lista de pendentes (com vencidos), revogar, reenviar (novo token; o anterior deixa de valer), recusar pelo convidado | `/organizador/configuracoes`, `/convite/[token]`, `listPendingInvitations`, `revokeInvitation`, `resendInvitation`, `declineInvitation` | Pronto |
-| Alterar papel de membro | `/organizador/configuracoes`, `changeMemberRole` | Pronto |
+| Perfil e conta de recebimento (simulada) | `/organizador/configuracoes` | Pronto |
+| Equipe, convites e atribuição de check-in (menu abaixo de Eventos) | `/organizador/equipe`, `/convite/[token]` | Pronto |
+| Convites: lista de pendentes (com vencidos), revogar, reenviar (novo token; o anterior deixa de valer), recusar pelo convidado | `/organizador/equipe`, `/convite/[token]`, `listPendingInvitations`, `revokeInvitation`, `resendInvitation`, `declineInvitation` | Pronto |
+| Alterar papel de membro | `/organizador/equipe`, `changeMemberRole` | Pronto |
 | Cupons de desconto (criar, editar, desativar, excluir se nunca usado; avisos de taxa e meia-entrada) | `/organizador/eventos/[id]/editar`, `coupons.ts` | Pronto (ADR 0002, passo 3); aplicar no checkout é o passo 2 (`pagamentos-financeiro`) |
 | Links de divulgação rastreados (UTMs, cupom pré-aplicado, cliques, arquivar) | `/organizador/eventos/[id]/editar`, `tracking-links.ts` | Pronto (passo 3); `/r/[code]` e cookie de atribuição são do passo 4 (`paginas-publicas`) |
 | Relatórios "Vendas por origem" e "Uso de cupons" (só pedidos pagos, valores líquidos de desconto) | `/organizador/vendas`, `salesBySource`, `couponUsage` | Pronto |

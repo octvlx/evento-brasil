@@ -224,7 +224,7 @@ async function sendInvitationEmail(orgId: string, email: string, token: string) 
 }
 
 export async function inviteMemberAction(_prev: ActionResult<{ link: string }> | undefined, formData: FormData): Promise<ActionResult<{ link: string }>> {
-  const user = await requireUser("/organizador/configuracoes");
+  const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
     const orgId = await activeOrgId(user.id);
     const { invitation, token } = await inviteMember(db, user, orgId, {
@@ -240,7 +240,7 @@ export async function inviteMemberAction(_prev: ActionResult<{ link: string }> |
 
 /** Gera um novo link (o anterior para de funcionar) e reenvia o e-mail. */
 export async function resendInvitationAction(invitationId: string): Promise<ActionResult<{ link: string }>> {
-  const user = await requireUser("/organizador/configuracoes");
+  const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
     rateLimit(`invite-resend:${user.id}`, 20, 60 * 60_000);
     const orgId = await activeOrgId(user.id);
@@ -252,7 +252,7 @@ export async function resendInvitationAction(invitationId: string): Promise<Acti
 }
 
 export async function revokeInvitationAction(invitationId: string): Promise<ActionResult> {
-  const user = await requireUser("/organizador/configuracoes");
+  const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
     await revokeInvitation(db, user, await activeOrgId(user.id), invitationId);
     return undefined;
@@ -279,7 +279,7 @@ export async function declineInvitationAction(token: string): Promise<ActionResu
 }
 
 export async function changeMemberRoleAction(userId: string, role: string): Promise<ActionResult> {
-  const user = await requireUser("/organizador/configuracoes");
+  const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
     // O serviço valida o papel recebido do cliente.
     await changeMemberRole(db, user, await activeOrgId(user.id), userId, role as OrgRole);
@@ -290,7 +290,7 @@ export async function changeMemberRoleAction(userId: string, role: string): Prom
 }
 
 export async function assignStaffAction(eventId: string, userId: string, assign: boolean): Promise<ActionResult> {
-  const user = await requireUser("/organizador/configuracoes");
+  const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
     await assignStaffToEvent(db, user, eventId, userId, assign);
     return undefined;
@@ -300,7 +300,7 @@ export async function assignStaffAction(eventId: string, userId: string, assign:
 }
 
 export async function removeMemberAction(userId: string): Promise<ActionResult> {
-  const user = await requireUser("/organizador/configuracoes");
+  const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
     await removeMember(db, user, await activeOrgId(user.id), userId);
     return undefined;
