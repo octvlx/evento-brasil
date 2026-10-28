@@ -9,7 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { qrPayload } from "@/server/services/tickets";
-import { TRANSFER_POLICY, transferBlockedReason } from "@/server/services/transfers";
+import { transferBlockedReason } from "@/server/services/transfers";
 import { organizerIdentity, organizerIdentityLine } from "@/server/tickets/organizer-identity";
 import { formatDateLong, formatDateTimeShort, formatTime, timezoneLabel } from "@/lib/datetime";
 import { TICKET_STATUS } from "@/lib/labels";
@@ -37,7 +37,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
     include: { ticketType: true, order: { select: { id: true, publicCode: true, isSimulated: true, status: true } }, event: { include: { venue: { include: { city: true } }, city: true } } },
   });
   if (!t) notFound();
-  // Histórico de transferências do ingresso (poucas linhas: no máximo TRANSFER_POLICY aceitas).
+  // Histórico de transferências do ingresso (poucas linhas: limite de aceites definido no evento).
   const transfers = await db.ticketTransfer.findMany({
     where: { ticketId: t.id },
     orderBy: { createdAt: "desc" },
@@ -60,7 +60,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
   // Contrato com paginas-publicas (Fase 4): o formulário de transferência fica em
   // /meus-ingressos e abre para o ingresso indicado em ?transferir=<código>.
   // Pendente vencida não bloqueia: requestTransfer a expira antes de criar a nova.
-  const canTransfer = !pendingOut && transferBlockedReason(t, now) === null && acceptedCount < TRANSFER_POLICY.maxTransfersPerTicket;
+  const canTransfer = !pendingOut && transferBlockedReason(t, now) === null && acceptedCount < t.event.transferMaxTransfers;
   const city = t.event.venue?.city ?? t.event.city;
   // Botões de carteira só quando a conta da Apple/Google estiver configurada (docs/wallet.md).
   const wallet = t.status === "VALID" ? walletAvailability() : { apple: false, google: false };
