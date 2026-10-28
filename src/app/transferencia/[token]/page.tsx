@@ -6,7 +6,8 @@ import { Alert, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
-import { DECLINED_BY_RECIPIENT, findTransferByToken, transferBlockedReason } from "@/server/services/transfers";
+import { DECLINED_BY_RECIPIENT, findTransferByToken, transferBlockedReason, transferRecipientBlockedReason } from "@/server/services/transfers";
+import { transferCutoff } from "@/lib/transfer-policy";
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { logoutAction } from "@/features/auth/actions";
 import { TransferResponse } from "@/features/checkin/transfer-response";
@@ -55,6 +56,7 @@ async function Content({ params }: { params: Promise<{ token: string }> }) {
     );
   }
   const tz = t.event.timezone;
+  const effectiveExpiresAt = t.expiresAt ? new Date(Math.min(t.expiresAt.getTime(), transferCutoff(t.event.startsAt, t.event).getTime())) : null;
   const isRecipient = user.email.toLowerCase() === t.toEmail;
 
   // Já aceita: o destinatário segue para o ingresso; os demais só sabem que o link foi usado.
@@ -75,11 +77,11 @@ async function Content({ params }: { params: Promise<{ token: string }> }) {
       </State>
     );
   }
-  if (t.status === "EXPIRED" || (t.status === "PENDING" && (!t.expiresAt || t.expiresAt <= now))) {
+  if (t.status === "EXPIRED" || (t.status === "PENDING" && (!effectiveExpiresAt || effectiveExpiresAt <= now))) {
     return (
       <State icon={Clock} tone="warning" title="Convite expirado">
         <p>
-          Este convite {t.expiresAt ? <>venceu em {formatDateTimeShort(t.expiresAt, tz)}</> : "venceu"}. O ingresso continua com quem enviou; peça a{" "}
+          Este convite {effectiveExpiresAt ? <>venceu em {formatDateTimeShort(effectiveExpiresAt, tz)}</> : "venceu"}. O ingresso continua com quem enviou; peça a{" "}
           {isRecipient ? <strong>{t.fromHolderName}</strong> : "essa pessoa"} para transferir de novo.
         </p>
       </State>
@@ -121,7 +123,9 @@ async function Content({ params }: { params: Promise<{ token: string }> }) {
     );
   }
   // O serviço reconfere tudo sob as travas; aqui só evita oferecer um aceite que vai falhar.
-  const blocked = transferBlockedReason({ status: t.ticket.status, order: t.ticket.order, event: t.event }, now);
+  const blocked = transferBlockedReason({ status: t.ticket.status, order: t.ticket.order, event: t.event }, now)
+    ?? (t.ticket._count.transfers >= t.event.transferMaxTransfers ? `Este ingresso já atingiu o limite de ${t.event.transferMaxTransfers} transferência(s).` : null)
+    ?? await transferRecipientBlockedReason(db, t.ticket.id, t.ticket.userId, user, t.event.transferAllowReturn);
   return (
     <Card className="mt-6 space-y-4 p-5">
       <p>
@@ -132,14 +136,17 @@ async function Content({ params }: { params: Promise<{ token: string }> }) {
         <p className="text-sm text-muted-foreground first-letter:uppercase">{formatEventDateTime(t.event.startsAt, tz)}</p>
       </div>
       {blocked ? (
-        <Alert variant="warning">
-          Não é mais possível aceitar: {blocked.charAt(0).toLowerCase() + blocked.slice(1)}
-        </Alert>
+        <>
+          <Alert variant="warning">
+            Não é mais possível aceitar: {blocked.charAt(0).toLowerCase() + blocked.slice(1)}
+          </Alert>
+          <TransferResponse token={token} allowAccept={false} />
+        </>
       ) : (
         <>
           <p className="text-sm text-muted-foreground">
             A transferência é gratuita. Ao aceitar, o ingresso fica no seu nome ({t.toHolderName ?? user.name}) e ganha um novo QR code; o anterior deixa de valer.
-            Válida até {formatDateTimeShort(t.expiresAt!, tz)}.
+            Válida até {formatDateTimeShort(effectiveExpiresAt!, tz)}. O evento permite até {t.event.transferMaxTransfers} transferência(s) por ingresso, até {t.event.transferDeadlineHours} hora(s) antes do início. {t.event.transferAllowReturn ? "Uma devolução depende de nova transferência aceita pelo titular anterior e conta nesse limite." : "Não é permitido devolver a titulares anteriores."}
           </p>
           <TransferResponse token={token} />
         </>
