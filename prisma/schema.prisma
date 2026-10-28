@@ -317,6 +317,11 @@ model Event {
   // CHECKs: dias 0–365, horas 0–720. Requer revisão jurídica (CDC art. 49).
   refundWindowDays          Int          @default(7)
   refundMinHoursBeforeEvent Int          @default(48)
+  // Transferência: antecedência em horas (0–8760), total por ingresso (1–10) e
+  // permissão de nova transferência consentida para um titular anterior.
+  transferDeadlineHours     Int          @default(24)
+  transferMaxTransfers      Int          @default(1)
+  transferAllowReturn       Boolean      @default(false)
   accessibilityInfo         String?
   moderationNote            String?
   publishedAt               DateTime?    @db.Timestamptz(3)
