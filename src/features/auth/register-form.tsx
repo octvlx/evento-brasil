@@ -49,14 +49,31 @@ export function RegisterForm({ next }: { next?: string }) {
         <Input id="password" type="password" autoComplete="new-password" className="mt-1.5" aria-invalid={!!errors.password} {...form.register("password")} />
         <FieldError message={errors.password?.message} />
       </div>
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" className="mt-0.5 size-4" {...form.register("acceptTerms")} />
-        <span>
-          Li e aceito os <Link href="/termos" className="text-secondary underline">termos de uso</Link> e a{" "}
-          <Link href="/privacidade" className="text-secondary underline">política de privacidade</Link>.
-        </span>
-      </label>
-      <FieldError message={errors.acceptTerms?.message} />
+      <fieldset className="space-y-2">
+        <legend className="sr-only">Aceites</legend>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-0.5 size-4" aria-invalid={!!errors.acceptTerms} {...form.register("acceptTerms")} />
+          <span>
+            Li e aceito os{" "}
+            <Link href="/termos" target="_blank" className="text-secondary underline">
+              termos de uso
+            </Link>
+            .
+          </span>
+        </label>
+        <FieldError message={errors.acceptTerms?.message} />
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-0.5 size-4" aria-invalid={!!errors.acceptPrivacy} {...form.register("acceptPrivacy")} />
+          <span>
+            Li e aceito a{" "}
+            <Link href="/privacidade" target="_blank" className="text-secondary underline">
+              política de privacidade
+            </Link>
+            .
+          </span>
+        </label>
+        <FieldError message={errors.acceptPrivacy?.message} />
+      </fieldset>
       {error && <Alert variant="danger">{error}</Alert>}
       <Button className="w-full" size="lg" disabled={pending}>
         {pending ? "Criando conta…" : "Criar conta"}

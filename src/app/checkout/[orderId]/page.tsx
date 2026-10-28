@@ -12,6 +12,7 @@ import { getOrderForBuyer } from "@/server/services/orders";
 import { checkoutStep } from "@/features/orders/status-view";
 import { formatEventDateTime } from "@/lib/datetime";
 import { getPaymentAdapter } from "@/server/payments";
+import { pendingTermsKinds } from "@/server/services/terms";
 
 export const metadata: Metadata = { title: "Pagamento", robots: { index: false } };
 
@@ -32,6 +33,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
   const order = await getOrderForBuyer(db, user, orderId);
   if (order.status !== "PENDING_PAYMENT") redirect(`/pedido/${orderId}`);
   const step = checkoutStep(order.payments);
+  const termsPending = (await pendingTermsKinds(db, user.id)).length > 0;
   const confirmingPayment = order.payments.some((p) => p.status === "PENDING" && (!p.providerPaymentId || (p.method === "PIX" && !p.pixCopyPaste && !p.pixQrCodeBase64)));
   const pix = step === "pix" ? order.payments.find((p) => p.status === "PENDING" && p.method === "PIX") : undefined;
   // Para PIX real o provedor envia o QR; no simulado geramos o QR do texto "SIMULADO".
@@ -61,6 +63,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
           isSimulated={order.isSimulated}
           pendingPix={pix ? { copyPaste: pix.pixCopyPaste, qrDataUrl } : null}
           cardProcessing={step === "card-processing"}
+          termsPending={termsPending}
         />}
       </div>
       <Card className="h-fit p-5">
