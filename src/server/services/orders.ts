@@ -235,6 +235,27 @@ async function resolveAttributionTx(tx: Tx, eventId: string, a: CreateOrderInput
   return { trackingLinkId: link.id, ...(Object.values(utm).some(Boolean) ? utm : fromLink) };
 }
 
+/**
+ * Ingressos de um evento que contam para o limite por conta (R4,
+ * `Event.maxTicketsPerAccount`): os ingressos VALID/CHECKED_IN de que a conta é
+ * titular (`holderUserId`, inclusive recebidos por transferência) mais as
+ * quantidades dos pedidos PENDING_PAYMENT da conta nesse evento.
+ *
+ * Contrato com `check-in` (aceite de transferência). Para o resultado valer na
+ * decisão, chame com a trava do evento (`lockEvent`) já tomada: é a mesma trava
+ * que serializa `createOrder`.
+ */
+export async function ticketsHeldByAccount(client: Db | Tx, userId: string, eventId: string, now = new Date()): Promise<number> {
+  const [held, pending] = await Promise.all([
+    client.issuedTicket.count({ where: { eventId, holderUserId: userId, status: { in: ["VALID", "CHECKED_IN"] } } }),
+    // Reserva vencida ainda não liberada pela manutenção não conta.
+    client.orderItem.aggregate({ where: { order: { eventId, userId, status: "PENDING_PAYMENT", expiresAt: { gt: now } } }, _sum: { quantity: true } }),
+  ]);
+  return held + (pending._sum.quantity ?? 0);
+}
+
+const ticketsWord = (n: number) => `${n} ${n === 1 ? "ingresso" : "ingressos"}`;
+
 export interface CreateOrderOptions {
   now?: Date;
   /** O provedor configurado é o simulado (marca o pedido como simulado). */
@@ -304,6 +325,19 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       }
       const committed = ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
       if (committed + requested > event.capacity) throw new AppError("SOLD_OUT", "Capacidade do evento esgotada.");
+      // Limite por conta (R4). Sob a trava do evento e depois de liberar o pedido
+      // pendente anterior do comprador, que seria substituído por este.
+      if (event.maxTicketsPerAccount !== null) {
+        const held = await ticketsHeldByAccount(tx, actor.id, event.id, now);
+        if (held + requested > event.maxTicketsPerAccount) {
+          const left = Math.max(0, event.maxTicketsPerAccount - held);
+          throw new AppError(
+            "LIMIT_EXCEEDED",
+            `Este evento permite até ${ticketsWord(event.maxTicketsPerAccount)} por conta. ` +
+              (held ? `Você já tem ${ticketsWord(held)}; ${left ? `pode comprar mais ${left}.` : "não é possível comprar mais."}` : "Reduza a quantidade."),
+          );
+        }
+      }
       if (halfRequested > 0) {
         if (!input.halfPriceDeclaration) throw new AppError("VALIDATION", "Confirme a declaração de direito à meia-entrada.");
         if (event.halfPriceQuotaBps !== null) {

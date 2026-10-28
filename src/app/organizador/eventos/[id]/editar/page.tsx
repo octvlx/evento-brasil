@@ -7,6 +7,8 @@ import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
 import { EventForm } from "@/features/organizer/event-form";
+import { EventChangesHistory } from "@/features/organizer/event-changes-history";
+import type { ChangeSnapshotJson } from "@/features/organizer/event-change-rules";
 import { EventStatusActions } from "@/features/organizer/event-status-actions";
 import { TicketTypesManager } from "@/features/organizer/ticket-types-manager";
 import { CouponsManager } from "@/features/organizer/coupons-manager";
@@ -15,6 +17,7 @@ import { eventFormOptions } from "@/features/organizer/form-data";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { listEventCoupons } from "@/server/services/coupons";
+import { listEventChanges } from "@/server/services/event-changes";
 import { listEventTrackingLinks } from "@/server/services/tracking-links";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { getWizardProgress, isWizardComplete } from "@/server/services/event-wizard-progress";
@@ -49,6 +52,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   const locked = !["DRAFT", "PENDING_REVIEW", "PUBLISHED"].includes(event.status) || !can("event:write");
   const st = EVENT_STATUS[event.status];
   const canWrite = can("event:write");
+  const changes = await listEventChanges(db, user, id);
   const [coupons, links] = canWrite ? await Promise.all([listEventCoupons(db, user, id), listEventTrackingLinks(db, user, id)]) : [[], []];
 
   return (
@@ -137,12 +141,35 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
         </>
       )}
 
+      <Card className="mb-6 p-6">
+        <h2 className="mb-4 font-display text-lg font-bold">Histórico de alterações</h2>
+        <EventChangesHistory
+          timezone={tz}
+          canExtend={canWrite && !locked}
+          maxLocal={utcToZonedLocalInput(event.startsAt, tz)}
+          items={changes.map((c) => ({
+            ...c,
+            before: c.before as ChangeSnapshotJson,
+            after: c.after as ChangeSnapshotJson,
+            createdAt: c.createdAt.toISOString(),
+            refundUntil: c.refundUntil?.toISOString() ?? null,
+            effectiveRefundUntil: c.effectiveRefundUntil?.toISOString() ?? null,
+            effectiveRefundUntilLocal: c.effectiveRefundUntil ? utcToZonedLocalInput(c.effectiveRefundUntil, tz) : null,
+          }))}
+        />
+      </Card>
+
       <Card className="p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Dados do evento</h2>
         <EventForm
           eventId={event.id}
           {...options}
           locked={locked}
+          relevantGuard={
+            event.status === "PUBLISHED" && paidOrders > 0
+              ? { startsAtLocal: utcToZonedLocalInput(event.startsAt, tz), timezone: tz, locationType: event.locationType, venueId: event.venueId }
+              : null
+          }
           defaults={{
             title: event.title,
             summary: event.summary ?? undefined,
@@ -160,6 +187,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             ageRestriction: event.ageRestriction,
             capacity: event.capacity,
             halfPriceQuotaPercent: event.halfPriceQuotaBps === null ? undefined : event.halfPriceQuotaBps / 100,
+            maxTicketsPerAccount: event.maxTicketsPerAccount ?? undefined,
             refundPolicy: event.refundPolicy,
             refundWindowDays: event.refundWindowDays,
             refundMinHoursBeforeEvent: event.refundMinHoursBeforeEvent,

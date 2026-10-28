@@ -238,6 +238,8 @@ export async function saveEventWizardStep(db: Db, actor: Actor, eventId: string,
         data = {
           capacity: input.capacity,
           halfPriceQuotaBps: input.halfPriceQuotaPercent === undefined ? null : Math.round(input.halfPriceQuotaPercent * 100),
+          // Rascunho: sem vendas, então não há conta acima do limite.
+          maxTicketsPerAccount: input.maxTicketsPerAccount ?? null,
           salesStartAt,
           salesEndAt,
         };

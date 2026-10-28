@@ -1,7 +1,7 @@
 # Área do organizador — inventário e dependências
 
-Responsável: agente `area-organizador`. Última revisão: assistente de criação
-de evento passo a passo (`/organizador/eventos/novo`).
+Responsável: agente `area-organizador`. Última revisão: alteração relevante com
+janela de reembolso e limite de ingressos por conta (Fase 3 do Decreto 13.108/2026).
 
 ## O que existe
 
@@ -25,6 +25,8 @@ de evento passo a passo (`/organizador/eventos/novo`).
 | Links de divulgação rastreados (UTMs, cupom pré-aplicado, cliques, arquivar) | `/organizador/eventos/[id]/editar`, `tracking-links.ts` | Pronto (passo 3); `/r/[code]` e cookie de atribuição são do passo 4 (`paginas-publicas`) |
 | Relatórios "Vendas por origem" e "Uso de cupons" (só pedidos pagos, valores líquidos de desconto) | `/organizador/vendas`, `salesBySource`, `couponUsage` | Pronto |
 | Recusa de preço de ingresso abaixo da taxa da plataforma (bearer ORGANIZER) | `upsertTicketType` | Pronto (ADR 0002, passo 0) |
+| Alteração relevante de evento com vendas: motivo obrigatório, `EventChange` com janela de reembolso, aviso por e-mail, histórico e prorrogação (R8) | `…/[id]/editar` (formulário e "Histórico de alterações"), `updateEvent`, `event-changes.ts`, `notifyEventChange` | Pronto com padrões provisórios (D2) |
+| Limite de ingressos por conta (opcional) no assistente e na edição (R4) | `maxTicketsPerAccount` em `eventInputSchema`, `maxTicketsHeldBySingleAccount` | Pronto no organizador; a checagem no checkout é do `pagamentos-financeiro` |
 
 ### Assistente de criação de evento
 
@@ -77,6 +79,55 @@ publicar).
   permissões) e `tests/e2e/organizer-event-wizard.spec.ts` (fluxo completo com
   voltar, recarregar, falha de rede no autosave, revisão e publicação; rascunho
   retomado pela lista e pela página de gestão).
+
+### Alteração relevante e janela de reembolso (R8, L8b)
+
+- **Quando:** evento PUBLISHED com ao menos um pedido PAID, e a edição muda o início
+  (`RELEVANT_START_SHIFT_MINUTES`, hoje 0 = qualquer mudança, inclusive só de fuso), o
+  local (`venueId`), a cidade (`cityId`) ou o formato (presencial ↔ online). Qualquer
+  outra edição segue como antes, sem motivo e sem registro. Reenviar o mesmo "novo
+  local" na edição reaproveita o local atual (não conta como troca).
+- **Motivo:** obrigatório (10–2000 caracteres). O formulário mostra o campo só quando a
+  prévia no navegador detecta a mudança — ou quando o servidor responde
+  `CHANGE_REASON_REQUIRED` (ex.: mudança de cidade que o navegador não vê).
+- **Registro:** na mesma transação de `updateEvent` (evento travado `FOR UPDATE`):
+  `EventChange` com `relevant = true`, `changedFields` ⊂ {startsAt, venue, city,
+  locationType}, `before`/`after` = início (ISO UTC), formato, id/nome do local e da
+  cidade — **sem** link online nem dados pessoais —, `reason`, `actorUserId`,
+  `createdAt` explícito e `refundUntil = min(createdAt + REFUND_WINDOW_DAYS_AFTER_CHANGE
+  (30 dias), novo início)`. Novo início no passado é recusado. Auditoria
+  `event.relevant_change` e `event.updated` com `{ eventChangeId }`.
+- **Aviso:** depois do commit, `notifyEventChange` (em `notifications.ts`) manda um
+  e-mail por endereço aos compradores (`buyerEmail`) e titulares atuais dos ingressos
+  não revogados de pedidos pagos **antes** da alteração: o que mudou (antes → depois,
+  no fuso do evento), o motivo, o prazo de reembolso integral e o link para "Meus
+  pedidos". Falha de envio não desfaz a alteração; `event.change_notified` registra
+  `{ recipients, sent, failed }`. Em `NODE_ENV=test` o envio automático é desligado
+  (os testes chamam `notifyEventChange` com um adaptador de e-mail próprio).
+- **Prorrogação:** `extendEventChangeWindow` (`event:write`) grava nova linha com
+  `extendsChangeId` = sempre a alteração original, `changedFields = []`,
+  `before/after = { refundUntil }` e motivo; só com a janela ainda aberta, prazo novo
+  maior que o vigente e no máximo até o início do evento. Também avisa os compradores
+  (`event.change_window_extended`).
+- **Histórico:** card "Histórico de alterações" na página de gestão do evento
+  (`listEventChanges`, `org:read`), com prazo vigente e botão de prorrogar.
+- **Reembolso:** quem aplica a janela é o `pagamentos-financeiro` (`refundEligibility`):
+  pedidos pagos antes de `createdAt` da alteração original, até o maior `refundUntil`
+  entre ela e as prorrogações.
+- **D2 em aberto:** as constantes ficam em `src/features/organizer/event-change-rules.ts`.
+  Não há status "adiado" no evento.
+- Testes: `tests/integration/z-event-relevant-change.test.ts`.
+
+### Limite de ingressos por conta (R4, L4b — lado do organizador)
+
+- Campo opcional "Limite de ingressos por conta" na etapa 3 do assistente e na edição
+  (`Event.maxTicketsPerAccount`; vazio = sem limite; 1–1000).
+- Com vendas, o servidor recusa limite menor que o que uma conta já tem
+  (`maxTicketsHeldBySingleAccount`), com a mesma regra do `ticketsHeldByAccount` do
+  `pagamentos-financeiro` (PR #54): ingressos VALID/CHECKED_IN de que a conta é
+  **titular** (transferido conta só para o novo titular) + itens dos pedidos
+  PENDING_PAYMENT da conta ainda não vencidos. Quando o PR #54 estiver no main, trocar
+  pela função dele; o `createOrder` de lá já aplica o limite no checkout.
 
 ### Relatório de meia-entrada (R7)
 
@@ -139,7 +190,9 @@ e `organizer-team.spec.ts` (convites e papéis).
    a mostrar a cota reservada.
 5. **Eventos:** duplicar evento, despublicar, galeria de imagens (`EventImage`
    existe mas não é usado), busca/filtro na lista, paginação.
-6. **Avisar compradores** quando data/local de evento com vendas mudar.
+6. ~~Avisar compradores quando data/local de evento com vendas mudar~~ — feito (R8).
+   Falta: reenvio manual do aviso e outbox durável (T7); usar `ticketsHeldByAccount`
+   do financeiro quando estiver no main.
 7. **Organização:** logo e capa (ver dependências), links sociais adicionais.
 
 8. **Assistente de evento (complementos):** preencher endereço pelo CEP quando

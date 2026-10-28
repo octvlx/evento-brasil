@@ -7,21 +7,28 @@ import { DUMMY_HASH, hashPassword, verifyPassword } from "../auth/password";
 import { assertActive, assertPlatformAdmin, type Actor } from "../auth/permissions";
 import { revokeAllSessions } from "../auth/sessions";
 import { AppError } from "../errors";
+import { BUYER_KINDS, recordAcceptanceTx } from "./terms";
 
-export async function registerUser(db: Db, raw: RegisterInput) {
+/** O schema exige os dois aceites; o aceite das versões vigentes é gravado junto com a conta (R10). */
+export async function registerUser(db: Db, raw: RegisterInput, client: { ip?: string | null; userAgent?: string | null } = {}) {
   const input = registerSchema.parse(raw);
   const exists = await db.user.findUnique({ where: { email: input.email }, select: { id: true } });
   if (exists) throw new AppError("CONFLICT", "Já existe uma conta com este e-mail.");
-  const user = await db.user.create({
-    data: {
-      name: input.name,
-      email: input.email,
-      phone: input.phone ? onlyDigits(input.phone) : null,
-      passwordHash: await hashPassword(input.password),
-    },
+  const passwordHash = await hashPassword(input.password);
+  return db.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: { name: input.name, email: input.email, phone: input.phone ? onlyDigits(input.phone) : null, passwordHash },
+    });
+    const accepted = await recordAcceptanceTx(tx, user.id, BUYER_KINDS, { context: "SIGNUP", ...client });
+    await audit(tx, {
+      actorUserId: user.id,
+      action: "user.registered",
+      entityType: "User",
+      entityId: user.id,
+      metadata: { termsAccepted: accepted.map((v) => `${v.kind}:${v.version}`) },
+    });
+    return user;
   });
-  await audit(db, { actorUserId: user.id, action: "user.registered", entityType: "User", entityId: user.id });
-  return user;
 }
 
 /** Retorna o usuário autenticado ou null. Contas demo são recusadas em produção. */

@@ -287,6 +287,9 @@ export function StepTicketsSettings({ form, errors }: { form: Form; errors: Erro
       <Field name="halfPriceQuotaPercent" label="Cota de meia-entrada (% da capacidade)" error={errors.halfPriceQuotaPercent} help="Ex.: 40. Configure conforme orientação jurídica para o seu evento.">
         {(a) => <Input {...a} type="number" min={0} max={100} step="1" inputMode="numeric" {...reg(form, "halfPriceQuotaPercent")} />}
       </Field>
+      <Field name="maxTicketsPerAccount" label="Limite de ingressos por conta (opcional)" error={errors.maxTicketsPerAccount} help="Soma de todos os pedidos de uma mesma conta neste evento. Deixe vazio para não limitar.">
+        {(a) => <Input {...a} type="number" min={1} max={1000} step="1" inputMode="numeric" placeholder="Sem limite" {...reg(form, "maxTicketsPerAccount")} />}
+      </Field>
       <DateTimeField form={form} name="salesStartLocal" label="Início das vendas" error={errors.salesStartLocal} />
       <DateTimeField form={form} name="salesEndLocal" label="Fim das vendas" error={errors.salesEndLocal} help="Até o fim do evento. Cada ingresso pode ter um período próprio (lotes)." />
     </div>

@@ -145,6 +145,7 @@ export const step3Schema = z
   .object({
     capacity: s.capacity,
     halfPriceQuotaPercent: z.preprocess((v) => (v === "" || v === null ? undefined : v), s.halfPriceQuotaPercent),
+    maxTicketsPerAccount: s.maxTicketsPerAccount,
     salesStartLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Informe quando as vendas começam"),
     salesEndLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Informe quando as vendas terminam"),
     // Contexto da etapa 2 (só para a regra "vendas até o fim do evento").
@@ -190,7 +191,7 @@ export const STEP_SCHEMAS = {
 export const STEP_FIELDS: Record<DataStep, readonly string[]> = {
   1: ["title", "categoryId", "summary"],
   2: ["timezone", "startsAtLocal", "endsAtLocal", "locationType", "venueMode", "venueId", "newVenue", "onlineUrl"],
-  3: ["capacity", "halfPriceQuotaPercent", "salesStartLocal", "salesEndLocal"],
+  3: ["capacity", "halfPriceQuotaPercent", "maxTicketsPerAccount", "salesStartLocal", "salesEndLocal"],
   4: ["description", "coverImageUrl", "ageRestriction", "accessibilityInfo"],
   5: ["refundPolicy", "refundWindowDays", "refundMinHoursBeforeEvent"],
 };
@@ -218,6 +219,7 @@ export interface WizardValues {
   onlineUrl: string;
   capacity: string;
   halfPriceQuotaPercent: string;
+  maxTicketsPerAccount: string;
   salesStartLocal: string;
   salesEndLocal: string;
   description: string;
@@ -249,6 +251,7 @@ export function stepPayload(step: DataStep, v: WizardValues): Record<string, unk
       return {
         capacity: v.capacity,
         halfPriceQuotaPercent: v.halfPriceQuotaPercent,
+        maxTicketsPerAccount: v.maxTicketsPerAccount,
         salesStartLocal: v.salesStartLocal,
         salesEndLocal: v.salesEndLocal,
         endsAtLocal: v.endsAtLocal || undefined,
