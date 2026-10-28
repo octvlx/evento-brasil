@@ -264,9 +264,11 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
   const halfUsed = event.ticketTypes.filter((t) => t.kind === "HALF_PRICE").reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
   const halfQuota = event.halfPriceQuotaBps === null ? null : Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000);
   const committed = event.ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
-  const rule = await resolveCommissionRule(db, event.organizationId, event.id, now);
+  const [rule, organizer] = await Promise.all([resolveCommissionRule(db, event.organizationId, event.id, now), organizerIdentification(db, event.organizationId)]);
   return {
     event: { ...event, ticketTypes: event.ticketTypes.filter((t) => !t.isHidden) },
+    /** Identificação do organizador responsável (L10b); null sem verificação aprovada. */
+    organizer,
     /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
     prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule)])) as Record<string, PriceQuote>,
     buyerPaysFee: rule.bearer === "BUYER",
@@ -274,6 +276,30 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
     capacityLeft: Math.max(0, event.capacity - committed),
     halfPriceLeft: halfQuota === null ? null : Math.max(0, halfQuota - halfUsed),
   };
+}
+
+export interface OrganizerIdentification {
+  legalType: "INDIVIDUAL" | "COMPANY";
+  /** Razão social (empresa) ou nome do responsável (pessoa física), da verificação aprovada. */
+  legalName: string;
+  /** Só para CNPJ: os 4 últimos dígitos, já guardados em claro. CPF nunca é exposto. */
+  cnpjLast4: string | null;
+}
+
+/**
+ * Organizador responsável pelo evento (Decreto 13.108/2026, L10b), só com o que já é
+ * seguro tornar público: nome/razão social da verificação APROVADA mais recente e o final
+ * do CNPJ. O documento completo fica cifrado (documentEncrypted) e não é decifrado aqui.
+ * TODO(jurídico): confirmar se o CNPJ completo precisa aparecer (exigiria decifrar).
+ */
+export async function organizerIdentification(db: Db, organizationId: string): Promise<OrganizerIdentification | null> {
+  const v = await db.organizerVerification.findFirst({
+    where: { organizationId, status: "APPROVED" },
+    orderBy: { createdAt: "desc" },
+    select: { legalType: true, legalName: true, documentType: true, documentLast4: true },
+  });
+  if (!v) return null;
+  return { legalType: v.legalType, legalName: v.legalName, cnpjLast4: v.documentType === "CNPJ" ? v.documentLast4 : null };
 }
 
 export async function getPublicOrganizer(db: Db, slug: string, now = new Date()) {

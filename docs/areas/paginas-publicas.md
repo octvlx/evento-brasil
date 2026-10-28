@@ -76,6 +76,34 @@ com destinatário; recebidas sem dados de quem enviou), pedidos de cancelamento 
 de termos. Exige sessão (401), limite de 5 por hora por conta (429), `no-store`, e grava
 `user.data_exported` no `AuditLog` (sem o conteúdo). Exclusão/anonimização aguarda D6.
 
+## Conformidade, Fase 4 — telas do comprador
+
+Só telas: as regras são dos serviços de cada domínio (chamados, não reimplementados).
+
+- **Transferência (T-TRANSF-UI)** em `/meus-ingressos` (`src/features/transfers/transfer-controls.tsx`):
+  "Transferir" por ingresso transferível (VALID, pedido PAID, evento PUBLISHED e não iniciado;
+  o serviço reconfere tudo), formulário nome + e-mail com etapa de confirmação e regras
+  (gratuita, QR novo para quem recebe, o antigo deixa de valer, reembolso volta ao pagador —
+  D7, texto marcado como provisório); pendentes enviadas com "Cancelar transferência";
+  recebidas com "Aceitar/Recusar"; aceitas como histórico "Transferidos por você".
+  `?transferir=<código>` abre o formulário daquele ingresso (link da página do ingresso,
+  contrato com check-in); cada linha tem a âncora `#ingresso-<código>`.
+  Mudança aditiva no serviço do check-in: `acceptTransfer`/`declineTransfer` (e as ações)
+  aceitam `{ transferId }` além do token, com as mesmas regras (e-mail da conta = destinatário).
+  A página `/transferencia/[token]` continua com o check-in.
+- **Pedido** (`/pedido/[id]`): com janela de alteração aberta (`openChangeRefundWindow` +
+  `refundEligibility`, base `EVENT_CHANGED`) mostra o que mudou (`EventChange` original,
+  `describeChangeValue`), o motivo, "reembolso integral até DD/MM/AAAA" e o botão de reembolso.
+  Seção "Pedido de cancelamento": pedidos com protocolo/status/prazo/resposta, "Desistir" se
+  aberto, e o formulário (só para PAID/PENDING_PAYMENT sem pedido aberto).
+- **Cancelamento (L5b)**: `requestCancellationAction` pela página do pedido e por
+  `/ajuda#cancelamento` (escolha do pedido); depois de enviar mostra o protocolo e o prazo
+  (D3 provisório, `PROVISIONAL_CANCELLATION_RESPONSE_DAYS`). Lista em `/ajuda` e `/meus-pedidos`.
+- **Organizador (L10b)**: `organizerIdentification` em `catalog.ts` (também em `getPublicEvent`):
+  razão social/nome da verificação APROVADA mais recente e os 4 últimos dígitos do CNPJ
+  (`documentLast4`). CPF nunca; o documento cifrado não é decifrado. Pendente jurídico: se o
+  CNPJ completo precisa aparecer. O PDF do ingresso (check-in) pode reutilizar a mesma função.
+
 ## O que falta (por prioridade)
 
 1. ~~**Incorporar o SEO/erros**~~ (sitemap, robots, páginas de erro, OG padrão,

@@ -11,6 +11,7 @@ import {
   cancelTransfer,
   declineTransfer,
   requestTransfer,
+  type RecipientTransferRef,
   type RequestMeta,
   type RequestTransferInput,
   type TransferAccepted,
@@ -39,7 +40,7 @@ export async function requestTransferAction(ticketId: string, input: RequestTran
   return result;
 }
 
-export async function acceptTransferAction(token: string): Promise<ActionResult<TransferAccepted>> {
+export async function acceptTransferAction(token: RecipientTransferRef): Promise<ActionResult<TransferAccepted>> {
   const user = await getCurrentUser();
   if (!user) return UNAUTHENTICATED;
   const m = await requestMeta();
@@ -51,7 +52,7 @@ export async function acceptTransferAction(token: string): Promise<ActionResult<
   return result;
 }
 
-export async function declineTransferAction(token: string): Promise<ActionResult> {
+export async function declineTransferAction(token: RecipientTransferRef): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return UNAUTHENTICATED;
   const m = await requestMeta();

@@ -6,8 +6,10 @@ import type { OrderStatus, Prisma } from "@/generated/prisma/client";
 import { Badge, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
+import { CancellationRequestList } from "@/features/orders/cancellation-list";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
+import { listMyCancellationRequests } from "@/server/services/cancellation-requests";
 import { formatDateShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { CANCEL_HELP_HREF } from "@/lib/help-links";
@@ -59,7 +61,7 @@ async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
   const filter = FILTERS.find((f) => f.value === (sp.situacao ?? "")) ?? FILTERS[0];
   const page = Math.max(1, Number(sp.pagina) || 1);
   const where: Prisma.OrderWhereInput = { userId: user.id, ...(filter.statuses ? { status: { in: filter.statuses } } : {}) };
-  const [total, orders] = await Promise.all([
+  const [total, orders, cancellations] = await Promise.all([
     db.order.count({ where }),
     db.order.findMany({
       where,
@@ -71,6 +73,7 @@ async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
+    listMyCancellationRequests(db, user),
   ]);
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -158,6 +161,15 @@ async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
             </Link>
           )}
         </nav>
+      )}
+
+      {cancellations.length > 0 && (
+        <section id="pedidos-de-cancelamento" className="space-y-3 pt-4" aria-labelledby="cancellations-title">
+          <h2 id="cancellations-title" className="font-display text-xl font-bold">
+            Pedidos de cancelamento
+          </h2>
+          <CancellationRequestList items={cancellations} showOrder />
+        </section>
       )}
     </div>
   );

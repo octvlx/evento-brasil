@@ -59,7 +59,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   await connection();
   const data = await getPublicEvent(db, slug);
   if (!data) notFound();
-  const { event, prices, buyerPaysFee, availability, capacityLeft, halfPriceLeft } = data;
+  const { event, organizer, prices, buyerPaysFee, availability, capacityLeft, halfPriceLeft } = data;
   const user = await getCurrentUser();
   // Cupom pré-aplicado pelo link rastreado desta visita (cookie eb_attr), se for deste evento.
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
@@ -163,6 +163,14 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
                     : null}
             </Info>
             <Info icon={Users} title={`Organizado por ${event.organization.name}`}>
+              {organizer ? (
+                <span className="block" data-testid="organizer-identification">
+                  {organizer.legalType === "COMPANY" ? "Razão social" : "Responsável"}: {organizer.legalName}
+                  {organizer.cnpjLast4 && <> · CNPJ terminado em {organizer.cnpjLast4}</>}
+                </span>
+              ) : (
+                <span className="block">Identificação do responsável em verificação.</span>
+              )}
               <Link href={`/organizadores/${event.organization.slug}`} className="text-secondary hover:underline">
                 Ver perfil do organizador
               </Link>
