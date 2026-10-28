@@ -1,18 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { CheckCircle2, Clock, Download, RotateCcw, Ticket, XCircle } from "lucide-react";
+import { CalendarClock, CheckCircle2, Clock, Download, FileText, RotateCcw, Ticket, XCircle } from "lucide-react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { OrderSummary } from "@/components/site/order-summary";
 import { PendingPoller, RefundButton } from "@/features/orders/order-actions";
+import { CancellationRequestForm } from "@/features/orders/cancellation-form";
+import { CancellationRequestList } from "@/features/orders/cancellation-list";
 import { refundView, revocationText } from "@/features/orders/status-view";
 import { cancelOrderAction } from "@/features/orders/actions";
+import { describeChangeValue, isRelevantField, RELEVANT_FIELD_LABELS, type ChangeSnapshotJson } from "@/features/organizer/event-change-rules";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
-import { refundEligibility } from "@/server/services/refunds";
-import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
+import { openChangeRefundWindow, refundEligibility } from "@/server/services/refunds";
+import { PROVISIONAL_CANCELLATION_RESPONSE_DAYS } from "@/server/services/cancellation-requests";
+import { formatDateShort, formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { CANCEL_HELP_HREF } from "@/lib/help-links";
 import { ORDER_STATUS, REFUND_REASON, REFUND_STATUS, TICKET_STATUS } from "@/lib/labels";
@@ -34,7 +38,18 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
   const user = await requireUser(`/pedido/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
   const st = ORDER_STATUS[order.status];
-  const eligibility = refundEligibility(order, order.event, order.tickets, new Date());
+  const now = new Date();
+  const [changeWindow, cancellations] = await Promise.all([
+    openChangeRefundWindow(db, order.eventId, order.paidAt, now),
+    db.cancellationRequest.findMany({ where: { orderId: order.id, requestedById: user.id }, orderBy: { createdAt: "desc" } }),
+  ]);
+  const eligibility = refundEligibility(order, order.event, order.tickets, now, changeWindow);
+  // O que mudou: a alteração original que abriu a janela (o prazo pode vir de uma prorrogação).
+  const change = eligibility.eligible && eligibility.basis === "EVENT_CHANGED"
+    ? await db.eventChange.findUnique({ where: { id: eligibility.window.eventChangeId }, select: { changedFields: true, before: true, after: true, reason: true, createdAt: true } })
+    : null;
+  const tz = order.event.timezone;
+  const canRequestCancellation = !cancellations.some((c) => c.status === "OPEN") && (order.status === "PAID" || order.status === "PENDING_PAYMENT");
   const refund = refundView(order.status, order.refunds);
   const isRefund = order.status === "REFUND_PENDING" || order.status === "REFUNDED";
   const Icon = order.status === "PAID" ? CheckCircle2 : order.status === "PENDING_PAYMENT" ? Clock : isRefund ? RotateCcw : XCircle;
@@ -65,6 +80,34 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
         <Alert variant={refund.tone} className="mt-6">
           <strong>{refund.title}.</strong> {refund.detail}
         </Alert>
+      )}
+
+      {eligibility.eligible && eligibility.basis === "EVENT_CHANGED" && (
+        <Card className="mt-6 space-y-3 border-warning/40 p-5" data-testid="event-change-window">
+          <h2 className="flex items-center gap-2 font-display text-lg font-bold">
+            <CalendarClock className="size-5 text-warning" aria-hidden /> O evento foi alterado depois da sua compra
+          </h2>
+          {change && (
+            <>
+              <ul className="space-y-1 text-sm">
+                {change.changedFields.filter(isRelevantField).map((f) => (
+                  <li key={f}>
+                    <span className="text-muted-foreground">{RELEVANT_FIELD_LABELS[f]}:</span> {describeChangeValue(f, change.before as ChangeSnapshotJson, tz)} →{" "}
+                    <strong>{describeChangeValue(f, change.after as ChangeSnapshotJson, tz)}</strong>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-sm">
+                <span className="text-muted-foreground">Motivo informado pelo organizador:</span> {change.reason}
+              </p>
+            </>
+          )}
+          <p className="font-semibold">
+            Reembolso integral, com as taxas, até <span data-testid="change-refund-until">{formatDateShort(eligibility.window.refundUntil, tz)}</span> ({formatDateTimeShort(eligibility.window.refundUntil, tz)}).
+          </p>
+          <p className="text-sm text-muted-foreground">Se preferir manter os ingressos, não precisa fazer nada: eles continuam válidos para a nova data/local.</p>
+          <RefundButton orderId={order.id} />
+        </Card>
       )}
 
       {order.status === "PENDING_PAYMENT" && (
@@ -142,13 +185,34 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
               ))}
             </ul>
           )}
-          {eligibility.eligible ? <RefundButton orderId={order.id} /> : !order.refunds.length && <p className="text-sm text-muted-foreground">{eligibility.reason}</p>}
+          {eligibility.eligible ? (
+            eligibility.basis === "EVENT_CHANGED" ? (
+              <p className="text-sm">{eligibility.message}</p>
+            ) : (
+              <RefundButton orderId={order.id} />
+            )
+          ) : (
+            !order.refunds.length && <p className="text-sm text-muted-foreground">{eligibility.reason}</p>
+          )}
           <p className="text-xs text-muted-foreground">Política do evento: {order.event.refundPolicy}</p>
           <Link href={CANCEL_HELP_HREF} className="inline-block text-sm font-semibold text-secondary hover:underline">
             Cancelar compra / arrependimento: como funciona
           </Link>
         </Card>
       </div>
+
+      {(canRequestCancellation || cancellations.length > 0) && (
+        <section id="cancelamento" className="mt-8 space-y-3" aria-labelledby="cancellation-title">
+          <h2 id="cancellation-title" className="flex items-center gap-2 font-display text-xl font-bold">
+            <FileText className="size-5 text-secondary" aria-hidden /> Pedido de cancelamento
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Fora dos prazos de reembolso automático, ou se algo deu errado com a compra, peça o cancelamento: você recebe um protocolo e a resposta da equipe fica registrada aqui.
+          </p>
+          <CancellationRequestList items={cancellations} />
+          {canRequestCancellation && <CancellationRequestForm orderId={order.id} responseDays={PROVISIONAL_CANCELLATION_RESPONSE_DAYS} />}
+        </section>
+      )}
     </>
   );
 }

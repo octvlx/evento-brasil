@@ -191,9 +191,20 @@ export async function findTransferByToken(db: Db, token: string) {
   });
 }
 
-async function pendingForRecipient(db: Db, recipient: Actor, token: string) {
+/**
+ * Como o destinatário chega à transferência: pelo token do link do e-mail ou, logado,
+ * pelo id listado em "Meus ingressos" (`listMyTransfers`). As mesmas regras valem nos dois.
+ */
+export type RecipientTransferRef = string | { transferId: string };
+
+async function findForRecipient(db: Db, ref: RecipientTransferRef) {
+  if (typeof ref !== "string") return db.ticketTransfer.findUnique({ where: { id: ref.transferId } });
+  return /^[A-Za-z0-9_-]{43}$/.test(ref) ? db.ticketTransfer.findUnique({ where: { tokenHash: hashToken(ref) } }) : null;
+}
+
+async function pendingForRecipient(db: Db, recipient: Actor, ref: RecipientTransferRef) {
   assertActive(recipient);
-  const transfer = /^[A-Za-z0-9_-]{43}$/.test(token) ? await db.ticketTransfer.findUnique({ where: { tokenHash: hashToken(token) } }) : null;
+  const transfer = await findForRecipient(db, ref);
   if (!transfer) throw notFound("Transferência não encontrada.");
   const user = await db.user.findUniqueOrThrow({ where: { id: recipient.id }, select: { email: true, name: true } });
   // O link sozinho não basta: precisa estar logado com o e-mail indicado pelo titular.
@@ -210,7 +221,7 @@ export interface TransferAccepted {
  * O destinatário aceita. Tudo é reconferido sob as travas; o ingresso só muda de
  * titular se ainda estiver VALID e com o mesmo titular do pedido, e ganha novo QR.
  */
-export async function acceptTransfer(db: Db, recipient: Actor, token: string, decisionMeta?: RequestMeta, now = new Date()): Promise<TransferAccepted> {
+export async function acceptTransfer(db: Db, recipient: Actor, token: RecipientTransferRef, decisionMeta?: RequestMeta, now = new Date()): Promise<TransferAccepted> {
   const { transfer, user } = await pendingForRecipient(db, recipient, token);
   const ticketRef = await db.issuedTicket.findUniqueOrThrow({ where: { id: transfer.ticketId }, select: { orderId: true } });
   const m = meta(decisionMeta);
@@ -290,7 +301,7 @@ export async function cancelTransfer(db: Db, holder: Actor, transferId: string, 
 }
 
 /** O destinatário recusa (status CANCELLED, decidida por ele). */
-export async function declineTransfer(db: Db, recipient: Actor, token: string, decisionMeta?: RequestMeta, now = new Date()): Promise<void> {
+export async function declineTransfer(db: Db, recipient: Actor, token: RecipientTransferRef, decisionMeta?: RequestMeta, now = new Date()): Promise<void> {
   const { transfer } = await pendingForRecipient(db, recipient, token);
   await decide(db, transfer.id, {}, recipient.id, "Recusada pelo destinatário", "ticket.transfer.declined", decisionMeta, now);
 }
