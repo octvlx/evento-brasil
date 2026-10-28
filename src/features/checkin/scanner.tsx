@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { Camera, CameraOff, IdCard, Keyboard } from "lucide-react";
+import { ArrowLeftRight, Camera, CameraOff, IdCard, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -143,7 +143,19 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
             <p className="font-display text-3xl font-extrabold">{result.message}</p>
             {result.ticket && (
               <>
-                <p className="mt-3 text-lg font-semibold">{result.ticket.holderName}</p>
+                {result.ticket.transferred ? (
+                  // Só chega para a portaria da organização do evento (checkInTicket não devolve
+                  // dados de ingresso de outra organização).
+                  <p className="mt-3 flex items-center gap-2 rounded-2xl bg-black/25 px-4 py-2 text-left text-base font-semibold">
+                    <ArrowLeftRight className="size-5 shrink-0" aria-hidden />
+                    <span>
+                      Ingresso transferido — titular atual: <strong className="text-lg">{result.ticket.holderName ?? "—"}</strong>
+                    </span>
+                  </p>
+                ) : (
+                  <p className="mt-3 text-lg font-semibold">{result.ticket.holderName}</p>
+                )}
+                {result.ticket.qrReplaced && <p className="mt-2 text-sm">Este QR foi substituído na transferência. Peça ao titular atual o QR novo.</p>}
                 <p className="text-sm opacity-90">
                   {result.ticket.ticketTypeName} · {result.ticket.code}
                 </p>

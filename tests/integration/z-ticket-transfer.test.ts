@@ -6,8 +6,9 @@ import { loadPdfTickets } from "@/server/services/notifications";
 import { requestCustomerRefund } from "@/server/services/refunds";
 import { qrPayload } from "@/server/services/tickets";
 import { acceptTransfer, cancelTransfer, declineTransfer, expireTicketTransfers, findTransferByToken, listMyTransfers, requestTransfer, TRANSFER_POLICY } from "@/server/services/transfers";
+import { ticketsHeldByAccount } from "@/server/services/orders";
 import { hashToken } from "@/server/crypto";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -69,6 +70,16 @@ describe("T-TRANSF — pedido", () => {
 
     const b = await setup();
     await expect(request(b.buyer, b.ticket.id, b.recipient, new Date(b.event.startsAt.getTime() + 1000))).rejects.toMatchObject({ code: "INVALID_STATE" });
+  });
+
+  it("convite vencido ainda não expirado pelo cron não bloqueia um novo pedido", async () => {
+    const { buyer, recipient, ticket, owner } = await setup();
+    const first = await request(buyer, ticket.id, recipient);
+    const later = new Date(first.expiresAt.getTime() + 1000);
+    const second = await request(buyer, ticket.id, owner, later);
+    expect(await db.ticketTransfer.findUniqueOrThrow({ where: { id: first.transferId } })).toMatchObject({ status: "EXPIRED", decidedAt: later });
+    expect(await db.ticketTransfer.findUniqueOrThrow({ where: { id: second.transferId } })).toMatchObject({ status: "PENDING" });
+    await expect(acceptTransfer(db, recipient, first.token, undefined, later)).rejects.toMatchObject({ code: "INVALID_STATE" });
   });
 
   it("pedidos simultâneos do mesmo ingresso: exatamente um fica pendente", async () => {
@@ -165,6 +176,19 @@ describe("T-TRANSF — aceite", () => {
     await acceptTransfer(db, recipient, token);
   });
 
+  it("o limite no aceite usa ticketsHeldByAccount: pedido pendente conta, vencido não", async () => {
+    const { buyer, recipient, ticket, event } = await setup();
+    await db.event.update({ where: { id: event.id }, data: { maxTicketsPerAccount: 2 } });
+    const pending = await buy(recipient, event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 2 }]);
+    expect(await ticketsHeldByAccount(db, recipient.id, event.id)).toBe(2);
+    const { token } = await request(buyer, ticket.id, recipient);
+    await expect(acceptTransfer(db, recipient, token)).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    // Reserva vencida ainda não liberada pela manutenção deixa de contar (mesma regra do createOrder).
+    await db.order.update({ where: { id: pending.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    await acceptTransfer(db, recipient, token);
+    expect(await ticketsHeldByAccount(db, recipient.id, event.id)).toBe(1);
+  });
+
   it(`limite de ${TRANSFER_POLICY.maxTransfersPerTicket} transferências aceitas por ingresso`, async () => {
     const { buyer, ticket } = await setup();
     let holder = buyer;
@@ -177,6 +201,50 @@ describe("T-TRANSF — aceite", () => {
     await expect(request(holder, ticket.id, buyer)).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
     const mine = await listMyTransfers(db, holder);
     expect(mine.received.map((t) => t.status)).toEqual(["ACCEPTED"]);
+  });
+});
+
+describe("T-TRANSF — portaria (Fase 4)", () => {
+  it("mesma organização vê 'transferido' com o titular atual; QR antigo é INVALID com aviso de substituição", async () => {
+    const { owner, buyer, recipient, ticket, tickets, event } = await setup({ quantity: 2 });
+    const oldPayload = qrPayload(ticket);
+    const { token } = await request(buyer, ticket.id, recipient);
+    await acceptTransfer(db, recipient, token);
+    const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
+
+    const stale = await checkInTicket(db, owner, event.id, oldPayload);
+    expect(stale.result).toBe("INVALID");
+    expect(stale.message).toMatch(/substituído/i);
+    expect(stale.ticket).toMatchObject({ code: ticket.code, holderName: `Nome ${recipient.name}`, transferred: true, qrReplaced: true });
+    // A leitura do QR antigo fica vinculada ao ingresso no histórico da organização.
+    expect(await db.ticketCheckin.count({ where: { ticketId: ticket.id, result: "INVALID" } })).toBe(1);
+
+    const ok = await checkInTicket(db, owner, event.id, qrPayload(after));
+    expect(ok.result).toBe("ADMITTED");
+    expect(ok.ticket).toMatchObject({ holderName: `Nome ${recipient.name}`, transferred: true });
+    expect(ok.ticket?.qrReplaced).toBeUndefined();
+    expect((await checkInTicket(db, owner, event.id, qrPayload(after))).ticket).toMatchObject({ transferred: true });
+
+    // Ingresso nunca transferido.
+    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[1]))).ticket).toMatchObject({ transferred: false });
+  });
+
+  it("outra organização não vê titular nem a transferência (privacidade do PR #18)", async () => {
+    const { buyer, recipient, ticket } = await setup();
+    const oldPayload = qrPayload(ticket);
+    const { token } = await request(buyer, ticket.id, recipient);
+    await acceptTransfer(db, recipient, token);
+    const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
+
+    const otherOwner = await makeUser();
+    const otherEvent = await makeEvent(await makeOrg(otherOwner));
+    const stale = await checkInTicket(db, otherOwner, otherEvent.id, oldPayload);
+    expect(stale).toMatchObject({ result: "INVALID", message: "QR code inválido" });
+    expect(stale.ticket).toBeUndefined();
+    const fresh = await checkInTicket(db, otherOwner, otherEvent.id, qrPayload(after));
+    expect(fresh.result).toBe("WRONG_EVENT");
+    expect(fresh.ticket).toBeUndefined();
+    expect(await db.ticketCheckin.count({ where: { eventId: otherEvent.id, ticketId: { not: null } } })).toBe(0);
   });
 });
 
