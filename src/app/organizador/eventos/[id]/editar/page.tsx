@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { ExternalLink, QrCode, Users } from "lucide-react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
@@ -17,6 +17,8 @@ import { env } from "@/server/env";
 import { listEventCoupons } from "@/server/services/coupons";
 import { listEventTrackingLinks } from "@/server/services/tracking-links";
 import { requireOrganizer } from "@/server/auth/organizer-context";
+import { getWizardProgress, isWizardComplete } from "@/server/services/event-wizard-progress";
+import { firstIncompleteStep } from "@/features/organizer/wizard-steps";
 import { utcToZonedLocalInput } from "@/lib/datetime";
 import { EVENT_STATUS } from "@/lib/labels";
 
@@ -36,6 +38,11 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   // Escopo por organização: evento de outra organização → 404.
   const event = await db.event.findFirst({ where: { id, organizationId: org.id }, include: { ticketTypes: { orderBy: { sortOrder: "asc" } } } });
   if (!event) notFound();
+  // Rascunho do assistente com etapas pendentes: continua o cadastro guiado.
+  if (event.status === "DRAFT" && can("event:write")) {
+    const progress = await getWizardProgress(db, id);
+    if (!isWizardComplete(progress)) redirect(`/organizador/eventos/novo?evento=${id}&etapa=${firstIncompleteStep(progress.completed)}`);
+  }
   const options = await eventFormOptions(db, org.id);
   const paidOrders = await db.order.count({ where: { eventId: id, status: "PAID" } });
   const tz = event.timezone;
