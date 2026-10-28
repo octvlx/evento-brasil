@@ -82,6 +82,17 @@ export const venueInputSchema = z.object({
   accessibilityInfo: optionalText(1000),
 });
 
+export const transferPolicyFields = {
+  transferDeadlineHours: z.coerce.number({ message: "Informe as horas para transferir" }).int("Use horas inteiras").min(0, "Mínimo de 0 horas").max(8760, "Máximo de 8760 horas").default(24),
+  transferMaxTransfers: z.coerce.number({ message: "Informe o limite de transferências" }).int("Use um limite inteiro").min(1, "Permita ao menos 1 transferência").max(10, "Máximo de 10 transferências").default(1),
+  transferAllowReturn: z.boolean().default(false),
+};
+
+export function validateTransferPolicySettings(v: { transferAllowReturn: boolean; transferMaxTransfers: number }, ctx: z.RefinementCtx) {
+  if (v.transferAllowReturn && v.transferMaxTransfers < 2)
+    ctx.addIssue({ code: "custom", path: ["transferMaxTransfers"], message: "Para permitir devolução ao titular anterior, permita ao menos 2 transferências." });
+}
+
 export const eventInputSchema = z
   .object({
     title: trimmed(3, 140, "Informe o título"),
@@ -117,6 +128,7 @@ export const eventInputSchema = z
     ),
     // Só exigido (no servidor) em alteração relevante de evento publicado com vendas (R8).
     changeReason: optionalText(2000),
+    ...transferPolicyFields,
     refundPolicy: trimmed(10, 4000, "Descreva a política de reembolso"),
     refundWindowDays: z.coerce
       .number({ message: "Informe os dias após a compra" })
@@ -134,6 +146,7 @@ export const eventInputSchema = z
     coverImageUrl: z.string().trim().optional(),
   })
   .superRefine((v, ctx) => {
+    validateTransferPolicySettings(v, ctx);
     if (v.endsAtLocal <= v.startsAtLocal) ctx.addIssue({ code: "custom", path: ["endsAtLocal"], message: "Término deve ser após o início" });
     if (v.salesEndLocal <= v.salesStartLocal)
       ctx.addIssue({ code: "custom", path: ["salesEndLocal"], message: "Fim das vendas deve ser após o início" });

@@ -243,3 +243,19 @@ e `organizer-team.spec.ts` (convites e papéis).
 | `check-in` | Atribuição de equipe a eventos é feita aqui (`assignStaffToEvent`); o leitor e o histórico são do check-in. |
 | `admin` | Aprovação de organizações e moderação de eventos (`reviewOrganization`, `moderateEvent`, `setAutoPublish`) — o painel mostra o resultado como pendências. |
 | Equipe (infra de e-mail) | Convites usam o adaptador de e-mail; em produção depende do provedor configurado (`EMAIL_PROVIDER`). |
+
+## Política de transferência por evento
+
+A etapa 5 do assistente, sua revisão e a edição do evento permitem definir a
+antecedência mínima para transferir (0–8760 horas; padrão 24), o máximo de
+transferências aceitas por ingresso (1–10; padrão 1) e a possibilidade de uma
+nova transferência para um titular anterior (desabilitada por padrão).
+Devolver exige solicitação pelo titular atual e aceite do destinatário, consome
+uma transferência do limite e requer limite de pelo menos 2; não é um desfazer
+unilateral. Configurações incoerentes são recusadas no formulário e no servidor.
+
+Com ingressos vendidos ou reservados, a política só pode ficar mais favorável:
+reduzir a antecedência, aumentar o limite ou permitir devolução. A verificação
+ocorre sob a trava do evento, junto da edição; não altera regras financeiras.
+Os valores anterior e novo ficam no AuditLog. Alterar somente essa política
+não cria uma janela artificial de reembolso por alteração relevante.
