@@ -13,8 +13,8 @@
 // Event → Order → IssuedTicket → TicketTransfer. O aceite trava o Event com
 // FOR UPDATE, como createOrder, porque confere o limite por conta (contrato a);
 // isso também o serializa com o check-in (FOR KEY SHARE no Event), então uma
-// leitura vê o token antigo ou o novo, nunca uma mistura. Transferências fecham
-// no início do evento, então o aceite não disputa a trava com a portaria.
+// leitura vê o token antigo ou o novo, nunca uma mistura. O prazo configurado
+// pelo evento é reconferido sob a trava tanto no pedido quanto no aceite.
 import "server-only";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
@@ -27,19 +27,13 @@ import { escapeHtml, getEmailAdapter } from "../email";
 import { AppError, invalidState, notFound } from "../errors";
 import { formatEventDateTime } from "@/lib/datetime";
 import { lockEvent, ticketsHeldByAccount } from "./orders";
+import { DEFAULT_TRANSFER_POLICY, TRANSFER_ACCEPT_WINDOW_HOURS, transferCutoff, type TransferPolicy } from "@/lib/transfer-policy";
 
-/**
- * Valores PROVISÓRIOS até a decisão jurídica D7 (prazo-limite para transferir) e a
- * regra antifraude de R4. Não são exigência do decreto: mudar aqui não exige schema.
- * - maxTransfersPerTicket: transferências ACEITAS por ingresso (contra revenda em cadeia).
- * - acceptWindowHours: validade do convite de aceite.
- * - O convite nunca vale depois do início do evento (expiresAt = min(agora + janela, startsAt)),
- *   e não se pode pedir transferência com o evento já iniciado.
- */
 /** decisionReason da recusa pelo destinatário (a página de aceite distingue de cancelamento). */
 export const DECLINED_BY_RECIPIENT = "Recusada pelo destinatário";
 
-export const TRANSFER_POLICY = { maxTransfersPerTicket: 3, acceptWindowHours: 48 } as const;
+/** Compatibilidade com consumidores antigos; a regra efetiva sempre vem do evento. */
+export const TRANSFER_POLICY = { maxTransfersPerTicket: DEFAULT_TRANSFER_POLICY.transferMaxTransfers, acceptWindowHours: TRANSFER_ACCEPT_WINDOW_HOURS } as const;
 
 export const requestTransferSchema = z.object({
   toEmail: z.string().trim().toLowerCase().email("Informe um e-mail válido.").max(254),
@@ -55,10 +49,6 @@ export interface RequestMeta {
 
 const meta = (m: RequestMeta = {}) => ({ ip: m.ip?.slice(0, 64) ?? null, userAgent: m.userAgent?.slice(0, 512) ?? null });
 
-async function lockEventShared(tx: Tx, eventId: string) {
-  await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR KEY SHARE`;
-}
-
 async function lockOrderShared(tx: Tx, orderId: string) {
   await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR KEY SHARE`;
 }
@@ -71,14 +61,14 @@ async function lockTransfer(tx: Tx, transferId: string) {
   await tx.$queryRaw`SELECT id FROM "TicketTransfer" WHERE id = ${transferId} FOR UPDATE`;
 }
 
-const ticketWithContext = { order: { select: { status: true } }, event: { select: { status: true, startsAt: true, title: true, timezone: true, organizationId: true, maxTicketsPerAccount: true } } } satisfies Prisma.IssuedTicketInclude;
+const ticketWithContext = { order: { select: { status: true } }, event: { select: { status: true, startsAt: true, title: true, timezone: true, organizationId: true, maxTicketsPerAccount: true, transferDeadlineHours: true, transferMaxTransfers: true, transferAllowReturn: true } } } satisfies Prisma.IssuedTicketInclude;
 type TicketWithContext = Prisma.IssuedTicketGetPayload<{ include: typeof ticketWithContext }>;
 
 /** Mínimo de que `transferBlockedReason` precisa (a página do ingresso passa o próprio include). */
 interface TransferableTicket {
   status: TicketWithContext["status"];
   order: { status: TicketWithContext["order"]["status"] };
-  event: { status: TicketWithContext["event"]["status"]; startsAt: Date };
+  event: { status: TicketWithContext["event"]["status"]; startsAt: Date } & TransferPolicy;
 }
 
 /**
@@ -91,7 +81,37 @@ export function transferBlockedReason(t: TransferableTicket, now: Date): string 
   if (t.order.status !== "PAID") return "O pedido deste ingresso não está pago ou tem reembolso em andamento.";
   if (t.event.status !== "PUBLISHED") return "O evento não está mais ativo.";
   if (t.event.startsAt.getTime() <= now.getTime()) return "O evento já começou: não é mais possível transferir.";
+  if (now.getTime() >= transferCutoff(t.event.startsAt, t.event).getTime()) return `O prazo para transferir encerrou: ${t.event.transferDeadlineHours} hora(s) antes do evento.`;
   return null;
+}
+
+/** Identidade estável mais e-mails históricos: trocar e-mail não permite receber de volta. */
+export async function transferRecipientBlockedReason(db: Db | Tx, ticketId: string, buyerId: string, recipient: { id?: string; email: string }, allowReturn: boolean): Promise<string | null> {
+  if (allowReturn) return null;
+  const email = recipient.email.toLowerCase();
+  const account = recipient.id ? { id: recipient.id } : await db.user.findUnique({ where: { email }, select: { id: true } });
+  const previousHolder = account?.id === buyerId || !!await db.ticketTransfer.findFirst({
+    where: {
+      ticketId,
+      status: "ACCEPTED",
+      OR: [
+        ...(account ? [{ fromUserId: account.id }, { toUserId: account.id }] : []),
+        { fromHolderEmail: email },
+        { toEmail: email },
+      ],
+    },
+    select: { id: true },
+  });
+  return previousHolder ? "Este evento não permite devolver o ingresso a um titular anterior." : null;
+}
+
+async function enforceTransferPolicy(tx: Tx, t: TicketWithContext, recipient: { id?: string; email: string }) {
+  const accepted = await tx.ticketTransfer.count({ where: { ticketId: t.id, status: "ACCEPTED" } });
+  if (accepted >= t.event.transferMaxTransfers) {
+    throw new AppError("LIMIT_EXCEEDED", `Este ingresso já atingiu o limite de ${t.event.transferMaxTransfers} transferência(s).`);
+  }
+  const blocked = await transferRecipientBlockedReason(tx, t.id, t.userId, recipient, t.event.transferAllowReturn);
+  if (blocked) throw invalidState(blocked);
 }
 
 const isUniqueViolation = (err: unknown) => !!err && typeof err === "object" && "code" in err && (err as { code: unknown }).code === "P2002";
@@ -109,7 +129,7 @@ export interface TransferRequestedWithToken extends TransferRequested {
 }
 
 /** O titular atual pede a transferência. Gratuita: não cria pedido nem cobrança. */
-export async function requestTransfer(db: Db, holder: Actor, ticketId: string, input: RequestTransferInput, requestMeta?: RequestMeta, now = new Date()): Promise<TransferRequestedWithToken> {
+export async function requestTransfer(db: Db, holder: Actor, ticketId: string, input: RequestTransferInput, requestMeta?: RequestMeta, at?: Date): Promise<TransferRequestedWithToken> {
   assertActive(holder);
   const parsed = requestTransferSchema.safeParse(input);
   if (!parsed.success) throw new AppError("VALIDATION", parsed.error.issues[0]?.message ?? "Dados inválidos.");
@@ -123,23 +143,21 @@ export async function requestTransfer(db: Db, holder: Actor, ticketId: string, i
   let created: { id: string; expiresAt: Date; ticket: TicketWithContext; fromName: string };
   try {
     created = await db.$transaction(async (tx) => {
-      await lockEventShared(tx, ticket.eventId);
+      await lockEvent(tx, ticket.eventId);
       await lockOrderShared(tx, ticket.orderId);
       await lockTicket(tx, ticketId);
+      const now = at ?? new Date();
       const t = await tx.issuedTicket.findUniqueOrThrow({ where: { id: ticketId }, include: ticketWithContext });
       if (t.holderUserId !== holder.id) throw notFound("Ingresso não encontrado.");
       const blocked = transferBlockedReason(t, now);
       if (blocked) throw invalidState(blocked);
       const from = await tx.user.findUniqueOrThrow({ where: { id: holder.id }, select: { email: true, name: true } });
       if (from.email.toLowerCase() === data.toEmail) throw new AppError("VALIDATION", "Informe o e-mail de outra pessoa.");
-      const accepted = await tx.ticketTransfer.count({ where: { ticketId, status: "ACCEPTED" } });
-      if (accepted >= TRANSFER_POLICY.maxTransfersPerTicket) {
-        throw new AppError("LIMIT_EXCEEDED", `Este ingresso já atingiu o limite de ${TRANSFER_POLICY.maxTransfersPerTicket} transferências.`);
-      }
+      await enforceTransferPolicy(tx, t, { email: data.toEmail });
       // Convite vencido que o cron ainda não expirou não pode travar um novo pedido (índice
       // único de uma pendente por ingresso): expira aqui, sob a trava do ingresso, como o cron.
       await tx.ticketTransfer.updateMany({ where: { ticketId, status: "PENDING", expiresAt: { lte: now } }, data: { status: "EXPIRED", decidedAt: now } });
-      const expiresAt = new Date(Math.min(now.getTime() + TRANSFER_POLICY.acceptWindowHours * 3_600_000, t.event.startsAt.getTime()));
+      const expiresAt = new Date(Math.min(now.getTime() + TRANSFER_ACCEPT_WINDOW_HOURS * 3_600_000, transferCutoff(t.event.startsAt, t.event).getTime()));
       const fromName = t.holderName ?? from.name;
       const row = await tx.ticketTransfer.create({
         data: {
@@ -190,8 +208,8 @@ export async function findTransferByToken(db: Db, token: string) {
       decisionReason: true,
       // status do ingresso, do pedido e do evento: a página avisa antes do clique quando o
       // ingresso não pode mais ser transferido (transferBlockedReason).
-      ticket: { select: { code: true, status: true, ticketType: { select: { name: true } }, order: { select: { status: true } } } },
-      event: { select: { title: true, startsAt: true, timezone: true, status: true } },
+      ticket: { select: { id: true, userId: true, code: true, status: true, _count: { select: { transfers: { where: { status: "ACCEPTED" } } } }, ticketType: { select: { name: true } }, order: { select: { status: true } } } },
+      event: { select: { title: true, startsAt: true, timezone: true, status: true, transferDeadlineHours: true, transferMaxTransfers: true, transferAllowReturn: true } },
     },
   });
 }
@@ -226,7 +244,7 @@ export interface TransferAccepted {
  * O destinatário aceita. Tudo é reconferido sob as travas; o ingresso só muda de
  * titular se ainda estiver VALID e com o mesmo titular do pedido, e ganha novo QR.
  */
-export async function acceptTransfer(db: Db, recipient: Actor, token: RecipientTransferRef, decisionMeta?: RequestMeta, now = new Date()): Promise<TransferAccepted> {
+export async function acceptTransfer(db: Db, recipient: Actor, token: RecipientTransferRef, decisionMeta?: RequestMeta, at?: Date): Promise<TransferAccepted> {
   const { transfer, user } = await pendingForRecipient(db, recipient, token);
   const ticketRef = await db.issuedTicket.findUniqueOrThrow({ where: { id: transfer.ticketId }, select: { orderId: true } });
   const m = meta(decisionMeta);
@@ -236,6 +254,7 @@ export async function acceptTransfer(db: Db, recipient: Actor, token: RecipientT
     await lockOrderShared(tx, ticketRef.orderId);
     await lockTicket(tx, transfer.ticketId);
     await lockTransfer(tx, transfer.id);
+    const now = at ?? new Date();
 
     const current = await tx.ticketTransfer.findUniqueOrThrow({ where: { id: transfer.id } });
     if (current.status !== "PENDING") throw invalidState(current.status === "ACCEPTED" ? "Esta transferência já foi aceita." : "Esta transferência não está mais disponível.");
@@ -247,6 +266,8 @@ export async function acceptTransfer(db: Db, recipient: Actor, token: RecipientT
     const blocked = transferBlockedReason(t, now);
     if (blocked) throw invalidState(blocked);
     if (t.holderUserId !== current.fromUserId) throw invalidState("O ingresso mudou de titular depois do pedido de transferência.");
+
+    await enforceTransferPolicy(tx, t, { id: recipient.id, email: user.email });
 
     // Contrato (a) com pagamentos-financeiro: a mesma contagem do createOrder, sob a
     // mesma trava do evento (lockEvent acima).
@@ -314,9 +335,25 @@ export async function declineTransfer(db: Db, recipient: Actor, token: Recipient
 }
 
 /** Cron de manutenção: expira convites vencidos. decidedById nulo = expiração automática. */
-export async function expireTicketTransfers(db: Db, now = new Date()): Promise<number> {
-  const { count } = await db.ticketTransfer.updateMany({ where: { status: "PENDING", expiresAt: { lte: now } }, data: { status: "EXPIRED", decidedAt: now } });
-  return count;
+export async function expireTicketTransfers(db: Db, at?: Date): Promise<number> {
+  const events = await db.event.findMany({ where: { transfers: { some: { status: "PENDING" } } }, select: { id: true } });
+  let expired = 0;
+  for (const event of events) {
+    expired += await db.$transaction(async (tx) => {
+      // Convites antigos também seguem o corte atual após migração/remarcação. A trava
+      // mantém o cron na mesma ordem das alterações de evento e dos aceites.
+      await lockEvent(tx, event.id);
+      const now = at ?? new Date();
+      const current = await tx.event.findUniqueOrThrow({ where: { id: event.id }, select: { startsAt: true, transferDeadlineHours: true, transferMaxTransfers: true, transferAllowReturn: true } });
+      const deadlineReached = transferCutoff(current.startsAt, current).getTime() <= now.getTime();
+      const { count } = await tx.ticketTransfer.updateMany({
+        where: { eventId: event.id, status: "PENDING", ...(deadlineReached ? {} : { expiresAt: { lte: now } }) },
+        data: { status: "EXPIRED", decidedAt: now },
+      });
+      return count;
+    }, TX_OPTIONS);
+  }
+  return expired;
 }
 
 /** Transferências do titular (enviadas) e para o e-mail da conta (recebidas), para a UI da Fase 4. */
@@ -332,13 +369,19 @@ export async function listMyTransfers(db: Db, actor: Actor) {
     expiresAt: true,
     decidedAt: true,
     ticket: { select: { id: true, code: true, ticketType: { select: { name: true } } } },
-    event: { select: { id: true, title: true, startsAt: true, timezone: true } },
+    event: { select: { id: true, title: true, startsAt: true, timezone: true, transferDeadlineHours: true, transferMaxTransfers: true, transferAllowReturn: true } },
   } satisfies Prisma.TicketTransferSelect;
   const [sent, received] = await Promise.all([
     db.ticketTransfer.findMany({ where: { fromUserId: actor.id, initiatedBy: "HOLDER" }, select: select, orderBy: { createdAt: "desc" }, take: 100 }),
     db.ticketTransfer.findMany({ where: { OR: [{ toUserId: actor.id }, { toEmail: user.email.toLowerCase(), status: "PENDING" }] }, select: select, orderBy: { createdAt: "desc" }, take: 100 }),
   ]);
-  return { sent, received };
+  // Mantém a validade histórica, mas fornece o corte efetivo para a interface não
+  // oferecer um convite cuja política atual já encerrou (antes mesmo do próximo cron).
+  const withEffectiveExpiry = (row: (typeof sent)[number]) => ({
+    ...row,
+    effectiveExpiresAt: row.expiresAt ? new Date(Math.min(row.expiresAt.getTime(), transferCutoff(row.event.startsAt, row.event).getTime())) : null,
+  });
+  return { sent: sent.map(withEffectiveExpiry), received: received.map(withEffectiveExpiry) };
 }
 
 // ───────────────────────────── E-mails ─────────────────────────────
