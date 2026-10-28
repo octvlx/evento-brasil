@@ -443,6 +443,18 @@ export function StepSettings({ form, errors }: { form: Form; errors: Errors }) {
           {(a) => <Input {...a} type="number" min={0} max={720} step="1" inputMode="numeric" {...reg(form, "refundMinHoursBeforeEvent")} />}
         </Field>
       </section>
+      <section aria-labelledby="ew-transfer-title" className="grid gap-5 sm:grid-cols-2">
+        <h3 id="ew-transfer-title" className="font-display text-base font-bold sm:col-span-2">Transferência de ingressos</h3>
+        <Field name="transferDeadlineHours" label="Transferência: horas antes do início" error={errors.transferDeadlineHours} help="Padrão: 24 horas. Use 0 para permitir até o início (máximo 8760).">
+          {(a) => <Input {...a} type="number" min={0} max={8760} step="1" {...reg(form, "transferDeadlineHours")} />}
+        </Field>
+        <Field name="transferMaxTransfers" label="Máximo de transferências por ingresso" error={errors.transferMaxTransfers} help="De 1 a 10. Padrão: uma transferência por ingresso.">
+          {(a) => <Input {...a} type="number" min={1} max={10} step="1" {...reg(form, "transferMaxTransfers")} />}
+        </Field>
+        <Field name="transferAllowReturn" label="Permitir nova transferência para um titular anterior" error={errors.transferAllowReturn} className="sm:col-span-2" help="Exige pedido do titular atual e aceite do destinatário, e consome uma transferência do limite (mínimo 2). Não é um desfazer unilateral.">
+          {(a) => <input {...a} type="checkbox" {...form.register("transferAllowReturn")} />}
+        </Field>
+      </section>
       <section aria-labelledby="ew-more-title" className="space-y-2 rounded-2xl border border-border p-4 text-sm">
         <h3 id="ew-more-title" className="font-display text-base font-bold">
           Outras configurações

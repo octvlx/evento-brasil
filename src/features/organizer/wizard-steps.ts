@@ -2,7 +2,7 @@
 // Compartilhado entre o navegador (validação ao continuar/autosave) e o servidor
 // (que SEMPRE revalida). As mensagens reaproveitam os campos de `eventInputSchema`.
 import { z } from "zod";
-import { eventInputSchema, venueInputSchema } from "@/features/schemas";
+import { transferPolicyFields, validateTransferPolicySettings, eventInputSchema, venueInputSchema } from "@/features/schemas";
 
 export const WIZARD_STEPS = [
   {
@@ -33,7 +33,7 @@ export const WIZARD_STEPS = [
     n: 5,
     title: "Configurações",
     short: "Configurações",
-    hint: "Política de cancelamento e reembolso.",
+    hint: "Políticas de transferência, cancelamento e reembolso.",
   },
   {
     n: 6,
@@ -174,10 +174,11 @@ export const step4Schema = z.object({
 });
 
 export const step5Schema = z.object({
+  ...transferPolicyFields,
   refundPolicy: s.refundPolicy,
   refundWindowDays: s.refundWindowDays,
   refundMinHoursBeforeEvent: s.refundMinHoursBeforeEvent,
-});
+}).superRefine(validateTransferPolicySettings);
 
 export const STEP_SCHEMAS = {
   1: step1Schema,
@@ -193,7 +194,7 @@ export const STEP_FIELDS: Record<DataStep, readonly string[]> = {
   2: ["timezone", "startsAtLocal", "endsAtLocal", "locationType", "venueMode", "venueId", "newVenue", "onlineUrl"],
   3: ["capacity", "halfPriceQuotaPercent", "maxTicketsPerAccount", "salesStartLocal", "salesEndLocal"],
   4: ["description", "coverImageUrl", "ageRestriction", "accessibilityInfo"],
-  5: ["refundPolicy", "refundWindowDays", "refundMinHoursBeforeEvent"],
+  5: ["refundPolicy", "refundWindowDays", "refundMinHoursBeforeEvent", "transferDeadlineHours", "transferMaxTransfers", "transferAllowReturn"],
 };
 
 /** Todos os valores do assistente (estado único do formulário no navegador). */
@@ -226,6 +227,9 @@ export interface WizardValues {
   coverImageUrl: string;
   ageRestriction: string;
   accessibilityInfo: string;
+  transferDeadlineHours: string;
+  transferMaxTransfers: string;
+  transferAllowReturn: boolean;
   refundPolicy: string;
   refundWindowDays: string;
   refundMinHoursBeforeEvent: string;
@@ -265,6 +269,9 @@ export function stepPayload(step: DataStep, v: WizardValues): Record<string, unk
       };
     case 5:
       return {
+        transferDeadlineHours: v.transferDeadlineHours,
+        transferMaxTransfers: v.transferMaxTransfers,
+        transferAllowReturn: v.transferAllowReturn,
         refundPolicy: v.refundPolicy,
         refundWindowDays: v.refundWindowDays,
         refundMinHoursBeforeEvent: v.refundMinHoursBeforeEvent,
