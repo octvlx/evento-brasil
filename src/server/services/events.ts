@@ -12,6 +12,7 @@ import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, type A
 import { randomToken } from "../crypto";
 import { AppError, invalidState, notFound } from "../errors";
 import { resolveCommissionRule } from "./commission";
+import { getWizardProgress, isWizardComplete } from "./event-wizard-progress";
 
 /** Transições permitidas do ciclo de vida do evento. */
 export const EVENT_TRANSITIONS: Record<EventStatus, readonly EventStatus[]> = {
@@ -29,7 +30,7 @@ export function assertEventTransition(from: EventStatus, to: EventStatus) {
 
 const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
 
-async function uniqueEventSlug(client: Db | Tx, title: string, cityName?: string | null): Promise<string> {
+export async function uniqueEventSlug(client: Db | Tx, title: string, cityName?: string | null): Promise<string> {
   const base = slugify([title, cityName].filter(Boolean).join(" ")) || "evento";
   if (!(await client.event.findUnique({ where: { slug: base }, select: { id: true } }))) return base;
   return `${base}-${randomToken(4).toLowerCase().replace(/[^a-z0-9]/g, "x")}`;
@@ -204,11 +205,16 @@ export async function deleteTicketType(db: Db, actor: Actor, ticketTypeId: strin
 export async function submitEventForPublication(db: Db, actor: Actor, eventId: string) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:publish");
   return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, include: { organization: true, ticketTypes: true } });
     if (event.organization.status !== "APPROVED") throw new AppError("FORBIDDEN", "A organização precisa ser aprovada antes de publicar eventos.");
     if (!event.ticketTypes.length) throw new AppError("VALIDATION", "Cadastre ao menos um tipo de ingresso.");
     if (event.endsAt < new Date()) throw new AppError("VALIDATION", "O evento já terminou.");
+    // Rascunho do assistente com etapa pendente ainda tem valores provisórios.
+    if (!isWizardComplete(await getWizardProgress(tx, eventId))) throw new AppError("VALIDATION", "Conclua todas as etapas do cadastro do evento antes de publicar.");
     const target: EventStatus = event.organization.autoPublishEvents ? "PUBLISHED" : "PENDING_REVIEW";
+    // Idempotente: um segundo envio (clique repetido) devolve o estado atual.
+    if (event.status === target) return event;
     assertEventTransition(event.status, target);
     const updated = await tx.event.update({
       where: { id: eventId },

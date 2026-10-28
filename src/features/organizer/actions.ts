@@ -18,6 +18,8 @@ import { cancelEvent } from "@/server/services/cancellation";
 import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, upsertTicketType } from "@/server/services/events";
+import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
+import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
 import {
   acceptInvitation,
   assignStaffToEvent,
@@ -78,6 +80,41 @@ export async function saveEventAction(eventId: string | null, input: EventInput)
   return toActionResult(async () => {
     const event = eventId ? await updateEvent(db, user, eventId, input) : await createEvent(db, user, await activeOrgId(user.id), input);
     return { id: event.id };
+  });
+}
+
+// ── Assistente de criação de evento ──
+
+/** Etapa 1: cria (ou recupera, pela mesma `draftKey`) o rascunho na organização ativa. */
+export async function startEventDraftAction(input: { draftKey: string } & Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
+  const user = await requireUser("/organizador/eventos/novo");
+  return toActionResult(async () => {
+    rateLimit(`event-draft:${user.id}`, 30, 60 * 60_000);
+    const { event } = await startEventDraft(db, user, await activeOrgId(user.id), input);
+    return { id: event.id };
+  });
+}
+
+export async function saveEventWizardStepAction(
+  eventId: string,
+  step: DataStep,
+  input: Record<string, unknown>,
+  complete: boolean,
+): Promise<ActionResult<{ completed: DataStep[]; savedAt: string }>> {
+  const user = await requireUser("/organizador/eventos/novo");
+  return toActionResult(async () => {
+    if (!isDataStep(step)) throw new AppError("VALIDATION", "Etapa inválida.");
+    const { progress } = await saveEventWizardStep(db, user, eventId, step, input, { complete });
+    return { completed: progress.completed, savedAt: new Date().toISOString() };
+  });
+}
+
+export async function recordWizardVisitAction(eventId: string, step: WizardStep): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos/novo");
+  return toActionResult(async () => {
+    if (!Number.isInteger(step) || step < 1 || step > 6) throw new AppError("VALIDATION", "Etapa inválida.");
+    await recordWizardVisit(db, user, eventId, step);
+    return undefined;
   });
 }
 
