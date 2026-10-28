@@ -13,6 +13,8 @@ import { randomToken } from "../crypto";
 import { AppError, invalidState, notFound } from "../errors";
 import { resolveCommissionRule } from "./commission";
 import { getWizardProgress, isWizardComplete } from "./event-wizard-progress";
+import { recordRelevantChange } from "./event-changes";
+import { notifyEventChangeInBackground } from "./notifications";
 
 /** Transições permitidas do ciclo de vida do evento. */
 export const EVENT_TRANSITIONS: Record<EventStatus, readonly EventStatus[]> = {
@@ -36,10 +38,16 @@ export async function uniqueEventSlug(client: Db | Tx, title: string, cityName?:
   return `${base}-${randomToken(4).toLowerCase().replace(/[^a-z0-9]/g, "x")}`;
 }
 
-async function resolveLocation(tx: Tx, organizationId: string, input: ReturnType<typeof eventInputSchema.parse>) {
+async function resolveLocation(tx: Tx, organizationId: string, input: ReturnType<typeof eventInputSchema.parse>, currentVenueId?: string | null) {
   if (input.locationType === "ONLINE") return { venueId: null, cityId: input.cityId || null, onlineUrl: input.onlineUrl ?? null };
   if (input.newVenue) {
     const v = input.newVenue;
+    // Reenvio do mesmo "novo local" na edição: mantém o local atual em vez de criar
+    // outro igual (que contaria como troca de local, R8).
+    if (currentVenueId) {
+      const same = await tx.venue.findFirst({ where: { id: currentVenueId, organizationId, name: v.name, addressLine: v.addressLine, cityId: v.cityId } });
+      if (same) return { venueId: same.id, cityId: same.cityId, onlineUrl: null };
+    }
     const city = await tx.city.findUnique({ where: { id: v.cityId } });
     if (!city) throw new AppError("VALIDATION", "Cidade inválida.");
     const venue = await tx.venue.create({
@@ -80,6 +88,7 @@ function eventData(input: ReturnType<typeof eventInputSchema.parse>) {
     ageRestriction: input.ageRestriction,
     capacity: input.capacity,
     halfPriceQuotaBps: input.halfPriceQuotaPercent === undefined ? null : Math.round(input.halfPriceQuotaPercent * 100),
+    maxTicketsPerAccount: input.maxTicketsPerAccount ?? null,
     refundPolicy: input.refundPolicy,
     refundWindowDays: input.refundWindowDays,
     refundMinHoursBeforeEvent: input.refundMinHoursBeforeEvent,
@@ -104,10 +113,36 @@ export async function createEvent(db: Db, actor: Actor, organizationId: string, 
   });
 }
 
+/**
+ * Maior quantidade de ingressos que uma única conta já tem no evento (R4): ingressos não
+ * revogados em que ela é compradora ou titular (cada ingresso conta uma vez por conta) +
+ * itens de pedidos aguardando pagamento ainda não vencidos.
+ * Regra provisória do lado do organizador; quando `ticketsHeldByAccount` do
+ * `pagamentos-financeiro` estiver no main, passar a usá-lo.
+ */
+export async function maxTicketsHeldBySingleAccount(client: Db | Tx, eventId: string): Promise<number> {
+  const [row] = await client.$queryRaw<{ max: number | null }[]>`
+    SELECT max(n)::int AS max FROM (
+      SELECT account, sum(q) AS n FROM (
+        SELECT DISTINCT t.id::text AS ref, a.account, 1 AS q
+          FROM "IssuedTicket" t CROSS JOIN LATERAL (VALUES (t."userId"), (t."holderUserId")) AS a(account)
+         WHERE t."eventId" = ${eventId} AND t.status <> 'REVOKED'
+        UNION ALL
+        SELECT i.id::text AS ref, o."userId" AS account, i.quantity AS q
+          FROM "Order" o JOIN "OrderItem" i ON i."orderId" = o.id
+         WHERE o."eventId" = ${eventId} AND o.status = 'PENDING_PAYMENT' AND o."expiresAt" > now()
+      ) held GROUP BY account
+    ) per_account`;
+  return row?.max ?? 0;
+}
+
 export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: EventInput) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
   const input = eventInputSchema.parse(raw);
-  return db.$transaction(async (tx) => {
+  const { event, change } = await db.$transaction(async (tx) => {
+    // Trava o evento: o "antes" da alteração relevante e a checagem de limite por conta
+    // não podem ser atropelados por outra edição simultânea.
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const current = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
     if (!EDITABLE.includes(current.status)) throw invalidState("Este evento não pode mais ser editado.");
     const sold = await tx.ticketType.aggregate({ where: { eventId }, _sum: { quantitySold: true, quantityReserved: true } });
@@ -119,11 +154,33 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
       throw new AppError("VALIDATION", `Já há ingressos vendidos: o prazo de reembolso não pode ser menor que ${current.refundWindowDays} dias após a compra.`);
     if (committed > 0 && input.refundMinHoursBeforeEvent > current.refundMinHoursBeforeEvent)
       throw new AppError("VALIDATION", `Já há ingressos vendidos: a antecedência para reembolso não pode passar de ${current.refundMinHoursBeforeEvent} horas antes do evento.`);
-    const loc = await resolveLocation(tx, organizationId, input);
-    const event = await tx.event.update({ where: { id: eventId }, data: { ...eventData(input), ...loc } });
-    await audit(tx, { actorUserId: actor.id, organizationId, action: "event.updated", entityType: "Event", entityId: eventId });
-    return event;
+    if (input.maxTicketsPerAccount !== undefined && input.maxTicketsPerAccount !== current.maxTicketsPerAccount) {
+      const held = await maxTicketsHeldBySingleAccount(tx, eventId);
+      if (input.maxTicketsPerAccount < held)
+        throw new AppError("VALIDATION", `Uma conta já tem ${held} ingressos deste evento: o limite por conta não pode ser menor que ${held}.`);
+    }
+    const loc = await resolveLocation(tx, organizationId, input, current.venueId);
+    const data = { ...eventData(input), ...loc };
+    const change = await recordRelevantChange(tx, {
+      actorUserId: actor.id,
+      event: current,
+      next: { startsAt: data.startsAt, locationType: data.locationType, venueId: loc.venueId, cityId: loc.cityId },
+      reason: input.changeReason,
+    });
+    const event = await tx.event.update({ where: { id: eventId }, data });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "event.updated",
+      entityType: "Event",
+      entityId: eventId,
+      metadata: change ? { eventChangeId: change.id } : undefined,
+    });
+    return { event, change };
   });
+  // Fora da transação: falha de e-mail não desfaz a alteração (pode ser reenviada).
+  if (change) notifyEventChangeInBackground(db, change.id);
+  return event;
 }
 
 /**
