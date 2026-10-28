@@ -7,7 +7,7 @@ import { Alert } from "@/components/ui/primitives";
 import { acceptTransferAction, declineTransferAction } from "./transfer-actions";
 
 /** Aceitar ou recusar uma transferência recebida (página /transferencia/[token]). */
-export function TransferResponse({ token }: { token: string }) {
+export function TransferResponse({ token, allowAccept = true }: { token: string; allowAccept?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -16,7 +16,7 @@ export function TransferResponse({ token }: { token: string }) {
     <div className="space-y-3">
       {msg && <Alert variant="danger">{msg.text}</Alert>}
       <div className="flex flex-wrap gap-2">
-        <Button
+        {allowAccept && <Button
           disabled={pending}
           onClick={() =>
             start(async () => {
@@ -29,7 +29,7 @@ export function TransferResponse({ token }: { token: string }) {
           }
         >
           {pending ? "Processando…" : "Aceitar ingresso"}
-        </Button>
+        </Button>}
         <Button
           variant="ghost"
           disabled={pending}
