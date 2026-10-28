@@ -5,6 +5,7 @@ import { Alert, Skeleton } from "@/components/ui/primitives";
 import { PageTitle, StatCard } from "@/components/site/panel-shell";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
+import { adminQueueCounts } from "@/server/services/admin-oversight";
 import { adminStats } from "@/server/services/reports";
 import { formatBRL } from "@/lib/money";
 
@@ -20,7 +21,7 @@ export default function AdminHome() {
 
 async function Content() {
   const admin = await requireAdmin();
-  const s = await adminStats(db, admin);
+  const [s, q] = await Promise.all([adminStats(db, admin), adminQueueCounts(db, admin)]);
   const paidOrders = (s.orders.PAID ?? 0) + (s.orders.REFUNDED ?? 0) + (s.orders.REFUND_PENDING ?? 0) + (s.orders.DISPUTED ?? 0);
   return (
     <>
@@ -46,6 +47,18 @@ async function Content() {
           <p className="text-sm text-muted-foreground">Fila de moderação</p>
           <p className="font-display text-3xl font-extrabold">{s.events.PENDING_REVIEW ?? 0}</p>
           <p className="text-sm">eventos aguardando moderação</p>
+        </Link>
+        <Link href="/admin/cancelamentos" className="rounded-2xl border border-border bg-card p-5 hover:border-secondary">
+          <p className="text-sm text-muted-foreground">Pedidos de cancelamento</p>
+          <p className="font-display text-3xl font-extrabold">{q.openCancellations}</p>
+          <p className="text-sm">
+            em análise{q.overdueCancellations > 0 && <strong className="text-destructive"> · {q.overdueCancellations} com prazo vencido</strong>}
+          </p>
+        </Link>
+        <Link href="/admin/pagamentos#reembolsos-falhos" className="rounded-2xl border border-border bg-card p-5 hover:border-secondary">
+          <p className="text-sm text-muted-foreground">Reembolsos com falha</p>
+          <p className="font-display text-3xl font-extrabold">{q.failedRefunds}</p>
+          <p className="text-sm">aguardando nova tentativa ou decisão</p>
         </Link>
       </div>
     </>
