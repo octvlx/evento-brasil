@@ -136,6 +136,7 @@ banco migrado e o schema).
 | `TermsVersion_text_hash_format`, `_version_present`; `TermsAcceptance_checkout_order`, `_organization` | idem | Hash SHA-256 hex; CHECKOUT ⇔ `orderId`; ORGANIZER_SIGNUP com organização, SIGNUP/CHECKOUT sem |
 | Índices únicos parciais `TermsAcceptance_order_once`, `_organization_once` | idem | Um aceite por versão por pedido e por organização |
 | Gatilhos `EventChange_immutable`, `TermsVersion_immutable`, `TermsAcceptance_immutable` (`compliance_block_mutation()`) | idem | Somente inserção |
+| Índice `AuditLog_action_prefix_idx` (`action text_pattern_ops, createdAt`, parcial `WHERE action IS NOT NULL`) | `20261028120000_query_plan_indexes` | Filtro da auditoria por prefixo de ação (`startsWith`) usa o índice em qualquer collation. É parcial só para o Prisma não propor derrubá-lo: o Prisma não expressa operator class em btree; o predicado é sempre verdadeiro. |
 
 Os gatilhos de imutabilidade são `BEFORE UPDATE OR DELETE … FOR EACH ROW`:
 
@@ -169,6 +170,91 @@ Revisados para os serviços da Fase 3; nenhum índice novo foi necessário.
 | Pedidos de cancelamento do comprador | `CancellationRequest(requestedById, createdAt)` (poucos por usuário; o status é filtrado na leitura) |
 | Pedido aberto de uma compra | único parcial `CancellationRequest_one_open_per_order (orderId) WHERE OPEN` |
 | Fila do admin / do organizador | `CancellationRequest(status, createdAt)`, `(status, respondBy)`, `(organizationId, status, createdAt)`, `(eventId, status)` |
+
+## Planos de consulta da Fase 4
+
+Medidos com `EXPLAIN (ANALYZE, BUFFERS)` nas consultas reais das telas,
+capturadas pelo log de consultas do Prisma (serviços de `src/server/services`,
+páginas que consultam o Prisma direto e, para o admin, as consultas de
+`admin-oversight.ts` da branch `agent/admin`). Nenhum dado é versionado; o
+volume é gerado por script:
+
+```bash
+# banco local DESCARTÁVEL, recém-migrado e vazio (o script recusa outro host ou banco com dados)
+DATABASE_URL=postgresql://…@localhost:<porta>/<banco> npx tsx --conditions=react-server scripts/query-plans/run.mts --load
+DATABASE_URL=… npx tsx --conditions=react-server scripts/query-plans/run.mts --out planos.md --json planos.json
+```
+
+Volume (`scripts/query-plans/volume.sql`, ~2 min): 60 mil usuários, 400
+cidades, 800 organizações, 20 mil eventos, 60 mil tipos, 400 mil pedidos, 632
+mil ingressos, 31,5 mil transferências, 3,3 mil alterações, 12 mil pedidos de
+cancelamento, 1 milhão de linhas de auditoria. Distribuições enviesadas: uma
+cidade com ~14% dos locais, eventos populares e um comprador "pesado" (1,8 mil
+pedidos, 2,7 mil ingressos) ao lado do típico (4–6 pedidos). Cada consulta roda
+5 vezes; vale a mediana do tempo de execução. Antes e depois foram medidos em
+sequência, no mesmo banco (PostgreSQL 17 embutido, collation C, após
+`VACUUM ANALYZE`); diferenças abaixo de ~30% são ruído da máquina.
+
+Migração `20261028120000_query_plan_indexes` (somente aditiva):
+
+| Consulta (tela) | Antes | Depois | Plano antes → depois |
+| --- | ---: | ---: | --- |
+| Transferências do admin por status, mais recentes (página de 25) | 6,64 ms | 0,13 ms | Bitmap em `(status, expiresAt)` + ordenação de 4,7 mil linhas → `TicketTransfer(status, createdAt)` de trás para frente |
+| Pedidos de cancelamento decididos (`decidedAt desc`, 100) | 8,63 ms | 0,18 ms | Seq Scan + ordenação → `CancellationRequest(status, decidedAt)` |
+| Auditoria, contagem do preset "Transferências" (`ticket.transfer.%`, 104 mil linhas) | 155 ms | 30,7 ms | Seq Scan de 1 milhão → Index Only Scan em `AuditLog_action_prefix_idx` |
+| Auditoria, contagem do preset "Alterações" (dois prefixos) | 216 ms | 58,8 ms | Seq Scan → BitmapOr no índice de prefixo |
+| Auditoria, contagem de "Reembolsos" + texto `refund.attempt` | 136 ms | 10,7 ms | Parallel Seq Scan → Index Only Scan |
+
+As páginas da auditoria (25 ou 200 linhas) já eram rápidas (0,3–2 ms, varredura
+de trás para frente em `AuditLog(createdAt)`); o custo estava na contagem para a
+paginação. Com collation diferente de C (ex.: ICU `pt-BR`, imagem Docker), um
+btree comum em `action` **não** atende `LIKE 'x%'` (só varre o índice inteiro
+com filtro); `text_pattern_ops` dá condição de intervalo (verificado num banco
+ICU `pt-BR` descartável).
+
+Sem índice novo (planos já adequados no volume acima; soma das medianas por tela):
+
+| Tela | Tempo | Observação |
+| --- | ---: | --- |
+| Descoberta: sem filtro / categoria / fim de semana / cidade+categoria+30 dias | 1–5 ms | `Event(status, startsAt)` |
+| Descoberta: cidade grande / pequena, vitrine da cidade | 15–20 ms | O `OR` entre `Event.city` e `Venue.city` impede usar `Event(cityId, status, startsAt)`; filtra ~5 mil eventos publicados. Ver nota para `paginas-publicas`. |
+| Descoberta: busca por texto | ~30 ms | `contains` (`ILIKE '%q%'`) não usa btree; `pg_trgm` só se o catálogo crescer uma ordem de grandeza |
+| Página do evento | 0,4 ms | `Event(slug)` único |
+| Meus ingressos: típico / pesado | 0,4 / 25 ms | `IssuedTicket(holderUserId, issuedAt)`; o pesado lê 2,7 mil ingressos (sem paginação) e ordena por `Event.startsAt` |
+| Meus pedidos: típico / pesado (todos, reembolsos) | 0,3 / 0,7–1 ms | `Order(userId, createdAt)` |
+| Minhas transferências: típico / pesado | 0,2 / 1,8 ms | `(fromUserId, createdAt)`, `(toUserId, createdAt)`, `(toEmail, status)` |
+| Histórico de transferências do ingresso | 0,04 ms | `TicketTransfer(ticketId, createdAt)` |
+| Janela aberta do evento (reembolso) / histórico de alterações | 0,05 / 0,15 ms | `EventChange(eventId, …)` |
+| Janelas abertas (admin) | 2,6 ms | `EventChange(refundUntil)`; só ~1% das alterações com janela aberta |
+| Fila de cancelamento aberta (prazo) / vencidos / do comprador | 2 / 0,1 / 0,9 ms | `(status, respondBy)`, `(requestedById, createdAt)` |
+| Participantes com titular atual (evento com mais ingressos) | 1,1 ms | `IssuedTicket(eventId, status)` |
+| Termos pendentes do usuário | 0,1 ms | `TermsAcceptance(userId, termsVersionId)` |
+
+Sem N+1 em "Meus ingressos" e "Meus pedidos": o número de consultas é o mesmo
+para o comprador típico e o pesado (5 e 4; os `include` do Prisma viram uma
+consulta por relação com `IN (…)`). "Minhas transferências" também é constante (9).
+
+Achados para os donos (não resolvidos com índice):
+
+- `admin`: a contagem da auditoria **sem filtro** varre a tabela toda
+  (124–199 ms com 1 milhão de linhas, cresce linearmente). Para o total sem
+  filtro, prefira estimativa (`pg_class.reltuples`) ou "mais de N".
+- `admin`: a busca de transferências por texto (`OR` com código do ingresso,
+  `contains` nos e-mails e no título do evento) faz Seq Scan em `IssuedTicket`,
+  `TicketTransfer` e `Event`: **~680 ms** (contagem + página). Reconhecer o
+  formato do código e consultar `IssuedTicket.code` (único) direto, e e-mail por
+  igualdade/prefixo, resolve sem índice.
+- `admin`: `listOpenChangeWindows` faz um `order.count` por linha da página
+  (N+1, até 25 consultas); cada uma é rápida, mas um `groupBy` por `eventId`
+  resolve em uma.
+- `admin`: o Prisma não escapa `_` em `startsWith` (`LIKE ($1 || '%')`), então
+  o preset `event.change_` também casa `event.changeX…`. Inofensivo com as ações
+  atuais.
+- `paginas-publicas`: o filtro de cidade compara `Event.city` **ou**
+  `Venue.city`. `updateEvent`/`createEvent` já gravam `Event.cityId` = cidade do
+  local; se o assistente também garantir isso ao publicar, filtrar só por
+  `cityId` usa `Event(cityId, status, startsAt)`. "Meus
+  ingressos" carrega todos os ingressos do titular sem paginação.
 
 ## Ambiente local
 
