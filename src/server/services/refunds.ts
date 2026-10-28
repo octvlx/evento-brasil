@@ -118,6 +118,21 @@ export class OverRefundError extends Error {}
 /** Motivos pedidos pelo comprador: ingresso já usado impede o reembolso. */
 const BUYER_REASONS: RefundReason[] = ["CUSTOMER_REQUEST", "EVENT_CHANGED"];
 
+/**
+ * Encerra as transferências pendentes de ingressos que deixaram de valer (reembolso,
+ * chargeback, evento cancelado): CANCELLED, com `decidedById` nulo (automático). O
+ * aceite já seria recusado (ingresso não VALID), mas o convite seguiria "pendente"
+ * para as duas pessoas até vencer. Pré-condição: travas Event → Order (a ordem de
+ * transfers.ts: Event → Order → IssuedTicket → TicketTransfer).
+ */
+export async function closePendingTransfersTx(tx: Tx, scope: { orderId: string } | { eventId: string }, reason: string, now = new Date()) {
+  const { count } = await tx.ticketTransfer.updateMany({
+    where: { status: "PENDING", ...("orderId" in scope ? { ticket: { orderId: scope.orderId } } : { eventId: scope.eventId }) },
+    data: { status: "CANCELLED", decidedAt: now, decisionReason: reason },
+  });
+  return count;
+}
+
 export interface RefundRequestLinks {
   note?: string;
   eventChangeId?: string;
@@ -147,6 +162,7 @@ export async function createRefundRequestTx(tx: Tx, orderId: string, reason: Ref
     const used = await tx.issuedTicket.count({ where: { orderId, status: "CHECKED_IN" } });
     if (used > 0) throw new AppError("VALIDATION", "Há ingressos já utilizados neste pedido.");
   }
+  const transfersClosed = await closePendingTransfersTx(tx, { orderId }, "Ingresso em reembolso", now);
   // Um reembolso anterior com o mesmo motivo pode ter sido encerrado como
   // REJECTED (admin restaurou os ingressos): o novo pedido precisa de chave própria.
   const rejected = await tx.refund.count({ where: { orderId, reason, status: "REJECTED" } });
@@ -173,7 +189,7 @@ export async function createRefundRequestTx(tx: Tx, orderId: string, reason: Ref
     action: "refund.requested",
     entityType: "Refund",
     entityId: refund.id,
-    metadata: { reason, ...(links.eventChangeId ? { eventChangeId: links.eventChangeId } : {}), ...(links.cancellationRequestId ? { cancellationRequestId: links.cancellationRequestId } : {}) },
+    metadata: { reason, ...(transfersClosed ? { transfersClosed } : {}), ...(links.eventChangeId ? { eventChangeId: links.eventChangeId } : {}), ...(links.cancellationRequestId ? { cancellationRequestId: links.cancellationRequestId } : {}) },
   });
   return refund;
 }
@@ -576,6 +592,7 @@ export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()
   await tx.refund.update({ where: { id: refundId }, data: { status: "SUCCEEDED", processedAt: now } });
   const reason = refund.reason === "EVENT_CANCELLED" ? "EVENT_CANCELLED" : "REFUNDED";
   await tx.issuedTicket.updateMany({ where: { orderId: order.id, status: { in: ["VALID", "CHECKED_IN"] } }, data: { status: "REVOKED", revokedAt: now, revocationReason: reason } });
+  await closePendingTransfersTx(tx, { orderId: order.id }, reason === "EVENT_CANCELLED" ? "Evento cancelado" : "Ingresso reembolsado", now);
   const perType = new Map<string, number>();
   for (const t of order.tickets) perType.set(t.ticketTypeId, (perType.get(t.ticketTypeId) ?? 0) + 1);
   for (const [ticketTypeId, n] of perType) {
