@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { login, USERS } from "./helpers";
+import { acceptSignupTerms, login, USERS } from "./helpers";
 
 /** Envia o convite pela tela de configurações e devolve o caminho /convite/… exibido. */
 async function invite(page: Page, email: string, role: string) {
@@ -29,7 +29,7 @@ test("organizador reenvia, revoga e altera papel; convidado aceita e recusa", as
   await member.getByLabel("Nome completo").fill("Membro E2E");
   await member.getByLabel("E-mail", { exact: true }).fill(memberEmail);
   await member.getByLabel("Senha", { exact: true }).fill("senha-segura-e2e");
-  await member.getByRole("checkbox").check();
+  await acceptSignupTerms(member);
   await member.getByRole("button", { name: "Criar conta" }).click();
   await member.waitForURL((url) => !url.pathname.startsWith("/registrar"));
 

@@ -14,7 +14,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/orders/[orderId]
   if (!user) return NextResponse.redirect(new URL(`/entrar?next=${encodeURIComponent(`/pedido/${orderId}`)}`, req.url));
   const order = await db.order.findUnique({ where: { id: orderId }, select: { userId: true } });
   if (!order || order.userId !== user.id) return new Response("Não encontrado", { status: 404 });
-  const tickets = await toWalletTickets(db, await loadPdfTickets(db, { orderId }));
+  const tickets = await toWalletTickets(db, await loadPdfTickets(db, { orderId, holderUserId: user.id }));
   if (!tickets.length) return new Response("Nenhum ingresso disponível", { status: 410 });
   const res = NextResponse.redirect(await googleWalletSaveUrl(tickets, cfg, env().APP_URL));
   res.headers.set("Cache-Control", "no-store");

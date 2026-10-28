@@ -30,7 +30,7 @@ async function Content() {
   const now = new Date();
   const [tickets, orders] = await Promise.all([
     db.issuedTicket.findMany({
-      where: { userId: user.id },
+      where: { holderUserId: user.id },
       include: { ticketType: { select: { name: true } }, event: { select: { id: true, title: true, slug: true, startsAt: true, endsAt: true, timezone: true, coverImageUrl: true } } },
       orderBy: { event: { startsAt: "asc" } },
     }),

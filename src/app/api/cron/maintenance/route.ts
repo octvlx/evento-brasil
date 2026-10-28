@@ -1,4 +1,5 @@
-// Job agendado (ex.: a cada minuto): expira reservas vencidas, encerra eventos
+// Job agendado (ex.: a cada minuto): expira reservas vencidas e convites de
+// transferência de ingresso vencidos, encerra eventos
 // finalizados, reconcilia pagamentos/reembolsos com o provedor e verifica os
 // invariantes financeiros. Protegido por segredo no header x-cron-secret.
 import { db } from "@/server/db";
@@ -9,12 +10,14 @@ import { completeEndedEvents } from "@/server/services/events";
 import { expireStaleOrders } from "@/server/services/orders";
 import { financeLog } from "@/server/services/finance-log";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
+import { expireTicketTransfers } from "@/server/services/transfers";
 
 export async function POST(req: Request) {
   const secret = req.headers.get("x-cron-secret") ?? "";
   if (!safeEqual(secret, env().CRON_SECRET)) return new Response("forbidden", { status: 403 });
   const expiredOrders = await expireStaleOrders(db);
   const completedEvents = await completeEndedEvents(db);
+  const expiredTransfers = await expireTicketTransfers(db);
   const reconciliation = await reconcilePayments(db, getPaymentAdapter());
   const violations = await checkFinancialInvariants(db);
   if (violations.length) {
@@ -27,6 +30,7 @@ export async function POST(req: Request) {
   return Response.json({
     expiredOrders,
     completedEvents,
+    expiredTransfers,
     reconciliation: { ...reconciliation, errors: reconciliation.errors.length },
     invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
     at: new Date().toISOString(),

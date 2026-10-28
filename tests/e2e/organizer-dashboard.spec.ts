@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { login, USERS } from "./helpers";
+import { acceptSignupTerms, login, USERS } from "./helpers";
 
 test("organizador cria uma segunda organização e alterna entre elas", async ({ page }) => {
   const stamp = Date.now();
@@ -10,7 +10,7 @@ test("organizador cria uma segunda organização e alterna entre elas", async ({
   await page.getByLabel("Nome completo").fill("Organizadora E2E");
   await page.getByLabel("E-mail", { exact: true }).fill(`org-e2e+${stamp}@test.local`);
   await page.getByLabel("Senha", { exact: true }).fill("senha-segura-e2e");
-  await page.getByRole("checkbox").check();
+  await acceptSignupTerms(page);
   await page.getByRole("button", { name: "Criar conta" }).click();
   await page.waitForURL(/\/organizador\/cadastro/);
 
