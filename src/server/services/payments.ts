@@ -268,7 +268,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         return "payment_expired";
       }
       case "REFUNDED": {
-        if (payment.status === "REFUNDED") return "no_change";
+        if (payment.status === "REFUNDED" || payment.status === "CHARGED_BACK") return "no_change";
         let refund = await tx.refund.findFirst({ where: { orderId: order.id, status: { in: ["REQUESTED", "PROCESSING", "FAILED"] } } });
         refund ??= await tx.refund.create({
           data: {
@@ -284,7 +284,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         return "refunded";
       }
       case "CHARGED_BACK": {
-        if (payment.status === "CHARGED_BACK") return "no_change";
+        if (payment.status === "CHARGED_BACK" || payment.status === "REFUNDED") return "no_change";
         await markPayment({ status: "CHARGED_BACK" });
         await tx.issuedTicket.updateMany({
           where: { orderId: order.id, status: "VALID" },
