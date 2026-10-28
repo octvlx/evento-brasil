@@ -90,6 +90,9 @@ function eventData(input: ReturnType<typeof eventInputSchema.parse>) {
     capacity: input.capacity,
     halfPriceQuotaBps: input.halfPriceQuotaPercent === undefined ? null : Math.round(input.halfPriceQuotaPercent * 100),
     maxTicketsPerAccount: input.maxTicketsPerAccount ?? null,
+    transferDeadlineHours: input.transferDeadlineHours,
+    transferMaxTransfers: input.transferMaxTransfers,
+    transferAllowReturn: input.transferAllowReturn,
     refundPolicy: input.refundPolicy,
     refundWindowDays: input.refundWindowDays,
     refundMinHoursBeforeEvent: input.refundMinHoursBeforeEvent,
@@ -109,7 +112,10 @@ export async function createEvent(db: Db, actor: Actor, organizationId: string, 
     const event = await tx.event.create({
       data: { ...eventData(input), ...loc, organizationId, slug: await uniqueEventSlug(tx, input.title, city?.name), status: "DRAFT" },
     });
-    await audit(tx, { actorUserId: actor.id, organizationId, action: "event.created", entityType: "Event", entityId: event.id });
+    await audit(tx, {
+      actorUserId: actor.id, organizationId, action: "event.created", entityType: "Event", entityId: event.id,
+      metadata: { transferPolicy: { transferDeadlineHours: event.transferDeadlineHours, transferMaxTransfers: event.transferMaxTransfers, transferAllowReturn: event.transferAllowReturn } },
+    });
     return event;
   });
 }
@@ -139,15 +145,28 @@ export async function largestHoldingOverLimit(tx: Tx, eventId: string, limit: nu
 
 export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: EventInput) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
-  const input = eventInputSchema.parse(raw);
   const { event, change } = await db.$transaction(async (tx) => {
     // Trava o evento: o "antes" da alteração relevante e a checagem de limite por conta
     // não podem ser atropelados por outra edição simultânea.
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const current = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
+    const input = eventInputSchema.parse({
+      ...raw,
+      transferDeadlineHours: raw.transferDeadlineHours === undefined ? current.transferDeadlineHours : raw.transferDeadlineHours,
+      transferMaxTransfers: raw.transferMaxTransfers === undefined ? current.transferMaxTransfers : raw.transferMaxTransfers,
+      transferAllowReturn: raw.transferAllowReturn === undefined ? current.transferAllowReturn : raw.transferAllowReturn,
+    });
     if (!EDITABLE.includes(current.status)) throw invalidState("Este evento não pode mais ser editado.");
     const sold = await tx.ticketType.aggregate({ where: { eventId }, _sum: { quantitySold: true, quantityReserved: true } });
     const committed = (sold._sum.quantitySold ?? 0) + (sold._sum.quantityReserved ?? 0);
+    // Clientes antigos podem omitir os campos: mantenha a política já oferecida.
+    const policy = {
+      transferDeadlineHours: input.transferDeadlineHours,
+      transferMaxTransfers: input.transferMaxTransfers,
+      transferAllowReturn: input.transferAllowReturn,
+    };
+    if (committed > 0 && (policy.transferDeadlineHours > current.transferDeadlineHours || policy.transferMaxTransfers < current.transferMaxTransfers || (current.transferAllowReturn && !policy.transferAllowReturn)))
+      throw new AppError("VALIDATION", "Já há ingressos vendidos ou reservados: a política de transferência só pode ficar mais favorável ao comprador.");
     if (input.capacity < committed) throw new AppError("VALIDATION", `Capacidade não pode ser menor que ${committed} ingressos já vendidos/reservados.`);
     // Quem já comprou não pode perder direito de reembolso: com vendas, a política
     // só pode ficar mais generosa (mais dias após a compra, menos horas de antecedência).
@@ -161,7 +180,7 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
         throw new AppError("VALIDATION", `Uma conta já tem ${held} ingressos deste evento: o limite por conta não pode ser menor que ${held}.`);
     }
     const loc = await resolveLocation(tx, organizationId, input, current.venueId);
-    const data = { ...eventData(input), ...loc };
+    const data = { ...eventData({ ...input, ...policy }), ...loc };
     const change = await recordRelevantChange(tx, {
       actorUserId: actor.id,
       event: current,
@@ -175,7 +194,13 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
       action: "event.updated",
       entityType: "Event",
       entityId: eventId,
-      metadata: change ? { eventChangeId: change.id } : undefined,
+      metadata: {
+        ...(change ? { eventChangeId: change.id } : {}),
+        transferPolicy: {
+          before: { transferDeadlineHours: current.transferDeadlineHours, transferMaxTransfers: current.transferMaxTransfers, transferAllowReturn: current.transferAllowReturn },
+          after: policy,
+        },
+      },
     });
     return { event, change };
   });
