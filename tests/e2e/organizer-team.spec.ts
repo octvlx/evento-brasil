@@ -3,10 +3,11 @@ import { acceptSignupTerms, login, USERS } from "./helpers";
 
 /** Envia o convite pela tela de equipe e devolve o caminho /convite/… exibido. */
 async function invite(page: Page, email: string, role: string) {
-  await page.getByLabel("E-mail", { exact: true }).fill(email);
-  await page.locator("#inv-role").selectOption(role);
-  await page.getByRole("button", { name: "Convidar" }).click();
-  const alert = page.getByText("Convite enviado por e-mail.");
+  const form = page.locator("form").filter({ has: page.locator("#inv-email") });
+  await form.getByLabel("E-mail", { exact: true }).fill(email);
+  await form.getByLabel("Papel", { exact: true }).selectOption(role);
+  await form.getByRole("button", { name: "Convidar", exact: true }).click();
+  const alert = form.getByText("Convite enviado por e-mail.");
   await expect(alert).toBeVisible();
   return linkPath(await alert.innerText());
 }
