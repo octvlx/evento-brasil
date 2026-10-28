@@ -2,6 +2,7 @@ import "server-only";
 import type { CheckinResult, EventStatus, TicketKind } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
+import { hashToken } from "../crypto";
 import { notFound } from "../errors";
 import { parseQrPayload } from "./tickets";
 
@@ -10,7 +11,10 @@ export interface CheckinResponse {
   message: string;
   // ticketKind permite à portaria exigir o documento da meia-entrada (HALF_PRICE).
   // Ausente, como o resto de `ticket`, em leituras de ingresso de outra organização.
-  ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null };
+  // transferred: o ingresso mudou de titular por transferência aceita (R6); holderName é
+  // o titular atual. qrReplaced: o QR lido é o anterior a uma transferência (resultado
+  // INVALID) — só informado para a mesma organização do evento.
+  ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null; transferred: boolean; qrReplaced?: true };
   counters: { admitted: number; total: number };
 }
 
@@ -44,6 +48,27 @@ async function lockOrderForCheckin(tx: Tx, orderId: string) {
   await tx.$queryRaw`SELECT status FROM "Order" WHERE id = ${orderId} FOR KEY SHARE`;
 }
 
+const ticketForView = { ticketType: { select: { name: true, kind: true } }, event: { select: { organizationId: true } } } as const;
+
+async function wasTransferred(tx: Tx, ticketId: string) {
+  return !!(await tx.ticketTransfer.findFirst({ where: { ticketId, status: "ACCEPTED" }, select: { id: true } }));
+}
+
+/**
+ * QR anterior a uma transferência aceita deste evento (o aceite troca o validationToken e
+ * guarda o hash do antigo). Só para a portaria da organização do evento: devolve o
+ * ingresso com o titular atual; de outra organização, nada.
+ */
+async function replacedByTransfer(tx: Tx, eventId: string, organizationId: string, parsed: { code: string; token: string }) {
+  const transfer = await tx.ticketTransfer.findFirst({
+    where: { eventId, status: "ACCEPTED", previousTokenHash: hashToken(parsed.token) },
+    select: { ticket: { include: ticketForView } },
+  });
+  const t = transfer?.ticket;
+  if (!t || t.code !== parsed.code || t.event.organizationId !== organizationId) return null;
+  return t;
+}
+
 /**
  * Validação 100% online e atômica: só uma leitura pode transicionar VALID → CHECKED_IN,
  * e a transição e o registro da leitura (TicketCheckin) são gravados na mesma transação.
@@ -67,13 +92,22 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
       // 2. QR → ingresso (busca pelo token; o código precisa bater).
       const parsed = parseQrPayload(rawPayload);
       const ticket = parsed
-        ? await tx.issuedTicket.findUnique({ where: { validationToken: parsed.token }, include: { ticketType: { select: { name: true, kind: true } }, event: { select: { organizationId: true } } } })
+        ? await tx.issuedTicket.findUnique({ where: { validationToken: parsed.token }, include: ticketForView })
         : null;
       if (!parsed || !ticket || ticket.code !== parsed.code) {
-        await record("INVALID", null);
-        return { result: "INVALID" };
+        // QR antigo de ingresso transferido: continua INVALID, mas a portaria do
+        // organizador vê que foi substituído e quem é o titular atual.
+        const replaced = parsed && !ticket ? await replacedByTransfer(tx, eventId, event.organizationId, parsed) : null;
+        await record("INVALID", replaced?.id ?? null);
+        if (!replaced) return { result: "INVALID" };
+        return {
+          result: "INVALID",
+          ticket: { code: replaced.code, holderName: replaced.holderName, ticketTypeName: replaced.ticketType.name, ticketKind: replaced.ticketType.kind, checkedInAt: replaced.checkedInAt, transferred: true, qrReplaced: true },
+        };
       }
-      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, ticketKind: ticket.ticketType.kind, checkedInAt });
+      // Só consultado quando o ingresso vai aparecer na tela (mesma organização).
+      const transferred = ticket.event.organizationId === event.organizationId ? await wasTransferred(tx, ticket.id) : false;
+      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, ticketKind: ticket.ticketType.kind, checkedInAt, transferred });
 
       if (ticket.eventId !== eventId) {
         // Ingresso de outra organização: a leitura não é vinculada ao ingresso nem revela
@@ -114,7 +148,8 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
   );
 
   // Contadores fora da transação, após o commit.
-  return { result: outcome.result, message: MESSAGES[outcome.result], ticket: outcome.ticket, counters: await counters(db, eventId) };
+  const message = outcome.ticket?.qrReplaced ? "QR SUBSTITUÍDO — ingresso transferido" : MESSAGES[outcome.result];
+  return { result: outcome.result, message, ticket: outcome.ticket, counters: await counters(db, eventId) };
 }
 
 export async function checkinHistory(db: Db, actor: Actor, eventId: string, limit = 50) {

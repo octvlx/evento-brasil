@@ -26,8 +26,7 @@ import { env } from "../env";
 import { escapeHtml, getEmailAdapter } from "../email";
 import { AppError, invalidState, notFound } from "../errors";
 import { formatEventDateTime } from "@/lib/datetime";
-import { lockEvent } from "./orders";
-import * as orders from "./orders";
+import { lockEvent, ticketsHeldByAccount } from "./orders";
 
 /**
  * Valores PROVISÓRIOS até a decisão jurídica D7 (prazo-limite para transferir) e a
@@ -37,6 +36,9 @@ import * as orders from "./orders";
  * - O convite nunca vale depois do início do evento (expiresAt = min(agora + janela, startsAt)),
  *   e não se pode pedir transferência com o evento já iniciado.
  */
+/** decisionReason da recusa pelo destinatário (a página de aceite distingue de cancelamento). */
+export const DECLINED_BY_RECIPIENT = "Recusada pelo destinatário";
+
 export const TRANSFER_POLICY = { maxTransfersPerTicket: 3, acceptWindowHours: 48 } as const;
 
 export const requestTransferSchema = z.object({
@@ -52,22 +54,6 @@ export interface RequestMeta {
 }
 
 const meta = (m: RequestMeta = {}) => ({ ip: m.ip?.slice(0, 64) ?? null, userAgent: m.userAgent?.slice(0, 512) ?? null });
-
-/**
- * Contrato (a) com pagamentos-financeiro: ingressos válidos/reservados que a conta
- * tem para o evento. Usa `ticketsHeldByAccount` de orders.ts quando ele existir;
- * até lá, a contagem local abaixo (mesma definição) — trocar é remover o fallback.
- */
-type HeldFn = (client: Db | Tx, userId: string, eventId: string) => Promise<number>;
-async function heldByAccount(client: Tx, userId: string, eventId: string): Promise<number> {
-  const shared = (orders as unknown as { ticketsHeldByAccount?: HeldFn }).ticketsHeldByAccount;
-  if (shared) return shared(client, userId, eventId);
-  const [held, reserved] = await Promise.all([
-    client.issuedTicket.count({ where: { eventId, holderUserId: userId, status: { in: ["VALID", "CHECKED_IN"] } } }),
-    client.ticketInventoryReservation.aggregate({ where: { status: "ACTIVE", order: { userId, eventId, status: "PENDING_PAYMENT" } }, _sum: { quantity: true } }),
-  ]);
-  return held + (reserved._sum.quantity ?? 0);
-}
 
 async function lockEventShared(tx: Tx, eventId: string) {
   await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR KEY SHARE`;
@@ -88,8 +74,18 @@ async function lockTransfer(tx: Tx, transferId: string) {
 const ticketWithContext = { order: { select: { status: true } }, event: { select: { status: true, startsAt: true, title: true, timezone: true, organizationId: true, maxTicketsPerAccount: true } } } satisfies Prisma.IssuedTicketInclude;
 type TicketWithContext = Prisma.IssuedTicketGetPayload<{ include: typeof ticketWithContext }>;
 
-/** Regras comuns a pedir e aceitar. `null` = transferível. */
-function blockedReason(t: TicketWithContext, now: Date): string | null {
+/** Mínimo de que `transferBlockedReason` precisa (a página do ingresso passa o próprio include). */
+interface TransferableTicket {
+  status: TicketWithContext["status"];
+  order: { status: TicketWithContext["order"]["status"] };
+  event: { status: TicketWithContext["event"]["status"]; startsAt: Date };
+}
+
+/**
+ * Regras comuns a pedir e aceitar. `null` = transferível. Exportada para a página do
+ * ingresso decidir se mostra "Transferir"; o serviço reconfere tudo sob as travas.
+ */
+export function transferBlockedReason(t: TransferableTicket, now: Date): string | null {
   if (t.status === "CHECKED_IN") return "Este ingresso já foi utilizado.";
   if (t.status !== "VALID") return "Este ingresso foi cancelado ou reembolsado.";
   if (t.order.status !== "PAID") return "O pedido deste ingresso não está pago ou tem reembolso em andamento.";
@@ -132,7 +128,7 @@ export async function requestTransfer(db: Db, holder: Actor, ticketId: string, i
       await lockTicket(tx, ticketId);
       const t = await tx.issuedTicket.findUniqueOrThrow({ where: { id: ticketId }, include: ticketWithContext });
       if (t.holderUserId !== holder.id) throw notFound("Ingresso não encontrado.");
-      const blocked = blockedReason(t, now);
+      const blocked = transferBlockedReason(t, now);
       if (blocked) throw invalidState(blocked);
       const from = await tx.user.findUniqueOrThrow({ where: { id: holder.id }, select: { email: true, name: true } });
       if (from.email.toLowerCase() === data.toEmail) throw new AppError("VALIDATION", "Informe o e-mail de outra pessoa.");
@@ -140,6 +136,9 @@ export async function requestTransfer(db: Db, holder: Actor, ticketId: string, i
       if (accepted >= TRANSFER_POLICY.maxTransfersPerTicket) {
         throw new AppError("LIMIT_EXCEEDED", `Este ingresso já atingiu o limite de ${TRANSFER_POLICY.maxTransfersPerTicket} transferências.`);
       }
+      // Convite vencido que o cron ainda não expirou não pode travar um novo pedido (índice
+      // único de uma pendente por ingresso): expira aqui, sob a trava do ingresso, como o cron.
+      await tx.ticketTransfer.updateMany({ where: { ticketId, status: "PENDING", expiresAt: { lte: now } }, data: { status: "EXPIRED", decidedAt: now } });
       const expiresAt = new Date(Math.min(now.getTime() + TRANSFER_POLICY.acceptWindowHours * 3_600_000, t.event.startsAt.getTime()));
       const fromName = t.holderName ?? from.name;
       const row = await tx.ticketTransfer.create({
@@ -182,11 +181,17 @@ export async function findTransferByToken(db: Db, token: string) {
       id: true,
       status: true,
       toEmail: true,
+      toUserId: true,
       toHolderName: true,
+      fromUserId: true,
       fromHolderName: true,
       expiresAt: true,
-      ticket: { select: { code: true, ticketType: { select: { name: true } } } },
-      event: { select: { title: true, startsAt: true, timezone: true } },
+      decidedAt: true,
+      decisionReason: true,
+      // status do ingresso, do pedido e do evento: a página avisa antes do clique quando o
+      // ingresso não pode mais ser transferido (transferBlockedReason).
+      ticket: { select: { code: true, status: true, ticketType: { select: { name: true } }, order: { select: { status: true } } } },
+      event: { select: { title: true, startsAt: true, timezone: true, status: true } },
     },
   });
 }
@@ -228,12 +233,14 @@ export async function acceptTransfer(db: Db, recipient: Actor, token: string, de
       return { expired: true };
     }
     const t = await tx.issuedTicket.findUniqueOrThrow({ where: { id: transfer.ticketId }, include: ticketWithContext });
-    const blocked = blockedReason(t, now);
+    const blocked = transferBlockedReason(t, now);
     if (blocked) throw invalidState(blocked);
     if (t.holderUserId !== current.fromUserId) throw invalidState("O ingresso mudou de titular depois do pedido de transferência.");
 
+    // Contrato (a) com pagamentos-financeiro: a mesma contagem do createOrder, sob a
+    // mesma trava do evento (lockEvent acima).
     const max = t.event.maxTicketsPerAccount;
-    if (max != null && (await heldByAccount(tx, recipient.id, t.eventId)) + 1 > max) {
+    if (max != null && (await ticketsHeldByAccount(tx, recipient.id, t.eventId, now)) + 1 > max) {
       throw new AppError("LIMIT_EXCEEDED", `Você já tem o máximo de ${max} ingresso(s) por conta para este evento.`);
     }
 
@@ -292,7 +299,7 @@ export async function cancelTransfer(db: Db, holder: Actor, transferId: string, 
 /** O destinatário recusa (status CANCELLED, decidida por ele). */
 export async function declineTransfer(db: Db, recipient: Actor, token: string, decisionMeta?: RequestMeta, now = new Date()): Promise<void> {
   const { transfer } = await pendingForRecipient(db, recipient, token);
-  await decide(db, transfer.id, {}, recipient.id, "Recusada pelo destinatário", "ticket.transfer.declined", decisionMeta, now);
+  await decide(db, transfer.id, {}, recipient.id, DECLINED_BY_RECIPIENT, "ticket.transfer.declined", decisionMeta, now);
 }
 
 /** Cron de manutenção: expira convites vencidos. decidedById nulo = expiração automática. */

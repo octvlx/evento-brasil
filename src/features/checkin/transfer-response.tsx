@@ -21,8 +21,10 @@ export function TransferResponse({ token }: { token: string }) {
           onClick={() =>
             start(async () => {
               const r = await acceptTransferAction(token);
-              if (r.ok) router.push(`/ingressos/${r.data.ticketCode}`);
-              else setMsg({ ok: false, text: r.error });
+              if (r.ok) {
+                setMsg({ ok: true, text: "Ingresso aceito! Ele já está no seu nome, com um novo QR code. Abrindo o ingresso…" });
+                router.push(`/ingressos/${r.data.ticketCode}`);
+              } else setMsg({ ok: false, text: r.error });
             })
           }
         >

@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import type { TicketKind } from "@/generated/prisma/client";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { qrPayload } from "../services/tickets";
+import { organizerIdentityLine, type OrganizerIdentity } from "./organizer-identity";
 
 export interface PdfTicket {
   code: string;
@@ -15,6 +16,9 @@ export interface PdfTicket {
   orderCode: string;
   isSimulated: boolean;
   event: { title: string; startsAt: Date; endsAt: Date; timezone: string; place: string; organizer: string; ageRestriction: number };
+  // Organizador responsável (L10b): razão social + CNPJ, ou nome da pessoa física. Quem não
+  // passa (anexo do e-mail, por enquanto) cai no nome público da organização.
+  organizerIdentity?: OrganizerIdentity;
 }
 
 const INDIGO = rgb(0.192, 0.18, 0.506);
@@ -59,33 +63,41 @@ export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array
       if (line) lines.push(line);
       return lines;
     };
-    for (const line of wrap(t.event.title, 18, width - 56)) {
+    for (const line of wrap(t.event.title, 18, width - 56).slice(0, 2)) {
       page.drawText(line, { x: 28, y, size: 18, font: bold, color: INDIGO });
       y -= 22;
     }
     const tz = t.event.timezone;
-    const rows: [string, string][] = [
-      ["Data", formatDateLong(t.event.startsAt, tz)],
-      ["Horário", `${formatTime(t.event.startsAt, tz)} às ${formatTime(t.event.endsAt, tz)} (${timezoneLabel(t.event.startsAt, tz)})`],
-      ["Local", t.event.place],
-      ["Ingresso", t.ticketTypeName],
-      ["Titular", t.holderName ?? "—"],
-      ["Classificação", t.event.ageRestriction > 0 ? `${t.event.ageRestriction} anos` : "Livre"],
+    // Cada linha da tabela tem 1 ou 2 colunas; no máximo 2 linhas de texto por valor.
+    // Pior caso (título e todos os valores com 2 linhas): última linha em y = 236, acima do QR (230).
+    const half = (width - 56) / 2;
+    const rows: [string, string][][] = [
+      [["Data e horário", `${formatDateLong(t.event.startsAt, tz)}, ${formatTime(t.event.startsAt, tz)} às ${formatTime(t.event.endsAt, tz)} (${timezoneLabel(t.event.startsAt, tz)})`]],
+      [["Local", t.event.place]],
+      [
+        ["Ingresso", t.ticketTypeName],
+        ["Classificação", t.event.ageRestriction > 0 ? `${t.event.ageRestriction} anos` : "Livre"],
+      ],
+      [["Titular", t.holderName ?? "—"]],
+      [["Organizador responsável", t.organizerIdentity ? organizerIdentityLine(t.organizerIdentity) : t.event.organizer]],
     ];
     y -= 6;
-    for (const [label, value] of rows) {
-      page.drawText(label.toUpperCase(), { x: 28, y, size: 8, font: bold, color: GRAY });
-      y -= 13;
-      for (const line of wrap(value, 11, width - 56, regular).slice(0, 2)) {
-        page.drawText(line, { x: 28, y, size: 11, font: regular });
-        y -= 14;
-      }
-      y -= 4;
+    for (const cols of rows) {
+      const colWidth = cols.length === 1 ? width - 56 : half - 8;
+      let lines = 1;
+      cols.forEach(([label, value], i) => {
+        const x = 28 + i * half;
+        page.drawText(label.toUpperCase(), { x, y, size: 8, font: bold, color: GRAY });
+        const wrapped = wrap(value, 11, colWidth, regular).slice(0, 2);
+        wrapped.forEach((line, j) => page.drawText(line, { x, y: y - 12 - j * 14, size: 11, font: regular }));
+        lines = Math.max(lines, wrapped.length);
+      });
+      y -= 12 + lines * 14 + 2;
     }
 
     const png = await QRCode.toBuffer(qrPayload(t), { errorCorrectionLevel: "M", margin: 1, width: 360 });
     const img = await pdf.embedPng(png);
-    const size = 170;
+    const size = 160;
     page.drawImage(img, { x: (width - size) / 2, y: 70, width: size, height: size });
     const codeText = `Código ${t.code}  ·  Pedido ${t.orderCode}`;
     page.drawText(codeText, { x: (width - regular.widthOfTextAtSize(codeText, 9)) / 2, y: 55, size: 9, font: regular, color: GRAY });
