@@ -12,7 +12,7 @@ import { financeLog } from "./finance-log";
 import { postProcessingFee, postReversal, postSale } from "./ledger";
 import { acquireLateInventoryTx, finalizePaidOrderTx, lockEvent, lockOrder, releaseOrderTx } from "./orders";
 import { notifyOrderPaid } from "./notifications";
-import { confirmRefundTx, processRefund } from "./refunds";
+import { closePendingTransfersTx, confirmRefundTx, processRefund } from "./refunds";
 
 export async function startPayment(
   db: Db,
@@ -290,6 +290,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
           where: { orderId: order.id, status: "VALID" },
           data: { status: "REVOKED", revokedAt: now, revocationReason: "CHARGEBACK" },
         });
+        await closePendingTransfersTx(tx, { orderId: order.id }, "Pagamento contestado (chargeback)", now);
         await tx.order.update({ where: { id: order.id }, data: { status: "DISPUTED" } });
         // Política padrão: perda do chargeback é do organizador (comissão retida). Revisão necessária.
         await postReversal(tx, "CHARGEBACK", order, { paymentId: payment.id, returnCommission: false });

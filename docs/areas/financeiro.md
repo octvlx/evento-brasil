@@ -363,6 +363,44 @@ O relatório retorna `settledPaymentsSynced` e erros `settled-payment`.
 Pagamentos `REFUNDED` e `CHARGED_BACK` saem dessa fila. A recuperação usa os
 mesmos serviços transacionais e idempotentes dos webhooks.
 
+## Fase 4 — V1: testes cruzados entre domínios
+
+`tests/integration/za-cross-domain.test.ts` (16 casos; cada um termina com
+`checkFinancialInvariants() == []`). Cobre, com disputas reais em paralelo:
+
+- **Aceite de transferência × check-in:** aceite contra leituras do QR antigo
+  (6 rodadas) e, depois da troca, QR antigo e novo ao mesmo tempo. No máximo uma
+  entrada por ingresso; o QR antigo nunca entra depois do aceite.
+- **Aceite × reembolso × aprovação do pedido de cancelamento:** um único
+  reembolso, integral, para o pagamento de quem pagou (D7); o destinatário não
+  pede reembolso nem cancelamento; nenhum ingresso válido sobra; chargeback.
+- **Janela da alteração relevante** (alteração gravada por `updateEvent`,
+  prorrogação por `extendEventChangeWindow`): pedido com ingresso transferido,
+  último instante da janela (`now == refundUntil`), 1 ms depois (política
+  normal) e prorrogação reabrindo a janela.
+- **Limite por conta:** transferências de entrada e saída, pedido pendente com
+  cupom, reserva vencida e liberação pela manutenção; 6 aceites + 6 pedidos
+  simultâneos para a mesma conta param exatamente no limite.
+- **Cancelamento do evento** com transferências pendentes, inclusive disputando
+  com o aceite.
+- **Manutenção (mesmos passos de `/api/cron/maintenance`)** no meio dos fluxos:
+  retoma reembolsos do cancelamento, concorrente com check-in e novo pedido de
+  reembolso; é idempotente; convite vencido expira mesmo com aceite concorrente.
+
+### Achados
+
+| # | Achado | Gravidade | Dono | Situação |
+| --- | --- | --- | --- | --- |
+| V1-1 | Reembolso, chargeback e cancelamento do evento revogavam os ingressos mas deixavam as **transferências pendentes** como `PENDING` até vencer (até 48 h ou o início do evento). O aceite já era recusado (ingresso não `VALID`), então não havia ingresso válido indevido nem dinheiro errado, mas o convite seguia "pendente" na tela das duas pessoas e no histórico. | Média | pagamentos-financeiro | Corrigido: `closePendingTransfersTx` (`refunds.ts`) encerra as pendentes como `CANCELLED` (automático, `decidedById` nulo, com motivo) em `createRefundRequestTx`, `confirmRefundTx` (cobre o reembolso iniciado no provedor), chargeback (`payments.ts`) e `cancelEvent`; contagem na auditoria. Mesma ordem de travas de `transfers.ts`. |
+| V1-2 | `acceptTransfer` (`transfers.ts`, `heldByAccount`) chama `ticketsHeldByAccount` sem repassar o `now` do aceite. Com relógio injetado, uma reserva vencida e ainda não liberada conta contra o limite. Em produção `now` é o relógio, então o efeito real é nulo. | Baixa | check-in | Reportado: teste `it.fails` em `za-cross-domain.test.ts` (V1.4). Correção sugerida: `shared(client, userId, eventId, now)`. |
+
+Verificado como **correto**: aceite e check-in serializados pela trava do
+evento (o QR antigo nunca admite depois da troca); reembolso e aprovação do
+admin nunca geram dois reembolsos; reembolso de ingresso transferido sempre
+vai ao pagamento original; limite por conta respeitado sob concorrência entre
+pedidos e aceites; cancelamento do evento revoga tudo e libera reservas;
+reconciliação concorrente não duplica estornos.
+
 ## Pendências (em ordem)
 
 1. Integração real verificada (Mercado Pago), incluindo `findPaymentByReference`
