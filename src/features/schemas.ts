@@ -24,7 +24,8 @@ export const registerSchema = z.object({
   email,
   password: z.string().min(8, "A senha deve ter ao menos 8 caracteres").max(200),
   phone: mobile.optional(),
-  acceptTerms: z.literal(true, { error: "É preciso aceitar os termos e a política de privacidade" }),
+  acceptTerms: z.literal(true, { error: "É preciso aceitar os termos de uso" }),
+  acceptPrivacy: z.literal(true, { error: "É preciso aceitar a política de privacidade" }),
 });
 export type RegisterInput = z.input<typeof registerSchema>;
 

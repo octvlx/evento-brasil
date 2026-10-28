@@ -43,9 +43,11 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
 
 export async function registerAction(input: RegisterInput, next?: string): Promise<ActionResult<{ redirectTo: string }>> {
   return toActionResult(async () => {
-    rateLimit(`register:${await clientKey()}`, 5, 60 * 60_000);
-    const user = await registerUser(db, input);
-    const { token, expiresAt } = await createSession(db, user.id, (await headers()).get("user-agent"));
+    const ip = await clientKey();
+    const userAgent = (await headers()).get("user-agent");
+    rateLimit(`register:${ip}`, 5, 60 * 60_000);
+    const user = await registerUser(db, input, { ip, userAgent });
+    const { token, expiresAt } = await createSession(db, user.id, userAgent);
     await setSessionCookie(token, expiresAt);
     return { redirectTo: safeNext(next) };
   });

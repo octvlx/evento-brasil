@@ -11,7 +11,7 @@ import { formatBRL } from "@/lib/money";
 import { renderTicketsPdf, type PdfTicket } from "../tickets/pdf";
 import { appleWallet, buildApplePass, googleWallet, toWalletTickets } from "../tickets/wallet";
 
-export async function loadPdfTickets(db: Db, where: { orderId?: string; code?: string }): Promise<PdfTicket[]> {
+export async function loadPdfTickets(db: Db, where: { orderId?: string; code?: string; holderUserId?: string }): Promise<PdfTicket[]> {
   const tickets = await db.issuedTicket.findMany({
     where: { ...where, status: { not: "REVOKED" } },
     include: {
@@ -52,7 +52,8 @@ async function applePassesForEmail(db: Db, tickets: PdfTicket[], orderId: string
 export async function sendOrderTicketsEmail(db: Db, orderId: string): Promise<void> {
   if (env().NODE_ENV === "test") return;
   const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, include: { event: true, items: true } });
-  const tickets = await loadPdfTickets(db, { orderId });
+  // Só os que o comprador ainda tem (R6): um ingresso transferido tem QR do novo titular.
+  const tickets = await loadPdfTickets(db, { orderId, holderUserId: order.userId });
   if (!tickets.length) return;
   const pdf = await renderTicketsPdf(tickets);
   const url = `${env().APP_URL}/pedido/${order.id}`;

@@ -37,6 +37,45 @@ Testes: unidade em `tests/unit/order-status-view.test.ts`; E2E em
 | No máximo uma tentativa ativa por pedido; PIX pendente é reaproveitado | `checkoutStep` deriva a tela da tentativa pendente: PIX → QR existente; cartão → em processamento; nenhuma → escolha do método. |
 | Ingressos cancelados assim que o reembolso é solicitado; estorno recusado deixa o pedido em `REFUND_PENDING` com reembolso `FAILED` | O pedido mostra um aviso com a situação ("em andamento" / "em reprocessamento — não é preciso solicitar de novo" / "concluído"), a lista de reembolsos com valor, data e status, e cada ingresso cancelado mostra o motivo (também na página do ingresso). |
 
+## Conformidade, Fase 3 — aceite de termos (L10a) e exportação dos dados (L9b)
+
+**Serviço `src/server/services/terms.ts`** (ADR 0003 §4):
+
+| Função | Contrato |
+| --- | --- |
+| `currentTermsVersions(db, kinds)` | Versão vigente por tipo = maior `publishedAt <= agora` (rascunho `isDraft` conta). Tipo sem versão fica de fora e gera um `console.warn` por processo. |
+| `pendingTermsKinds(db, userId, kinds = BUYER+PRIVACY)` / `hasAccepted` | Tipos cuja versão vigente o usuário não aceitou em nenhum contexto. |
+| `recordAcceptance(db, userId, kinds, { context, ip, userAgent, orderId?, organizationId? })` | Grava só as versões vigentes ainda não aceitas (idempotente por usuário + versão; no ORGANIZER_SIGNUP, por organização). Serializa por usuário com `pg_advisory_xact_lock`. `recordAcceptanceTx` para usar dentro de uma transação. |
+| `checkoutTermsGate(db, userId, acceptTerms)` | Erro `TERMS_REQUIRED` (novo `AppErrorCode`) quando há pendência e `acceptTerms !== true`; devolve os tipos a gravar. |
+
+**Onde é exigido / gravado**
+
+- Cadastro: dois checkboxes obrigatórios (termos de uso, política de privacidade), com
+  links; `registerUser` grava `SIGNUP` na mesma transação que cria a conta, com IP e agente.
+- Compra: `createOrderAction(input, { acceptTerms })` e `startPaymentAction(…, acceptTerms)`
+  passam pelo portão **no servidor** (pedido gratuito também, porque é emitido na
+  criação). Com pendência, a UI recebe `TERMS_REQUIRED` e mostra o aceite
+  (`TermsReaccept`); o aceite é gravado como `CHECKOUT` com o `orderId`. O checkout já
+  abre com o aceite quando há pendência (versão nova publicada depois da reserva).
+- Organizador: `createOrganizationAction` / `resubmitApplicationAction` gravam
+  `ORGANIZER_SIGNUP` com a organização; o formulário (área `area-organizador`) ganhou só
+  uma linha "Ao enviar, você aceita os termos para organizadores". Um checkbox
+  explícito fica para a área dona do formulário.
+- **Sem `TermsVersion` no banco** (seed de termos ausente): nada a aceitar; cadastro e
+  compra seguem sem gravar e o servidor avisa no log. Em produção, publicar as versões
+  antes de abrir o cadastro.
+- `textHash` não é recalculado a partir da página: a versão vigente é buscada por
+  `(kind, publishedAt)`. Os textos de `/termos` e `/privacidade` continuam rascunho (D8);
+  a versão final entra como linha nova e provoca reaceite.
+
+**Baixar meus dados** (`GET /api/minha-conta/dados`, botão em `/minha-conta`): JSON
+(`evento-brasil/meus-dados@1`) com perfil, sessões (sem token), organizações, pedidos
+(itens, pagamentos sem dados do provedor, reembolsos), ingressos em mãos (sem
+`validationToken`; pedido só se o próprio usuário comprou), transferências (enviadas
+com destinatário; recebidas sem dados de quem enviou), pedidos de cancelamento e aceites
+de termos. Exige sessão (401), limite de 5 por hora por conta (429), `no-store`, e grava
+`user.data_exported` no `AuditLog` (sem o conteúdo). Exclusão/anonimização aguarda D6.
+
 ## O que falta (por prioridade)
 
 1. ~~**Incorporar o SEO/erros**~~ (sitemap, robots, páginas de erro, OG padrão,
