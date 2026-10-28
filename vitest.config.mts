@@ -19,8 +19,6 @@ const testEnv = {
   PAYMENT_PROVIDER: "simulated",
   SIMULATED_WEBHOOK_SECRET: "test-only-webhook-secret",
   RESERVATION_MINUTES: "15",
-  REFUND_WINDOW_DAYS: "7",
-  REFUND_MIN_HOURS_BEFORE_EVENT: "48",
   EMAIL_PROVIDER: "console",
   STORAGE_PROVIDER: "local",
 };

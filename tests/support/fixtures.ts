@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { afterAll } from "vitest";
 import type { OrgRole, TicketKind } from "@/generated/prisma/client";
 import { createPrismaClient } from "@/server/db";
 import { SimulatedPaymentAdapter } from "@/server/payments/simulated";
@@ -6,6 +7,7 @@ import { createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
 
 export const db = createPrismaClient();
+afterAll(async () => { await db.$disconnect(); });
 export const adapter = new SimulatedPaymentAdapter(db, process.env.SIMULATED_WEBHOOK_SECRET!);
 
 export async function resetDb() {

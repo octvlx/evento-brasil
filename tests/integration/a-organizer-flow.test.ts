@@ -5,7 +5,7 @@ import { reviewOrganization, submitOrganizerApplication, setAutoPublish } from "
 import { createEvent, moderateEvent, submitEventForPublication, upsertTicketType } from "@/server/services/events";
 import { searchEvents } from "@/server/services/catalog";
 import { decryptPII } from "@/server/crypto";
-import { db, makeCategory, makeCity, makeUser, resetDb } from "../support/fixtures";
+import { db, makeCategory, makeCity, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -29,7 +29,7 @@ function eventInput(categoryId: string, cityId: string) {
 
 describe("A — organizador: cadastro → aprovação → evento → publicação", () => {
   it("percorre o fluxo completo com moderação", async () => {
-    const user = await registerUser(db, { name: "Ana Organiza", email: "Ana@Example.com", password: "senha-forte-1", acceptTerms: true });
+    const user = await registerUser(db, { name: "Ana Organiza", email: "Ana@Example.com", password: "senha-forte-1", acceptTerms: true, acceptPrivacy: true });
     expect(user.email).toBe("ana@example.com");
     expect(await authenticate(db, "ana@example.com", "senha-forte-1", { production: false })).not.toBeNull();
     expect(await authenticate(db, "ana@example.com", "errada", { production: false })).toBeNull();
@@ -94,12 +94,37 @@ describe("A — organizador: cadastro → aprovação → evento → publicaçã
     expect((await submitEventForPublication(db, user, event.id)).status).toBe("PUBLISHED");
   });
 
+  it("recusa preço de ingresso menor que a taxa da plataforma quando ela sai do repasse", async () => {
+    const user = await makeUser();
+    const org = await makeOrg(user);
+    const [category, city] = await Promise.all([makeCategory(), makeCity()]);
+    const event = await createEvent(db, user, org.id, eventInput(category.id, city.id));
+    // Taxa da plataforma: 7% + R$ 1,00 por ingresso, descontada do organizador.
+    await db.commissionRule.updateMany({ where: { scope: "PLATFORM" }, data: { fixedCentsPerTicket: 100, bearer: "ORGANIZER" } });
+
+    await expect(upsertTicketType(db, user, event.id, { name: "Barato", kind: "GENERAL", priceCents: 50, quantityTotal: 10 })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    expect(await db.ticketType.count({ where: { eventId: event.id } })).toBe(0);
+    // Gratuito e preço que cobre a taxa continuam válidos.
+    await upsertTicketType(db, user, event.id, { name: "Grátis", kind: "FREE", priceCents: 0, quantityTotal: 10 });
+    const ok = await upsertTicketType(db, user, event.id, { name: "Inteira", kind: "GENERAL", priceCents: 500, quantityTotal: 10 });
+    // Baixar o preço de um tipo existente para baixo da taxa também é recusado.
+    await expect(upsertTicketType(db, user, event.id, { id: ok.id, name: "Inteira", kind: "GENERAL", priceCents: 99, quantityTotal: 10 })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+
+    // Com a taxa cobrada do comprador, não há repasse negativo: o preço baixo é aceito.
+    await db.commissionRule.updateMany({ where: { scope: "PLATFORM" }, data: { bearer: "BUYER" } });
+    await upsertTicketType(db, user, event.id, { name: "Barato", kind: "GENERAL", priceCents: 50, quantityTotal: 10 });
+  });
+
   it("rejeita CPF inválido e e-mail duplicado", async () => {
     const user = await makeUser();
     await expect(
       submitOrganizerApplication(db, user, { name: "X", legalType: "INDIVIDUAL", legalName: "X Y", document: "123.456.789-00", contactEmail: "x@y.com" }),
     ).rejects.toThrow();
-    await registerUser(db, { name: "Dup", email: "dup@example.com", password: "12345678", acceptTerms: true });
-    await expect(registerUser(db, { name: "Dup", email: "DUP@example.com", password: "12345678", acceptTerms: true })).rejects.toMatchObject({ code: "CONFLICT" });
+    await registerUser(db, { name: "Dup", email: "dup@example.com", password: "12345678", acceptTerms: true, acceptPrivacy: true });
+    await expect(registerUser(db, { name: "Dup", email: "DUP@example.com", password: "12345678", acceptTerms: true, acceptPrivacy: true })).rejects.toMatchObject({ code: "CONFLICT" });
   });
 });

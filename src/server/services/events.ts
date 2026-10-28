@@ -2,13 +2,19 @@ import "server-only";
 import type { EventStatus } from "@/generated/prisma/client";
 import { eventInputSchema, ticketTypeInputSchema, type EventInput, type TicketTypeInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
+import { commissionPerUnit } from "@/features/fees/policy";
 import { zonedLocalToUtc } from "@/lib/datetime";
+import { formatBRL } from "@/lib/money";
 import { slugify } from "@/lib/utils";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
 import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
 import { randomToken } from "../crypto";
 import { AppError, invalidState, notFound } from "../errors";
+import { resolveCommissionRule } from "./commission";
+import { getWizardProgress, isWizardComplete } from "./event-wizard-progress";
+import { recordRelevantChange } from "./event-changes";
+import { notifyEventChangeInBackground } from "./notifications";
 
 /** Transições permitidas do ciclo de vida do evento. */
 export const EVENT_TRANSITIONS: Record<EventStatus, readonly EventStatus[]> = {
@@ -26,16 +32,22 @@ export function assertEventTransition(from: EventStatus, to: EventStatus) {
 
 const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
 
-async function uniqueEventSlug(client: Db | Tx, title: string, cityName?: string | null): Promise<string> {
+export async function uniqueEventSlug(client: Db | Tx, title: string, cityName?: string | null): Promise<string> {
   const base = slugify([title, cityName].filter(Boolean).join(" ")) || "evento";
   if (!(await client.event.findUnique({ where: { slug: base }, select: { id: true } }))) return base;
   return `${base}-${randomToken(4).toLowerCase().replace(/[^a-z0-9]/g, "x")}`;
 }
 
-async function resolveLocation(tx: Tx, organizationId: string, input: ReturnType<typeof eventInputSchema.parse>) {
+async function resolveLocation(tx: Tx, organizationId: string, input: ReturnType<typeof eventInputSchema.parse>, currentVenueId?: string | null) {
   if (input.locationType === "ONLINE") return { venueId: null, cityId: input.cityId || null, onlineUrl: input.onlineUrl ?? null };
   if (input.newVenue) {
     const v = input.newVenue;
+    // Reenvio do mesmo "novo local" na edição: mantém o local atual em vez de criar
+    // outro igual (que contaria como troca de local, R8).
+    if (currentVenueId) {
+      const same = await tx.venue.findFirst({ where: { id: currentVenueId, organizationId, name: v.name, addressLine: v.addressLine, cityId: v.cityId } });
+      if (same) return { venueId: same.id, cityId: same.cityId, onlineUrl: null };
+    }
     const city = await tx.city.findUnique({ where: { id: v.cityId } });
     if (!city) throw new AppError("VALIDATION", "Cidade inválida.");
     const venue = await tx.venue.create({
@@ -76,7 +88,10 @@ function eventData(input: ReturnType<typeof eventInputSchema.parse>) {
     ageRestriction: input.ageRestriction,
     capacity: input.capacity,
     halfPriceQuotaBps: input.halfPriceQuotaPercent === undefined ? null : Math.round(input.halfPriceQuotaPercent * 100),
+    maxTicketsPerAccount: input.maxTicketsPerAccount ?? null,
     refundPolicy: input.refundPolicy,
+    refundWindowDays: input.refundWindowDays,
+    refundMinHoursBeforeEvent: input.refundMinHoursBeforeEvent,
     accessibilityInfo: input.accessibilityInfo ?? null,
     coverImageUrl: input.coverImageUrl || null,
   };
@@ -98,20 +113,92 @@ export async function createEvent(db: Db, actor: Actor, organizationId: string, 
   });
 }
 
+/**
+ * Maior quantidade de ingressos que uma única conta já tem no evento (R4), com a mesma
+ * regra de `ticketsHeldByAccount` do `pagamentos-financeiro` (PR #54): ingressos
+ * VALID/CHECKED_IN de que a conta é titular (`holderUserId`; transferido conta só para o
+ * novo titular) + itens dos pedidos PENDING_PAYMENT da conta ainda não vencidos.
+ * Quando o PR #54 estiver no main, trocar por `ticketsHeldByAccount` por conta.
+ */
+export async function maxTicketsHeldBySingleAccount(client: Db | Tx, eventId: string, now = new Date()): Promise<number> {
+  const [row] = await client.$queryRaw<{ max: number | null }[]>`
+    SELECT max(n)::int AS max FROM (
+      SELECT account, sum(q) AS n FROM (
+        SELECT t."holderUserId" AS account, 1 AS q
+          FROM "IssuedTicket" t
+         WHERE t."eventId" = ${eventId} AND t.status IN ('VALID', 'CHECKED_IN')
+        UNION ALL
+        SELECT o."userId" AS account, i.quantity AS q
+          FROM "Order" o JOIN "OrderItem" i ON i."orderId" = o.id
+         WHERE o."eventId" = ${eventId} AND o.status = 'PENDING_PAYMENT' AND o."expiresAt" > ${now}
+      ) held GROUP BY account
+    ) per_account`;
+  return row?.max ?? 0;
+}
+
 export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: EventInput) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
   const input = eventInputSchema.parse(raw);
-  return db.$transaction(async (tx) => {
+  const { event, change } = await db.$transaction(async (tx) => {
+    // Trava o evento: o "antes" da alteração relevante e a checagem de limite por conta
+    // não podem ser atropelados por outra edição simultânea.
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const current = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
     if (!EDITABLE.includes(current.status)) throw invalidState("Este evento não pode mais ser editado.");
     const sold = await tx.ticketType.aggregate({ where: { eventId }, _sum: { quantitySold: true, quantityReserved: true } });
     const committed = (sold._sum.quantitySold ?? 0) + (sold._sum.quantityReserved ?? 0);
     if (input.capacity < committed) throw new AppError("VALIDATION", `Capacidade não pode ser menor que ${committed} ingressos já vendidos/reservados.`);
-    const loc = await resolveLocation(tx, organizationId, input);
-    const event = await tx.event.update({ where: { id: eventId }, data: { ...eventData(input), ...loc } });
-    await audit(tx, { actorUserId: actor.id, organizationId, action: "event.updated", entityType: "Event", entityId: eventId });
-    return event;
+    // Quem já comprou não pode perder direito de reembolso: com vendas, a política
+    // só pode ficar mais generosa (mais dias após a compra, menos horas de antecedência).
+    if (committed > 0 && input.refundWindowDays < current.refundWindowDays)
+      throw new AppError("VALIDATION", `Já há ingressos vendidos: o prazo de reembolso não pode ser menor que ${current.refundWindowDays} dias após a compra.`);
+    if (committed > 0 && input.refundMinHoursBeforeEvent > current.refundMinHoursBeforeEvent)
+      throw new AppError("VALIDATION", `Já há ingressos vendidos: a antecedência para reembolso não pode passar de ${current.refundMinHoursBeforeEvent} horas antes do evento.`);
+    if (input.maxTicketsPerAccount !== undefined && input.maxTicketsPerAccount !== current.maxTicketsPerAccount) {
+      const held = await maxTicketsHeldBySingleAccount(tx, eventId);
+      if (input.maxTicketsPerAccount < held)
+        throw new AppError("VALIDATION", `Uma conta já tem ${held} ingressos deste evento: o limite por conta não pode ser menor que ${held}.`);
+    }
+    const loc = await resolveLocation(tx, organizationId, input, current.venueId);
+    const data = { ...eventData(input), ...loc };
+    const change = await recordRelevantChange(tx, {
+      actorUserId: actor.id,
+      event: current,
+      next: { startsAt: data.startsAt, locationType: data.locationType, venueId: loc.venueId, cityId: loc.cityId },
+      reason: input.changeReason,
+    });
+    const event = await tx.event.update({ where: { id: eventId }, data });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "event.updated",
+      entityType: "Event",
+      entityId: eventId,
+      metadata: change ? { eventChangeId: change.id } : undefined,
+    });
+    return { event, change };
   });
+  // Fora da transação: falha de e-mail não desfaz a alteração (pode ser reenviada).
+  if (change) notifyEventChangeInBackground(db, change.id);
+  return event;
+}
+
+/**
+ * Com a comissão descontada do repasse (bearer ORGANIZER), um preço menor que a
+ * comissão por unidade daria repasse negativo e o ingresso nunca poderia ser
+ * vendido (createOrder recusa). Avisa já no cadastro. Gratuito (0) é sempre válido.
+ */
+async function assertPriceCoversCommission(tx: Tx, organizationId: string, eventId: string, priceCents: number) {
+  if (priceCents === 0) return;
+  const rule = await resolveCommissionRule(tx, organizationId, eventId);
+  if (rule.bearer !== "ORGANIZER") return;
+  const commission = commissionPerUnit(priceCents, rule);
+  if (commission > priceCents) {
+    throw new AppError(
+      "VALIDATION",
+      `A taxa da plataforma para este preço é ${formatBRL(commission)}, maior que o próprio preço. Aumente o preço ou torne o ingresso gratuito.`,
+    );
+  }
 }
 
 export async function upsertTicketType(db: Db, actor: Actor, eventId: string, raw: TicketTypeInput) {
@@ -139,11 +226,13 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
     if (input.id) {
       const tt = await tx.ticketType.findFirst({ where: { id: input.id, eventId } });
       if (!tt) throw notFound("Tipo de ingresso não encontrado.");
+      if (tt.priceCents !== input.priceCents) await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
       if (input.quantityTotal < tt.quantitySold + tt.quantityReserved)
         throw new AppError("VALIDATION", `Quantidade mínima: ${tt.quantitySold + tt.quantityReserved} (vendidos + reservados).`);
       if (tt.quantitySold > 0 && tt.kind !== input.kind) throw new AppError("VALIDATION", "Não é possível mudar o tipo após vendas.");
       result = await tx.ticketType.update({ where: { id: tt.id }, data });
     } else {
+      await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
       const count = await tx.ticketType.count({ where: { eventId } });
       result = await tx.ticketType.create({ data: { ...data, eventId, sortOrder: count } });
     }
@@ -173,11 +262,16 @@ export async function deleteTicketType(db: Db, actor: Actor, ticketTypeId: strin
 export async function submitEventForPublication(db: Db, actor: Actor, eventId: string) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:publish");
   return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, include: { organization: true, ticketTypes: true } });
     if (event.organization.status !== "APPROVED") throw new AppError("FORBIDDEN", "A organização precisa ser aprovada antes de publicar eventos.");
     if (!event.ticketTypes.length) throw new AppError("VALIDATION", "Cadastre ao menos um tipo de ingresso.");
     if (event.endsAt < new Date()) throw new AppError("VALIDATION", "O evento já terminou.");
+    // Rascunho do assistente com etapa pendente ainda tem valores provisórios.
+    if (!isWizardComplete(await getWizardProgress(tx, eventId))) throw new AppError("VALIDATION", "Conclua todas as etapas do cadastro do evento antes de publicar.");
     const target: EventStatus = event.organization.autoPublishEvents ? "PUBLISHED" : "PENDING_REVIEW";
+    // Idempotente: um segundo envio (clique repetido) devolve o estado atual.
+    if (event.status === target) return event;
     assertEventTransition(event.status, target);
     const updated = await tx.event.update({
       where: { id: eventId },

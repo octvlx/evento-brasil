@@ -1,5 +1,30 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { login, USERS } from "./helpers";
+import pg from "pg";
+import { createCouponLink, login, USERS } from "./helpers";
+
+/**
+ * Regra de comissão do evento com taxa paga pelo comprador (o seed só tem a
+ * da plataforma, paga pelo organizador). Devolve uma função que a encerra.
+ */
+async function withBuyerFee(slug: string, percentBps: number, fixedCents: number) {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const { rows } = await client.query('SELECT id FROM "Event" WHERE slug = $1', [slug]);
+  expect(rows[0], `evento ${slug}`).toBeTruthy();
+  const eventId = rows[0].id as string;
+  const id = `e2e-${randomUUID()}`;
+  await client.query(`UPDATE "CommissionRule" SET "activeTo" = now() WHERE scope = 'EVENT' AND "eventId" = $1 AND "activeTo" IS NULL`, [eventId]);
+  await client.query(
+    `INSERT INTO "CommissionRule" (id, scope, "eventId", "percentBps", "fixedCentsPerTicket", bearer, "policyVersion", "activeFrom")
+     VALUES ($1, 'EVENT', $2, $3, $4, 'BUYER', $5, now() - interval '1 minute')`,
+    [id, eventId, percentBps, fixedCents, `${id}:v1`],
+  );
+  return async () => {
+    await client.query('UPDATE "CommissionRule" SET "activeTo" = now() WHERE id = $1', [id]);
+    await client.end();
+  };
+}
 
 test("visitante descobre eventos publicados sem login", async ({ page }) => {
   await page.goto("/");
@@ -72,4 +97,138 @@ test("reembolso: pedido mostra a situação e os ingressos ficam cancelados com 
   await page.goto("/meus-ingressos");
   const row = page.getByRole("row").filter({ has: page.locator(`a[href="${new URL(orderUrl).pathname}"]`) });
   await expect(row).toContainText("Reembolsado");
+});
+
+test("link rastreado → cupom pré-aplicado → pedido com desconto", async ({ page }) => {
+  const { couponCode, linkCode } = await createCouponLink("noite-de-samba-no-terraco-sao-paulo");
+  await login(page, USERS.customer, "/meus-ingressos");
+  // Clique no link vindo de fora (rede social): carregamento completo da página.
+  await page.goto(`/r/${linkCode}`);
+  await expect(page).toHaveURL(/\/eventos\/noite-de-samba-no-terraco/);
+
+  const coupon = page.getByLabel("Cupom de desconto");
+  await expect(coupon).toHaveValue(couponCode);
+  await page.locator("li").filter({ hasText: "Inteira" }).getByRole("button", { name: "Aumentar" }).click();
+
+  // Erro do serviço aparece junto ao campo; o comprador pode trocar ou remover o cupom.
+  await coupon.fill("NAOEXISTE");
+  await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Cupom inválido ou indisponível." })).toBeVisible();
+  await expect(coupon).toHaveAttribute("aria-invalid", "true");
+
+  await coupon.fill(couponCode.toLowerCase());
+  await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
+  await page.waitForURL(/\/checkout\//);
+  // O Next mantém a página anterior oculta no DOM: só o resumo visível.
+  const summary = page.locator("dl:visible").filter({ hasText: "Subtotal" });
+  await expect(summary).toContainText("1× Inteira");
+  await expect(summary).toContainText("R$ 80,00");
+  await expect(summary).toContainText(`Desconto · cupom ${couponCode}`);
+  await expect(summary).toContainText("−R$ 8,00");
+  await expect(summary.locator("div").filter({ hasText: "Subtotal" })).toContainText("R$ 72,00");
+
+  await page.getByRole("button", { name: "Gerar PIX" }).click();
+  await page.getByRole("button", { name: "Aprovar PIX" }).click();
+  await page.waitForURL(/\/pedido\//);
+  await expect(page.getByRole("heading", { name: "Pagamento confirmado!" })).toBeVisible();
+  await expect(page.locator("dl:visible").filter({ hasText: "Subtotal" })).toContainText(`Desconto · cupom ${couponCode}`);
+});
+
+test("robots.txt e sitemap.xml públicos", async ({ request }) => {
+  const robots = await request.get("/robots.txt");
+  expect(robots.status()).toBe(200);
+  const robotsText = await robots.text();
+  expect(robotsText).toContain("Disallow: /checkout");
+  expect(robotsText).toContain("sitemap.xml");
+  const sitemap = await request.get("/sitemap.xml");
+  expect(sitemap.status()).toBe(200);
+  const xml = await sitemap.text();
+  expect(xml).toContain("/eventos</loc>");
+  expect(xml).toContain("/cidades/");
+  // Só cidades com evento publicado: Franca tem a Corrida Noturna; cidades sem eventos ficam de fora.
+  expect(xml).toContain("/cidades/franca-sp</loc>");
+  expect(xml).not.toMatch(/\/admin|\/checkout|\/pedido\//);
+  // Páginas que definem openGraph próprio mantêm a imagem de compartilhamento padrão.
+  const eventos = await (await request.get("/eventos")).text();
+  expect(eventos).toMatch(/<meta property="og:image" content="[^"]*\/opengraph-image/);
+});
+
+test.describe("preço total com taxa (Decreto 13.108/2026)", () => {
+  const slug = "workshop-de-fotografia-urbana-curitiba";
+  let restore: () => Promise<void>;
+  // R$ 150,00 + 10% + R$ 1,50 = R$ 166,50 por ingresso.
+  test.beforeAll(async () => {
+    restore = await withBuyerFee(slug, 1000, 150);
+  });
+  test.afterAll(async () => {
+    await restore?.();
+  });
+
+  test("card, página do evento e checkout mostram o mesmo total com a taxa discriminada", async ({ page }) => {
+    await login(page, USERS.customer, "/eventos?cidade=curitiba-pr");
+    const card = page.locator(`a[href="/eventos/${slug}"]`);
+    const price = card.getByTestId("card-price");
+    await expect(price).toContainText(/A partir de R\$\s166,50/);
+    await expect(price).toContainText(/\(R\$\s150,00 \+ R\$\s16,50 de taxa\)/);
+
+    await card.click();
+    const ticket = page.locator("li").filter({ hasText: "Participante" });
+    await expect(ticket.getByTestId("ticket-total")).toHaveText(/R\$\s166,50/);
+    await expect(ticket).toContainText(/R\$\s150,00 \+ R\$\s16,50 de taxa de serviço/);
+    await ticket.getByRole("button", { name: "Aumentar" }).click();
+    await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
+    await page.waitForURL(/\/checkout\//);
+    const total = page.locator("dl div").filter({ has: page.getByText("Total", { exact: true }) }).last();
+    await expect(total).toContainText(/R\$\s166,50/);
+
+    // Pedido pendente: o canal de cancelamento aparece; cancela para liberar a reserva.
+    await page.goto(page.url().replace("/checkout/", "/pedido/"));
+    // O rodapé tem um link com o mesmo nome: só o da página do pedido.
+    await expect(page.getByRole("main").getByRole("link", { name: /Cancelar compra \/ arrependimento/ })).toHaveAttribute("href", "/ajuda#cancelamento");
+    await page.getByRole("button", { name: "Cancelar pedido" }).click();
+    await expect(page.getByRole("button", { name: "Cancelar pedido" })).toHaveCount(0);
+  });
+});
+
+test("canal de cancelamento/arrependimento: rodapé, Meus ingressos e Central de ajuda", async ({ page }) => {
+  await page.goto("/");
+  const footerLink = page.getByRole("contentinfo").getByRole("link", { name: "Cancelar compra / arrependimento" });
+  await expect(footerLink).toHaveAttribute("href", "/ajuda#cancelamento");
+  await footerLink.click();
+  await expect(page).toHaveURL(/\/ajuda#cancelamento$/);
+  const section = page.getByRole("heading", { name: "Cancelar compra / arrependimento" });
+  await expect(section).toBeVisible();
+  await expect(page.getByText(/pago há no máximo 7 dias/)).toBeVisible();
+  await expect(page.getByText(/pelo menos 48 horas/)).toBeVisible();
+  await expect(page.getByText(/revisão jurídica/)).toBeVisible();
+
+  await login(page, USERS.customer, "/meus-ingressos");
+  await expect(page.getByRole("link", { name: "Cancelar compra / arrependimento" }).first()).toHaveAttribute("href", "/ajuda#cancelamento");
+});
+
+test("meus pedidos: menu da conta, lista de pedidos anteriores e filtro", async ({ page, isMobile }) => {
+  await page.goto("/meus-pedidos");
+  await expect(page).toHaveURL(/\/entrar\?next=%2Fmeus-pedidos/);
+
+  await login(page, USERS.customer, "/");
+  if (isMobile) {
+    await page.getByRole("navigation", { name: "Navegação principal" }).getByRole("link", { name: "Pedidos" }).click();
+  } else {
+    await page.locator("summary", { hasText: "Menu da conta" }).click();
+    await page.getByRole("link", { name: "Meus pedidos" }).click();
+  }
+  await expect(page.getByRole("heading", { level: 1, name: "Meus pedidos" })).toBeVisible();
+  const orders = page.locator('main a[href^="/pedido/"]:visible');
+  await expect(orders.first()).toBeVisible();
+  await expect(page.getByText(/^\d+ pedidos?$/)).toBeVisible();
+
+  await page.getByRole("navigation", { name: "Filtrar pedidos" }).getByRole("link", { name: "Pagos" }).click();
+  await expect(page).toHaveURL(/situacao=pagos/);
+  await expect(page.getByRole("link", { name: "Pagos" })).toHaveAttribute("aria-current", "page");
+  const paid = page.locator('main a[href^="/pedido/"]:visible');
+  if (await paid.count()) {
+    for (const badge of await paid.locator("span", { hasText: /^(Pago|Aguardando pagamento|Reembolsado|Cancelado|Expirado)$/ }).allTextContents()) expect(badge).toBe("Pago");
+    await paid.first().click();
+    await expect(page).toHaveURL(/\/pedido\//);
+  }
 });

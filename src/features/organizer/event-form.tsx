@@ -10,6 +10,15 @@ import { Alert, FieldError, Input, Label, Select, Textarea } from "@/components/
 import { eventInputSchema, type EventInput } from "@/features/schemas";
 import { BR_TIMEZONES } from "@/lib/br";
 import { saveEventAction, uploadCoverAction } from "./actions";
+import { CHANGE_REASON_MIN, CHANGE_REASON_REQUIRED, REFUND_WINDOW_DAYS_AFTER_CHANGE } from "./event-change-rules";
+
+/** Evento publicado com pedido pago: estado atual do que torna uma edição relevante (R8). */
+export interface RelevantChangeGuard {
+  startsAtLocal: string;
+  timezone: string;
+  locationType: "VENUE" | "ONLINE";
+  venueId: string | null;
+}
 
 interface Props {
   eventId: string | null;
@@ -18,9 +27,10 @@ interface Props {
   cities: { id: string; label: string }[];
   venues: { id: string; label: string }[];
   locked?: boolean;
+  relevantGuard?: RelevantChangeGuard | null;
 }
 
-export function EventForm({ eventId, defaults, categories, cities, venues, locked }: Props) {
+export function EventForm({ eventId, defaults, categories, cities, venues, locked, relevantGuard }: Props) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -29,11 +39,21 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
   const [venueMode, setVenueMode] = useState<"existing" | "new">(defaults.venueId || !venues.length ? (defaults.venueId ? "existing" : "new") : "existing");
   const form = useForm<EventInput>({
     resolver: zodResolver(eventInputSchema),
-    defaultValues: { locationType: "VENUE", timezone: "America/Sao_Paulo", ageRestriction: 0, ...defaults },
+    defaultValues: { locationType: "VENUE", timezone: "America/Sao_Paulo", ageRestriction: 0, refundWindowDays: 7, refundMinHoursBeforeEvent: 48, ...defaults },
   });
   const { errors } = form.formState;
   const locationType = useWatch({ control: form.control, name: "locationType" });
   const cover = useWatch({ control: form.control, name: "coverImageUrl" });
+  const [startsAtLocal, timezone, venueId] = useWatch({ control: form.control, name: ["startsAtLocal", "timezone", "venueId"] });
+  const [reasonRequested, setReasonRequested] = useState(false);
+  // Prévia no navegador; quem decide é o servidor (que também compara cidade do local).
+  const relevant =
+    !!relevantGuard &&
+    (startsAtLocal !== relevantGuard.startsAtLocal ||
+      timezone !== relevantGuard.timezone ||
+      locationType !== relevantGuard.locationType ||
+      (locationType === "VENUE" && (venueMode === "new" || (venueId || null) !== relevantGuard.venueId)));
+  const showReason = relevant || reasonRequested;
 
   const onSubmit = form.handleSubmit((values) =>
     start(async () => {
@@ -43,9 +63,23 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
         venueId: values.locationType === "VENUE" && venueMode === "existing" ? values.venueId : undefined,
         newVenue: values.locationType === "VENUE" && venueMode === "new" ? values.newVenue : undefined,
       };
-      const res = await saveEventAction(eventId, payload);
-      if (!res.ok) return setError(res.error);
+      if (showReason && (values.changeReason?.trim().length ?? 0) < CHANGE_REASON_MIN) {
+        form.setError("changeReason", { message: `Descreva o motivo com pelo menos ${CHANGE_REASON_MIN} caracteres.` });
+        form.setFocus("changeReason");
+        return;
+      }
+      const res = await saveEventAction(eventId, { ...payload, changeReason: showReason ? values.changeReason : undefined });
+      if (!res.ok) {
+        if (res.error === CHANGE_REASON_REQUIRED) {
+          setReasonRequested(true);
+          form.setError("changeReason", { message: res.error });
+          return;
+        }
+        return setError(res.error);
+      }
       setSaved(true);
+      setReasonRequested(false);
+      form.setValue("changeReason", "");
       if (!eventId) router.push(`/organizador/eventos/${res.data.id}/editar`);
       else router.refresh();
     }),
@@ -234,16 +268,68 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
           <Input id="halfPriceQuotaPercent" type="number" min={0} max={100} step="1" className="mt-1.5" placeholder="Ex.: 40" {...form.register("halfPriceQuotaPercent", { setValueAs: (v) => (v === "" || v === null ? undefined : Number(v)) })} />
           <p className="mt-1 text-xs text-muted-foreground">Configure conforme orientação jurídica para o seu evento.</p>
         </div>
+        <div>
+          <Label htmlFor="maxTicketsPerAccount">Limite de ingressos por conta (opcional)</Label>
+          <Input
+            id="maxTicketsPerAccount"
+            type="number"
+            min={1}
+            max={1000}
+            step="1"
+            inputMode="numeric"
+            className="mt-1.5"
+            placeholder="Sem limite"
+            {...field("maxTicketsPerAccount")}
+            {...form.register("maxTicketsPerAccount", { setValueAs: (v) => (v === "" || v === null ? undefined : Number(v)) })}
+          />
+          <FieldError message={errors.maxTicketsPerAccount?.message} />
+          <p className="mt-1 text-xs text-muted-foreground">Soma de todos os pedidos de uma mesma conta neste evento. Deixe vazio para não limitar.</p>
+        </div>
         <div className="sm:col-span-2">
           <Label htmlFor="refundPolicy">Política de reembolso</Label>
           <Textarea id="refundPolicy" className="mt-1.5" {...field("refundPolicy")} {...form.register("refundPolicy")} />
           <FieldError message={errors.refundPolicy?.message} />
         </div>
+        <div>
+          <Label htmlFor="refundWindowDays">Reembolso: dias após a compra</Label>
+          <Input id="refundWindowDays" type="number" min={0} max={365} step="1" inputMode="numeric" className="mt-1.5" {...field("refundWindowDays")} {...form.register("refundWindowDays")} />
+          <FieldError message={errors.refundWindowDays?.message} />
+        </div>
+        <div>
+          <Label htmlFor="refundMinHoursBeforeEvent">Reembolso: horas antes do evento</Label>
+          <Input
+            id="refundMinHoursBeforeEvent"
+            type="number"
+            min={0}
+            max={720}
+            step="1"
+            inputMode="numeric"
+            className="mt-1.5"
+            {...field("refundMinHoursBeforeEvent")}
+            {...form.register("refundMinHoursBeforeEvent")}
+          />
+          <FieldError message={errors.refundMinHoursBeforeEvent?.message} />
+        </div>
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          O comprador pode pedir reembolso integral até esse número de dias após a compra e até essas horas antes do início (padrão: 7 dias e 48 horas). Depois que houver ingressos vendidos, os prazos só podem
+          ficar mais favoráveis ao comprador. Configure conforme orientação jurídica.
+        </p>
         <div className="sm:col-span-2">
           <Label htmlFor="accessibilityInfo">Acessibilidade</Label>
           <Textarea id="accessibilityInfo" className="mt-1.5" placeholder="Rampas, banheiros adaptados, Libras, espaço para cadeirantes…" {...form.register("accessibilityInfo")} />
         </div>
       </fieldset>
+      {showReason && !locked && (
+        <div className="space-y-2 rounded-2xl border border-border p-4">
+          <Alert variant="warning">
+            Esta alteração muda data, horário, local, cidade ou formato de um evento com ingressos vendidos. Os compradores serão avisados por e-mail e poderão pedir reembolso integral por até{" "}
+            {REFUND_WINDOW_DAYS_AFTER_CHANGE} dias (no máximo até o novo início).
+          </Alert>
+          <Label htmlFor="changeReason">Motivo da alteração (enviado aos compradores)</Label>
+          <Textarea id="changeReason" maxLength={2000} aria-invalid={!!errors.changeReason} placeholder="Ex.: a banda principal remarcou a turnê e o show passou para sábado." {...form.register("changeReason")} />
+          <FieldError message={errors.changeReason?.message} />
+        </div>
+      )}
       {error && <Alert variant="danger">{error}</Alert>}
       {saved && !error && <Alert variant="success">Evento salvo.</Alert>}
       {!locked && (

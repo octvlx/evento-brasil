@@ -92,9 +92,18 @@ export async function postProcessingFee(
   feeCents: number,
   bearer: CommissionRule["processingFeeBearer"],
 ) {
-  if (feeCents <= 0) return;
+  if (!Number.isSafeInteger(feeCents) || feeCents < 0 || feeCents > 2_147_483_647) throw new UnbalancedLedgerError("Taxa de processamento inválida");
+  // O provedor informa o total, não um novo débito. Correções são novas partidas,
+  // sem alterar o histórico. Pré-condição: trava do pedido, como postSale.
+  const previous = await tx.financialLedgerEntry.findMany({
+    where: { paymentId, type: "PROCESSING_FEE", account: "PROCESSING_FEES" },
+    select: { amountCents: true, direction: true },
+  });
+  const recorded = previous.reduce((sum, entry) => sum + (entry.direction === "CREDIT" ? entry.amountCents : -entry.amountCents), 0);
+  const delta = feeCents - recorded;
+  if (!delta) return;
   await postLedgerTransaction(tx, {
-    idempotencyKey: `processing-fee:${paymentId}`,
+    idempotencyKey: previous.length ? `processing-fee:${paymentId}:revision:${previous.length + 1}` : `processing-fee:${paymentId}`,
     type: "PROCESSING_FEE",
     organizationId: order.organizationId,
     orderId: order.id,
@@ -104,11 +113,11 @@ export async function postProcessingFee(
     entries: [
       {
         account: bearer === "ORGANIZER" ? "ORGANIZER_PAYABLE" : "PLATFORM_COMMISSION",
-        direction: "DEBIT",
-        amountCents: feeCents,
+        direction: delta > 0 ? "DEBIT" : "CREDIT",
+        amountCents: Math.abs(delta),
         description: bearer === "ORGANIZER" ? "Custo de processamento (organizador)" : "Custo de processamento (plataforma)",
       },
-      { account: "PROCESSING_FEES", direction: "CREDIT", amountCents: feeCents, description: "Custo de processamento" },
+      { account: "PROCESSING_FEES", direction: delta > 0 ? "CREDIT" : "DEBIT", amountCents: Math.abs(delta), description: "Custo de processamento" },
     ],
   });
 }

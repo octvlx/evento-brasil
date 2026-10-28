@@ -1,5 +1,5 @@
 ﻿import { expect, test } from "@playwright/test";
-import { login, USERS } from "./helpers";
+import { acceptSignupTerms, login, USERS } from "./helpers";
 
 test("novo organizador se cadastra → admin aprova pela fila", async ({ browser }) => {
   const stamp = Date.now();
@@ -10,7 +10,7 @@ test("novo organizador se cadastra → admin aprova pela fila", async ({ browser
   await owner.getByLabel("Nome completo").fill("Pessoa Teste E2E");
   await owner.getByLabel("E-mail", { exact: true }).fill(`e2e+${stamp}@test.local`);
   await owner.getByLabel("Senha", { exact: true }).fill("senha-segura-e2e");
-  await owner.getByRole("checkbox").check();
+  await acceptSignupTerms(owner);
   await owner.getByRole("button", { name: "Criar conta" }).click();
   await owner.waitForURL(/\/organizador\/cadastro/);
 

@@ -1,7 +1,7 @@
 # Check-in — inventário e dependências
 
-Responsável: agente `check-in`. Última revisão: inventário da área e correção do
-vazamento de dados de titular em leituras de ingresso de outra organização.
+Responsável: agente `check-in`. Última revisão: transferência de titularidade
+(T-TRANSF, Decreto 13.108/2026, R6 — Fase 3: serviços e Server Actions).
 
 ## O que existe
 
@@ -11,11 +11,14 @@ vazamento de dados de titular em leituras de ingresso de outra organização.
 | Leitor com câmera (`jsqr`, 5 quadros/s, câmera traseira) e entrada manual; resposta verde/âmbar/vermelho, vibração, contadores | `/check-in/[eventId]`, `src/features/checkin/scanner.tsx` | Pronto |
 | Server Action com limite de 120 leituras/min por operador e payload truncado em 200 caracteres | `src/features/checkin/actions.ts` | Pronto |
 | Validação online atômica, seis resultados, toda leitura registrada em `TicketCheckin` | `checkInTicket` em `src/server/services/checkin.ts` | Pronto |
+| Aviso "Meia-entrada — exigir documento comprobatório" ao admitir ou reportar DUPLICATE de ingresso `HALF_PRICE` (faixa preta/amarela, 2,2 s na tela — demais leituras 1,5 s; câmera e entrada manual). `ticketKind` nunca é devolvido para ingresso de outra organização (Decreto 13.108/2026, L7a) | `scanner.tsx`, `ticket.ticketKind` em `checkInTicket` | Pronto |
 | Histórico de leituras (equipe vê só as próprias; organizador vê todas) | `checkinHistory`, seção "Últimas leituras" (15 itens) | Pronto |
 | Permissões da portaria | `resolveCheckinAccess` em `src/server/auth/permissions.ts`; atribuição em `assignStaffToEvent` (área organizador) | Pronto |
 | Formato do QR `EB1:<código 10 Crockford>:<token 256 bits base64url>` e emissão idempotente | `qrPayload`/`parseQrPayload`/`issueTicketsTx` em `src/server/services/tickets.ts` (área financeiro) | Pronto |
 | Visualização do ingresso (QR só se VALID; "já utilizado"/"cancelado" nos demais; aviso de pagamento simulado e meia-entrada) | `/ingressos/[code]`, lista em `/meus-ingressos` | Pronto |
-| PDF A5 por ingresso com QR (não gera para REVOKED: 410) | `src/server/tickets/pdf.ts`, `/api/tickets/[code]/pdf`, anexo do e-mail em `notifications.ts` | Pronto |
+| PDF A5 por ingresso com QR (não gera para REVOKED: 410); faixa amarela "Meia-entrada: apresente o documento comprobatório" quando `kind` = HALF_PRICE — no download; o anexo do e-mail só terá o aviso quando `loadPdfTickets` (`notifications.ts`, financeiro) passar `kind` | `src/server/tickets/pdf.ts`, `/api/tickets/[code]/pdf`, anexo do e-mail em `notifications.ts` | Pronto (e-mail pendente) |
+| Transferência de titularidade (R6): pedido pelo titular, aceite/recusa pelo destinatário logado com o e-mail indicado, cancelamento, expiração no cron; novo QR no aceite; histórico imutável | `src/server/services/transfers.ts`, `src/features/checkin/transfer-actions.ts`, página mínima `/transferencia/[token]` | Serviços prontos; telas na Fase 4 |
+| Acesso ao ingresso pelo **titular atual** (`holderUserId`): `/ingressos/[code]`, `/meus-ingressos`, PDF e carteiras por ingresso; PDF/Google Wallet do pedido e e-mail de compra só com os ingressos que o comprador ainda tem | páginas e rotas em `src/app/`, `loadPdfTickets({ holderUserId })` | Pronto |
 
 ### Como as garantias são obtidas
 
@@ -56,6 +59,64 @@ vazamento de dados de titular em leituras de ingresso de outra organização.
 - **Sem teste:** janela de 12h após o término (COMPLETED); listagem
   `/check-in` por papel; renderização do PDF; e2e de REVOKED/WRONG_EVENT; o
   limite de leituras por operador.
+
+## Transferência de titularidade (T-TRANSF) — contrato para a Fase 4
+
+Serviço: `src/server/services/transfers.ts`. Server Actions (todas devolvem
+`ActionResult`, mensagens em pt-BR): `src/features/checkin/transfer-actions.ts`.
+
+| Ação | Quem | Efeito |
+| --- | --- | --- |
+| `requestTransferAction(ticketId, { toEmail, toName })` → `{ transferId, expiresAt }` | titular atual (`holderUserId`) | Cria `TicketTransfer` PENDING e envia o convite por e-mail. Limite de 10 pedidos/h por conta. |
+| `acceptTransferAction(token)` → `{ ticketCode }` | conta logada com o e-mail `toEmail` | Novo titular (`holderUserId`, `holderName` = nome indicado, `holderEmail` = e-mail da conta) e **novo `validationToken`**: QR, PDF e passes anteriores deixam de valer. E-mail aos dois. |
+| `declineTransferAction(token)` | destinatário | CANCELLED, `decidedById` = destinatário, motivo "Recusada pelo destinatário". |
+| `cancelTransferAction(transferId)` | quem pediu | CANCELLED, motivo "Cancelada pelo titular". |
+| `expireTicketTransfers(db)` | cron (`/api/cron/maintenance`) | PENDING vencidas → EXPIRED (`decidedById` nulo). |
+
+Leituras para as telas: `listMyTransfers(db, actor)` → `{ sent, received }`
+(enviadas pela conta; recebidas pela conta ou pendentes para o e-mail dela) e
+`findTransferByToken(db, token)` (página de aceite). Erros: `NOT_FOUND`
+(ingresso/transferência inexistente ou de outra pessoa), `FORBIDDEN` (e-mail não
+confere), `VALIDATION`, `CONFLICT` (já há uma pendente), `LIMIT_EXCEEDED`
+(limite por ingresso ou por conta), `INVALID_STATE` (ingresso usado/revogado,
+pedido não pago ou com reembolso, evento inativo/iniciado, transferência já
+decidida ou expirada).
+
+O link do e-mail é `${APP_URL}/transferencia/<token>` (token de 256 bits; o banco
+guarda só o HMAC). A página mínima atual mostra o resumo a quem está logado com o
+e-mail certo e oferece aceitar/recusar; a Fase 4 (`paginas-publicas`,
+T-TRANSF-UI) pode substituí-la mantendo a rota. Falta na UI: botão "Transferir"
+em `/ingressos/[code]` (só com status VALID), lista de enviadas/recebidas com
+"Cancelar", e indicar em `/pedido/[orderId]` os ingressos transferidos (hoje o
+link para eles dá 404 ao comprador, e a lista mostra o nome do novo titular).
+
+**Regras (valores provisórios em `TRANSFER_POLICY`, não exigência do decreto):**
+gratuita; até **3** transferências aceitas por ingresso; convite vale **48h**,
+nunca depois do início do evento, e não se pede transferência com o evento
+iniciado (D7 decide o prazo-limite). Pedido e aceite exigem ingresso VALID,
+pedido PAID e evento PUBLISHED. O limite por conta do evento
+(`Event.maxTicketsPerAccount`) vale no aceite, pelo contrato (a): usa
+`ticketsHeldByAccount` de `orders.ts` quando existir; até lá, uma contagem local
+equivalente (ingressos VALID/CHECKED_IN em mãos + reservas ativas). O reembolso
+continua do pedido e vai ao pagador original (D7 provisório), revogando também o
+ingresso transferido.
+
+**Concorrência.** Aceite trava Event (`FOR UPDATE`, como `createOrder`) → Order
+(`FOR KEY SHARE`) → ingresso → transferência; o check-in segura o Event com
+`FOR KEY SHARE`, então uma leitura vê o QR antigo ou o novo, nunca os dois. O
+check-in também exige o token no `UPDATE … WHERE status = 'VALID'` (defesa
+extra). Reembolso trava Event/Order com `FOR UPDATE` e revoga sob a trava:
+o aceite que chega depois recusa; o que chega antes muda o titular e o reembolso
+revoga em seguida. Testes: `tests/integration/z-ticket-transfer.test.ts`.
+
+**Histórico.** `TicketTransfer` é imutável depois de decidida e não pode ser
+apagada (gatilho `TicketTransfer_append_only`); guarda remetente, destinatário,
+hash do QR invalidado, datas, IP e agente. Auditoria: `ticket.transfer.requested`,
+`.accepted`, `.cancelled`, `.declined`.
+
+**Limitações.** Não há verificação de e-mail na conta: quem se cadastrar com o
+e-mail indicado pode aceitar. Os e-mails da transferência são enviados fora da
+transação e não são reenviados se falharem.
 
 ## O que falta (por prioridade)
 
@@ -98,7 +159,7 @@ vazamento de dados de titular em leituras de ingresso de outra organização.
 | Agente | O que precisamos |
 | --- | --- |
 | `banco-de-dados` | Lacuna 2: `IssuedTicket.validationTokenHash` (único) e `tokenVersion`, migração que preencha o hash dos ingressos existentes e depois remova `validationToken`. Lacuna 4 (opcional): `Event.checkinOpensMinutesBefore`. |
-| `pagamentos-financeiro` | Dono de `tickets.ts` (formato e emissão do QR) e de `loadPdfTickets`. A lacuna 2 muda a emissão. A revogação no reembolso precisa continuar sob a trava Event → Order → ingressos, pois o check-in depende dessa ordem. |
+| `pagamentos-financeiro` | Contrato (a) `ticketsHeldByAccount` (o aceite já o usa quando existir). Até D7, decidir se bloqueia o reembolso ao comprador de ingresso transferido. Dono de `tickets.ts` (formato e emissão do QR) e de `loadPdfTickets`. A lacuna 2 muda a emissão. A revogação no reembolso precisa continuar sob a trava Event → Order → ingressos, pois o check-in depende dessa ordem. |
 | `area-organizador` | Atribui e remove a equipe do evento (`assignStaffToEvent`). A lacuna 3 depende de a remoção não precisar de outra trava. O CSV do histórico (lacuna 6) pode ser exibido no painel do evento. |
 | `paginas-publicas` | `/meus-ingressos` e o layout compartilhado; `/ingressos/[code]` é desta área. |
 | `admin` | Revogação administrativa (`revocationReason = ADMIN`) aparece como REVOKED no leitor. |

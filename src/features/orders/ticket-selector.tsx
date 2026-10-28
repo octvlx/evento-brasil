@@ -2,12 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { Minus, Plus, ShieldCheck } from "lucide-react";
+import { Minus, Plus, ShieldCheck, TicketPercent, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label } from "@/components/ui/primitives";
 import { formatBRL } from "@/lib/money";
+import { feeBreakdownText } from "@/lib/price-display";
 import { TICKET_KIND } from "@/lib/labels";
+import { TermsReaccept } from "@/features/auth/terms-reaccept";
 import { createOrderAction } from "./actions";
+import { isCouponError } from "./status-view";
 
 export interface SelectorTicket {
   id: string;
@@ -15,6 +18,8 @@ export interface SelectorTicket {
   description: string | null;
   kind: string;
   priceCents: number;
+  /** Taxa de serviço por unidade calculada no servidor (a mesma do pedido). */
+  serviceFeeCents: number;
   minPerOrder: number;
   maxPerOrder: number;
   available: number;
@@ -26,25 +31,30 @@ interface Props {
   eventId: string;
   eventSlug: string;
   tickets: SelectorTicket[];
-  /** Prévia da taxa de serviço por unidade (o servidor recalcula). */
-  buyerFee: { percentBps: number; fixedCents: number } | null;
+  /** A regra do evento cobra taxa de serviço do comprador. */
+  buyerPaysFee: boolean;
   user: { name: string; email: string } | null;
   halfPriceLeft: number | null;
+  paymentsAvailable: boolean;
+  /** Cupom pré-aplicado por um link rastreado (o comprador pode remover). */
+  initialCouponCode?: string | null;
 }
 
-function previewFee(price: number, fee: Props["buyerFee"]) {
-  if (!fee || price === 0) return 0;
-  return Math.floor((price * fee.percentBps + 5000) / 10000) + fee.fixedCents;
-}
-
-export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, halfPriceLeft }: Props) {
+export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user, halfPriceLeft, paymentsAvailable, initialCouponCode }: Props) {
   const router = useRouter();
   const [qty, setQty] = useState<Record<string, number>>({});
   const [attendees, setAttendees] = useState<Record<string, string[]>>({});
   const [buyerName, setBuyerName] = useState(user?.name ?? "");
   const [buyerEmail, setBuyerEmail] = useState(user?.email ?? "");
   const [halfDecl, setHalfDecl] = useState(false);
+  // O servidor pede o aceite quando há versão vigente dos termos não aceita.
+  const [termsRequired, setTermsRequired] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [coupon, setCoupon] = useState(initialCouponCode ?? "");
+  const [couponOpen, setCouponOpen] = useState(Boolean(initialCouponCode));
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const couponCode = coupon.trim();
   const [pending, start] = useTransition();
   // Chave de idempotência por tentativa: evita pedidos duplicados em duplo clique.
   const [idempotencyKey, setKey] = useState(() => crypto.randomUUID());
@@ -52,9 +62,9 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, ha
   const lines = tickets.filter((t) => (qty[t.id] ?? 0) > 0);
   const totals = useMemo(() => {
     const subtotal = lines.reduce((s, t) => s + t.priceCents * qty[t.id], 0);
-    const fee = lines.reduce((s, t) => s + previewFee(t.priceCents, buyerFee) * qty[t.id], 0);
+    const fee = lines.reduce((s, t) => s + t.serviceFeeCents * qty[t.id], 0);
     return { subtotal, fee, total: subtotal + fee, count: lines.reduce((s, t) => s + qty[t.id], 0) };
-  }, [lines, qty, buyerFee]);
+  }, [lines, qty]);
   const hasHalf = lines.some((t) => t.kind === "HALF_PRICE");
 
   const change = (t: SelectorTicket, delta: number) => {
@@ -74,6 +84,8 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, ha
       router.push(`/entrar?next=${encodeURIComponent(`/eventos/${eventSlug}`)}`);
       return;
     }
+    setError(null);
+    setCouponError(null);
     start(async () => {
       const res = await createOrderAction({
         eventId,
@@ -86,10 +98,13 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, ha
         buyerEmail,
         halfPriceDeclaration: halfDecl,
         idempotencyKey,
-      });
+        couponCode: couponCode || undefined,
+      }, { acceptTerms: termsRequired ? acceptTerms : undefined });
       if (res.ok) router.push(`/checkout/${res.data.orderId}`);
       else {
-        setError(res.error);
+        if (res.code === "TERMS_REQUIRED") setTermsRequired(true);
+        if (isCouponError(res, Boolean(couponCode))) setCouponError(res.error);
+        else setError(res.error);
         setKey(crypto.randomUUID());
       }
     });
@@ -97,10 +112,12 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, ha
 
   return (
     <div className="space-y-4">
+      {!paymentsAvailable && <Alert variant="warning">A compra de ingressos pagos está temporariamente indisponível. Ingressos gratuitos continuam disponíveis.</Alert>}
       <ul className="space-y-3">
         {tickets.map((t) => {
           const n = qty[t.id] ?? 0;
           const soldOut = t.available <= 0;
+          const breakdown = feeBreakdownText({ priceCents: t.priceCents, serviceFeeCents: t.serviceFeeCents, totalCents: t.priceCents + t.serviceFeeCents });
           return (
             <li key={t.id} className="rounded-2xl border border-border p-4">
               <div className="flex items-start justify-between gap-3">
@@ -109,13 +126,13 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, ha
                   <p className="text-xs text-muted-foreground">
                     {[TICKET_KIND[t.kind] !== t.name ? TICKET_KIND[t.kind] : null, t.description].filter(Boolean).join(" · ")}
                   </p>
-                  <p className="mt-1 font-display text-lg font-bold">{t.priceCents === 0 ? "Gratuito" : formatBRL(t.priceCents)}</p>
-                  {buyerFee && t.priceCents > 0 && (
-                    <p className="text-xs text-muted-foreground">+ {formatBRL(previewFee(t.priceCents, buyerFee))} de taxa de serviço</p>
-                  )}
+                  <p className="mt-1 font-display text-lg font-bold" data-testid="ticket-total">
+                    {t.priceCents === 0 ? "Gratuito" : formatBRL(t.priceCents + t.serviceFeeCents)}
+                  </p>
+                  {breakdown && <p className="text-xs text-muted-foreground">{breakdown} de serviço</p>}
                 </div>
-                {!t.onSale || soldOut ? (
-                  <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{soldOut ? "Esgotado" : "Fora do período"}</span>
+                {!t.onSale || soldOut || (!paymentsAvailable && t.priceCents > 0) ? (
+                  <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{soldOut ? "Esgotado" : !t.onSale ? "Fora do período" : "Indisponível"}</span>
                 ) : (
                   <div className="flex shrink-0 items-center gap-2" role="group" aria-label={`Quantidade de ${t.name}`}>
                     <Button type="button" variant="outline" size="icon" onClick={() => change(t, -1)} disabled={n === 0} aria-label="Diminuir">
@@ -178,6 +195,61 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, ha
         </div>
       )}
 
+      <div className="rounded-2xl border border-border p-4">
+        {couponOpen ? (
+          <div>
+            <Label htmlFor="couponCode" className="flex items-center gap-1.5">
+              <TicketPercent className="size-4 text-secondary" aria-hidden /> Cupom de desconto
+            </Label>
+            <div className="mt-1.5 flex gap-2">
+              <Input
+                id="couponCode"
+                value={coupon}
+                onChange={(e) => {
+                  setCoupon(e.target.value.toUpperCase());
+                  setCouponError(null);
+                }}
+                maxLength={32}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                placeholder="EX.: PROMO10"
+                className="font-mono uppercase"
+                aria-invalid={!!couponError}
+                aria-describedby={couponError ? "couponError" : "couponHint"}
+              />
+              {coupon && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Remover cupom"
+                  onClick={() => {
+                    setCoupon("");
+                    setCouponError(null);
+                  }}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
+            {couponError ? (
+              <p id="couponError" role="alert" className="mt-1.5 text-sm font-medium text-destructive">
+                {couponError}
+              </p>
+            ) : (
+              <p id="couponHint" className="mt-1.5 text-xs text-muted-foreground">
+                O desconto é calculado e conferido na próxima etapa. Não vale para meia-entrada.
+              </p>
+            )}
+          </div>
+        ) : (
+          <button type="button" className="flex items-center gap-1.5 text-sm font-semibold text-secondary hover:underline" onClick={() => setCouponOpen(true)}>
+            <TicketPercent className="size-4" aria-hidden /> Tenho um cupom de desconto
+          </button>
+        )}
+      </div>
+
       <dl className="space-y-1.5 rounded-2xl bg-muted p-4 text-sm">
         <div className="flex justify-between">
           <dt>Ingressos ({totals.count})</dt>
@@ -185,17 +257,26 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerFee, user, ha
         </div>
         <div className="flex justify-between">
           <dt>Taxa de serviço</dt>
-          <dd className="tabular-nums">{buyerFee ? formatBRL(totals.fee) : "Sem taxa para o comprador"}</dd>
+          <dd className="tabular-nums">{buyerPaysFee ? formatBRL(totals.fee) : "Sem taxa para o comprador"}</dd>
         </div>
+        {couponCode && (
+          <div className="flex justify-between gap-3 text-secondary">
+            <dt>
+              Cupom <span className="font-mono font-semibold">{couponCode}</span>
+            </dt>
+            <dd>desconto na próxima etapa</dd>
+          </div>
+        )}
         <div className="flex justify-between border-t border-border pt-2 text-base font-bold">
-          <dt>Total</dt>
+          <dt>{couponCode ? "Total sem desconto" : "Total"}</dt>
           <dd className="tabular-nums">{formatBRL(totals.total)}</dd>
         </div>
       </dl>
 
+      {termsRequired && <TermsReaccept checked={acceptTerms} onChange={setAcceptTerms} />}
       {error && <Alert variant="danger">{error}</Alert>}
 
-      <Button size="lg" className="w-full" variant="accent" onClick={submit} disabled={pending || totals.count === 0 || (hasHalf && !halfDecl)}>
+      <Button size="lg" className="w-full" variant="accent" onClick={submit} disabled={pending || totals.count === 0 || (hasHalf && !halfDecl) || (termsRequired && !acceptTerms)}>
         {pending ? "Reservando…" : !user ? "Entrar para comprar" : totals.count === 0 ? "Selecione os ingressos" : "Continuar para o pagamento"}
       </Button>
       <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">

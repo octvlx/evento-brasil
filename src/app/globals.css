@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 /* Evento Brasil — tokens de design.
-   Primária: índigo profundo · Secundária: violeta elétrico · Destaque: coral/magenta. */
+   Primária: índigo profundo · Secundária: violeta elétrico · Destaque: coral/magenta.
+   Tema único claro (fundo branco), independente do tema do dispositivo. */
 
 :root {
   --background: #ffffff;
@@ -28,35 +29,6 @@
   --hero-from: #1e1b4b;
   --hero-via: #4c1d95;
   --hero-to: #be185d;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0b0a14;
-    --foreground: #f1effa;
-    --card: #14121f;
-    --card-foreground: #f1effa;
-    --muted: #1c1a2b;
-    --muted-foreground: #a7a2c0;
-    --border: #2a2640;
-    --input: #3a3554;
-    --ring: #a78bfa;
-    --primary: #8b5cf6;
-    --primary-foreground: #ffffff;
-    --secondary: #a78bfa;
-    --secondary-foreground: #14112b;
-    --accent: #fb7185;
-    --accent-foreground: #14112b;
-    --success: #34d399;
-    --success-soft: #052e22;
-    --warning: #fbbf24;
-    --warning-soft: #2d1f05;
-    --destructive: #fb7185;
-    --destructive-soft: #3b0a17;
-    --hero-from: #0f0c2e;
-    --hero-via: #3b0f7a;
-    --hero-to: #9d174d;
-  }
 }
 
 @theme inline {
@@ -88,7 +60,7 @@
 }
 
 html {
-  color-scheme: light dark;
+  color-scheme: light;
   -webkit-tap-highlight-color: transparent;
 }
 

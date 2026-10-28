@@ -1,5 +1,5 @@
 import "server-only";
-import type { CheckinResult, EventStatus } from "@/generated/prisma/client";
+import type { CheckinResult, EventStatus, TicketKind } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
 import { notFound } from "../errors";
@@ -8,7 +8,9 @@ import { parseQrPayload } from "./tickets";
 export interface CheckinResponse {
   result: CheckinResult;
   message: string;
-  ticket?: { code: string; holderName: string | null; ticketTypeName: string; checkedInAt: Date | null };
+  // ticketKind permite à portaria exigir o documento da meia-entrada (HALF_PRICE).
+  // Ausente, como o resto de `ticket`, em leituras de ingresso de outra organização.
+  ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null };
   counters: { admitted: number; total: number };
 }
 
@@ -65,13 +67,13 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
       // 2. QR → ingresso (busca pelo token; o código precisa bater).
       const parsed = parseQrPayload(rawPayload);
       const ticket = parsed
-        ? await tx.issuedTicket.findUnique({ where: { validationToken: parsed.token }, include: { ticketType: { select: { name: true } }, event: { select: { organizationId: true } } } })
+        ? await tx.issuedTicket.findUnique({ where: { validationToken: parsed.token }, include: { ticketType: { select: { name: true, kind: true } }, event: { select: { organizationId: true } } } })
         : null;
       if (!parsed || !ticket || ticket.code !== parsed.code) {
         await record("INVALID", null);
         return { result: "INVALID" };
       }
-      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, checkedInAt });
+      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, ticketKind: ticket.ticketType.kind, checkedInAt });
 
       if (ticket.eventId !== eventId) {
         // Ingresso de outra organização: a leitura não é vinculada ao ingresso nem revela
@@ -92,12 +94,18 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
         await record("REVOKED", ticket.id);
         return { result: "REVOKED", ticket: view(null) };
       }
-      const { count } = await tx.issuedTicket.updateMany({ where: { id: ticket.id, status: "VALID" }, data: { status: "CHECKED_IN", checkedInAt: now } });
+      // O token entra no WHERE: se uma transferência aceita trocou o QR depois da busca
+      // acima, o QR antigo não admite (defesa extra; o aceite já espera a trava do evento).
+      const { count } = await tx.issuedTicket.updateMany({ where: { id: ticket.id, status: "VALID", validationToken: parsed.token }, data: { status: "CHECKED_IN", checkedInAt: now } });
       if (count === 1) {
         await record("ADMITTED", ticket.id);
         return { result: "ADMITTED", ticket: view(now) };
       }
       const current = await tx.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
+      if (current.validationToken !== parsed.token) {
+        await record("INVALID", null);
+        return { result: "INVALID" };
+      }
       const result: CheckinResult = current.status === "REVOKED" ? "REVOKED" : "DUPLICATE";
       await record(result, ticket.id);
       return { result, ticket: view(current.checkedInAt) };

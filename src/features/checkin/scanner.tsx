@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { Camera, CameraOff, Keyboard } from "lucide-react";
+import { Camera, CameraOff, IdCard, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,11 @@ const RESULT_STYLE: Record<string, string> = {
   INVALID: "bg-rose-600",
   EVENT_NOT_ACTIVE: "bg-zinc-700",
 };
+
+/** Meia-entrada admitida (ou já utilizada): a portaria precisa conferir o documento comprobatório. */
+function needsHalfPriceDocument(r: CheckinResponse) {
+  return (r.result === "ADMITTED" || r.result === "DUPLICATE") && r.ticket?.ticketKind === "HALF_PRICE";
+}
 
 export function Scanner({ eventId, initialCounters }: { eventId: string; initialCounters: { admitted: number; total: number } }) {
   const router = useRouter();
@@ -35,12 +40,15 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     async (payload: string) => {
       if (busy.current) return;
       busy.current = true;
+      // Meia-entrada fica mais tempo na tela: dá tempo de pedir e conferir o documento.
+      let holdMs = 1500;
       try {
         const r = await checkInAction(eventId, payload);
         if (r.ok) {
           setResult(r.data);
           setCounters(r.data.counters);
           setError(null);
+          if (needsHalfPriceDocument(r.data)) holdMs = 2200;
           navigator.vibrate?.(r.data.result === "ADMITTED" ? 80 : [60, 60, 60, 60, 200]);
         } else setError(r.error);
       } catch {
@@ -52,7 +60,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
           setResult(null);
           busy.current = false;
           router.refresh();
-        }, 2200);
+        }, holdMs);
       }
     },
     [eventId, router],
@@ -63,17 +71,29 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     let stream: MediaStream | null = null;
     let raf = 0;
     let last = 0;
+    // A limpeza pode rodar antes de a câmera abrir (desligar ou sair da página durante
+    // getUserMedia/play): sem esta marca o laço começaria depois, com os refs já nulos.
+    let cancelled = false;
+    const stop = () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((tr) => tr.stop());
+    };
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-        const video = videoRef.current!;
-        video.srcObject = stream;
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        stream = s;
+        const video = videoRef.current;
+        if (cancelled || !video) return stop();
+        video.srcObject = s;
         await video.play();
+        if (cancelled) return stop();
         const tick = (t: number) => {
+          const canvas = canvasRef.current;
+          if (cancelled || !canvas || !videoRef.current) return;
           raf = requestAnimationFrame(tick);
-          if (t - last < 200 || busy.current || video.readyState < 2) return;
+          if (t - last < 200 || busy.current || video.readyState < 2 || !video.videoWidth) return;
           last = t;
-          const canvas = canvasRef.current!;
           const w = Math.min(640, video.videoWidth);
           const h = Math.round((video.videoHeight / video.videoWidth) * w);
           canvas.width = w;
@@ -85,14 +105,12 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
         };
         raf = requestAnimationFrame(tick);
       } catch {
+        if (cancelled) return stop();
         setCameraError("Não foi possível acessar a câmera. Verifique a permissão do navegador ou use a digitação manual.");
         setCameraOn(false);
       }
     })();
-    return () => {
-      cancelAnimationFrame(raf);
-      stream?.getTracks().forEach((tr) => tr.stop());
-    };
+    return stop;
   }, [cameraOn, submit]);
 
   return (
@@ -131,6 +149,12 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
                 </p>
                 {result.result === "DUPLICATE" && result.ticket.checkedInAt && (
                   <p className="mt-2 text-sm">Entrada registrada às {new Date(result.ticket.checkedInAt).toLocaleTimeString("pt-BR")}</p>
+                )}
+                {needsHalfPriceDocument(result) && (
+                  <p className="mt-4 flex items-center gap-3 rounded-2xl border-4 border-yellow-300 bg-black px-4 py-3 text-left text-lg font-extrabold uppercase leading-tight text-yellow-300">
+                    <IdCard className="size-8 shrink-0" aria-hidden />
+                    Meia-entrada — exigir documento comprobatório
+                  </p>
                 )}
               </>
             )}

@@ -23,8 +23,6 @@ const schema = z.object({
   MERCADO_PAGO_WEBHOOK_SECRET: z.string().optional(),
   SETTLEMENT_ENABLED: bool,
   RESERVATION_MINUTES: int(15),
-  REFUND_WINDOW_DAYS: int(7),
-  REFUND_MIN_HOURS_BEFORE_EVENT: int(48),
   EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
   EMAIL_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default("Evento Brasil <nao-responda@example.com>"),
@@ -35,6 +33,17 @@ const schema = z.object({
   OBJECT_STORAGE_ACCESS_KEY: z.string().optional(),
   OBJECT_STORAGE_SECRET_KEY: z.string().optional(),
   OBJECT_STORAGE_PUBLIC_URL: z.string().optional(),
+  // Carteiras digitais (docs/wallet.md). Cada uma liga só com todas as suas variáveis.
+  // Certificados/chaves: PEM (quebras de linha como "\n") ou PEM em base64.
+  APPLE_WALLET_PASS_TYPE_ID: z.string().optional(),
+  APPLE_WALLET_TEAM_ID: z.string().optional(),
+  APPLE_WALLET_SIGNER_CERT: z.string().optional(),
+  APPLE_WALLET_SIGNER_KEY: z.string().optional(),
+  APPLE_WALLET_SIGNER_KEY_PASSPHRASE: z.string().optional(),
+  APPLE_WALLET_WWDR_CERT: z.string().optional(),
+  GOOGLE_WALLET_ISSUER_ID: z.string().optional(),
+  GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL: z.string().optional(),
+  GOOGLE_WALLET_PRIVATE_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

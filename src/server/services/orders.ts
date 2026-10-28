@@ -1,20 +1,27 @@
 // Reserva de estoque e criação de pedidos.
 //
-// Ordem de travas (evita deadlock): sempre Event → Order.
+// Ordem de travas (evita deadlock): sempre Event → Order → Coupon.
 // Toda mutação de contadores de TicketType ocorre com a linha do Event
 // travada (SELECT … FOR UPDATE), e CHECKs no banco impedem overselling
 // mesmo que uma regra aqui falhe.
+//
+// Cupons (ADR 0002, D4) são trava-folha: um cupom de organização é
+// compartilhado entre eventos, então uma transação que mexe em mais de um
+// cupom trava TODOS de uma vez, em ordem de id (`lockCoupons`), antes de
+// alterar qualquer contador — e nunca trava Event/Order depois de um cupom.
 import "server-only";
 import type { OrderStatus } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { createOrderSchema, type CreateOrderInput } from "@/features/schemas";
-import { computeFees } from "@/features/fees/policy";
+import { discountPerUnit, undercutHalfPrice } from "@/features/fees/discount";
+import { computeFees, lineWithNegativePayout } from "@/features/fees/policy";
 import { onlyDigits } from "@/lib/br";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
 import { randomCode } from "../crypto";
 import { env } from "../env";
+import { rateLimit } from "../rate-limit";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { resolveCommissionRule } from "./commission";
 import { postSale } from "./ledger";
@@ -27,6 +34,19 @@ export async function lockEvent(tx: Tx, eventId: string) {
 
 export async function lockOrder(tx: Tx, orderId: string) {
   await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+}
+
+/** Trava os cupons em uma única instrução, em ordem de id (ver cabeçalho). */
+export async function lockCoupons(tx: Tx, ids: (string | null | undefined)[]) {
+  const unique = [...new Set(ids.filter((id): id is string => !!id))].sort();
+  if (!unique.length) return;
+  await tx.$queryRaw`SELECT id FROM "Coupon" WHERE id IN (${Prisma.join(unique)}) ORDER BY id FOR UPDATE`;
+}
+
+/** Trava os cupons de um conjunto de pedidos (antes de liberar vários de uma vez). */
+export async function lockCouponsOfOrders(tx: Tx, where: Prisma.OrderWhereInput, extra: (string | null | undefined)[] = []) {
+  const rows = await tx.order.findMany({ where: { AND: [where, { couponId: { not: null } }] }, select: { couponId: true }, distinct: ["couponId"] });
+  await lockCoupons(tx, [...rows.map((r) => r.couponId), ...extra]);
 }
 
 /**
@@ -42,6 +62,8 @@ export async function releaseOrderTx(
 ): Promise<boolean> {
   const { count } = await tx.order.updateMany({ where: { id: orderId, status: "PENDING_PAYMENT" }, data: { status, cancelledAt: now } });
   if (!count) return false;
+  const { couponId } = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { couponId: true } });
+  if (couponId) await tx.coupon.update({ where: { id: couponId }, data: { timesReserved: { decrement: 1 } } });
   const reservations = await tx.ticketInventoryReservation.findMany({ where: { orderId, status: "ACTIVE" } });
   for (const r of reservations) {
     await tx.ticketType.update({ where: { id: r.ticketTypeId }, data: { quantityReserved: { decrement: r.quantity } } });
@@ -54,7 +76,9 @@ export async function releaseOrderTx(
 }
 
 async function releaseExpiredForEventTx(tx: Tx, eventId: string, now: Date) {
-  const stale = await tx.order.findMany({ where: { eventId, status: "PENDING_PAYMENT", expiresAt: { lte: now } }, select: { id: true } });
+  const where = { eventId, status: "PENDING_PAYMENT", expiresAt: { lte: now } } satisfies Prisma.OrderWhereInput;
+  await lockCouponsOfOrders(tx, where);
+  const stale = await tx.order.findMany({ where, select: { id: true } });
   for (const o of stale) await releaseOrderTx(tx, o.id, "EXPIRED", "reservation_expired", now);
   return stale.length;
 }
@@ -94,6 +118,8 @@ export async function finalizePaidOrderTx(tx: Tx, order: OrderWithItems, now = n
   }
   await tx.ticketInventoryReservation.updateMany({ where: { orderId: order.id, status: "ACTIVE" }, data: { status: "CONVERTED" } });
   await tx.order.update({ where: { id: order.id }, data: { status: "PAID", paidAt: now } });
+  // Uso do cupom: reservado → resgatado (único ponto, inclusive para pedido gratuito).
+  if (order.couponId) await tx.coupon.update({ where: { id: order.couponId }, data: { timesReserved: { decrement: 1 }, timesRedeemed: { increment: 1 } } });
   await issueTicketsTx(tx, order);
 }
 
@@ -116,14 +142,126 @@ export async function acquireLateInventoryTx(tx: Tx, order: OrderWithItems, now 
     await tx.ticketType.update({ where: { id: item.ticketTypeId }, data: { quantitySold: { increment: item.quantity } } });
   }
   await tx.order.update({ where: { id: order.id }, data: { status: "PAID", paidAt: now } });
+  if (order.couponId) {
+    // A reserva do uso já foi liberada na expiração. O comprador pagou o preço
+    // com desconto: o uso é honrado mesmo acima do limite, e fica auditado (D4).
+    const c = await tx.coupon.update({ where: { id: order.couponId }, data: { timesRedeemed: { increment: 1 } } });
+    if (c.maxUses !== null && c.timesReserved + c.timesRedeemed > c.maxUses) {
+      await audit(tx, {
+        organizationId: order.organizationId,
+        action: "coupon.redeemed_over_limit",
+        entityType: "Coupon",
+        entityId: c.id,
+        metadata: { orderId: order.id, maxUses: c.maxUses, timesReserved: c.timesReserved, timesRedeemed: c.timesRedeemed },
+      });
+    }
+  }
   await issueTicketsTx(tx, order);
   return true;
 }
+
+// ───────────────────────────── Cupom e atribuição (ADR 0002) ─────────────────────────────
+
+const COUPON_CODE = /^[A-Z0-9_-]{3,32}$/;
+const COUPON_ATTEMPTS_PER_WINDOW = 10;
+const COUPON_ATTEMPT_WINDOW_MS = 10 * 60_000;
+
+/** Mesma mensagem para inexistente, de outra organização/evento ou desativado (não revelar qual). */
+const couponUnavailable = () => new AppError("VALIDATION", "Cupom inválido ou indisponível.");
+
+type CouponWithTypes = Prisma.CouponGetPayload<{ include: { ticketTypes: { select: { ticketTypeId: true } } } }>;
+
+/** Pré-condição: cupom travado (lockCoupons). */
+async function validateCouponTx(tx: Tx, couponId: string, userId: string, eventId: string, now: Date): Promise<CouponWithTypes> {
+  const c = await tx.coupon.findUniqueOrThrow({ where: { id: couponId }, include: { ticketTypes: { select: { ticketTypeId: true } } } });
+  if (c.disabledAt || (c.eventId && c.eventId !== eventId)) throw couponUnavailable();
+  if ((c.validFrom && now < c.validFrom) || (c.validUntil && now >= c.validUntil)) throw new AppError("VALIDATION", "Cupom fora do período de validade.");
+  if (c.maxUses !== null && c.timesReserved + c.timesRedeemed >= c.maxUses) throw new AppError("SOLD_OUT", "Cupom esgotado.");
+  if (c.maxUsesPerUser !== null) {
+    // Mesma definição dos contadores: pendente ou com ingressos emitidos (reembolso não devolve o uso).
+    const used = await tx.order.count({ where: { couponId: c.id, userId, OR: [{ status: "PENDING_PAYMENT" }, { tickets: { some: {} } }] } });
+    if (used >= c.maxUsesPerUser) throw new AppError("LIMIT_EXCEEDED", "Você já usou este cupom o número máximo de vezes.");
+  }
+  return c;
+}
+
+type PricedType = { id: string; kind: string; priceCents: number; isHidden: boolean };
+
+/**
+ * Desconto por tipo de ingresso do pedido. Não se aplica a gratuitos nem a
+ * meia-entrada (padrão até a revisão jurídica, D3); sem tipos no cupom = todos
+ * os pagos do evento. Recusa se nenhum item recebe desconto ou se a inteira
+ * com desconto ficaria mais barata que a meia-entrada.
+ */
+function couponDiscounts(c: CouponWithTypes, requested: PricedType[], eventTypes: PricedType[]) {
+  const restricted = new Set(c.ticketTypes.map((t) => t.ticketTypeId));
+  const halfPrices = eventTypes.filter((t) => t.kind === "HALF_PRICE" && !t.isHidden).map((t) => t.priceCents);
+  const out = new Map<string, number>();
+  for (const t of requested) {
+    if (t.kind === "HALF_PRICE" || t.priceCents === 0) continue;
+    if (restricted.size && !restricted.has(t.id)) continue;
+    const d = discountPerUnit(t.priceCents, c);
+    if (!d) continue;
+    if (undercutHalfPrice(t.priceCents, t.priceCents - d, halfPrices) !== undefined)
+      throw new AppError("VALIDATION", "Com este cupom a inteira ficaria mais barata que a meia-entrada; não é possível aplicá-lo.");
+    out.set(t.id, d);
+  }
+  if (!out.size) throw new AppError("VALIDATION", "Este cupom não vale para os ingressos selecionados.");
+  return out;
+}
+
+const UTM_MAX = 200;
+const cutUtm = (v: string | undefined) => v?.trim().slice(0, UTM_MAX) || null;
+
+/**
+ * Instantâneo da origem da venda. Link de outro evento (ou inexistente) é
+ * descartado junto com os UTMs que vieram com ele; sem link, UTMs soltos
+ * valem. Com link e sem UTMs, usa os do link.
+ */
+async function resolveAttributionTx(tx: Tx, eventId: string, a: CreateOrderInput["attribution"]) {
+  const empty = { trackingLinkId: null, utmSource: null, utmMedium: null, utmCampaign: null, utmContent: null, utmTerm: null };
+  if (!a) return empty;
+  const utm = {
+    utmSource: cutUtm(a.utmSource),
+    utmMedium: cutUtm(a.utmMedium),
+    utmCampaign: cutUtm(a.utmCampaign),
+    utmContent: cutUtm(a.utmContent),
+    utmTerm: cutUtm(a.utmTerm),
+  };
+  if (!a.trackingLinkId) return { ...empty, ...utm };
+  const link = await tx.trackingLink.findUnique({ where: { id: a.trackingLinkId } });
+  if (!link || link.eventId !== eventId) return empty;
+  const fromLink = { utmSource: link.utmSource, utmMedium: link.utmMedium, utmCampaign: link.utmCampaign, utmContent: link.utmContent, utmTerm: link.utmTerm };
+  return { trackingLinkId: link.id, ...(Object.values(utm).some(Boolean) ? utm : fromLink) };
+}
+
+/**
+ * Ingressos de um evento que contam para o limite por conta (R4,
+ * `Event.maxTicketsPerAccount`): os ingressos VALID/CHECKED_IN de que a conta é
+ * titular (`holderUserId`, inclusive recebidos por transferência) mais as
+ * quantidades dos pedidos PENDING_PAYMENT da conta nesse evento.
+ *
+ * Contrato com `check-in` (aceite de transferência). Para o resultado valer na
+ * decisão, chame com a trava do evento (`lockEvent`) já tomada: é a mesma trava
+ * que serializa `createOrder`.
+ */
+export async function ticketsHeldByAccount(client: Db | Tx, userId: string, eventId: string, now = new Date()): Promise<number> {
+  const [held, pending] = await Promise.all([
+    client.issuedTicket.count({ where: { eventId, holderUserId: userId, status: { in: ["VALID", "CHECKED_IN"] } } }),
+    // Reserva vencida ainda não liberada pela manutenção não conta.
+    client.orderItem.aggregate({ where: { order: { eventId, userId, status: "PENDING_PAYMENT", expiresAt: { gt: now } } }, _sum: { quantity: true } }),
+  ]);
+  return held + (pending._sum.quantity ?? 0);
+}
+
+const ticketsWord = (n: number) => `${n} ${n === 1 ? "ingresso" : "ingressos"}`;
 
 export interface CreateOrderOptions {
   now?: Date;
   /** O provedor configurado é o simulado (marca o pedido como simulado). */
   providerIsSimulated: boolean;
+  /** False quando o adaptador ainda não oferece nenhum método de pagamento. */
+  paymentsAvailable?: boolean;
 }
 
 export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, opts: CreateOrderOptions) {
@@ -140,6 +278,10 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
     merged.set(item.ticketTypeId, item);
   }
 
+  const couponCode = input.couponCode?.trim().toUpperCase() || null;
+  // Contra força bruta de códigos: conta toda tentativa com cupom.
+  if (couponCode) rateLimit(`coupon:${actor.id}`, COUPON_ATTEMPTS_PER_WINDOW, COUPON_ATTEMPT_WINDOW_MS);
+
   try {
     const created = await db.$transaction(async (tx) => {
       await lockEvent(tx, input.eventId);
@@ -148,6 +290,15 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       if (event.organization.status !== "APPROVED") throw new AppError("SALES_CLOSED", "Vendas indisponíveis para este organizador.");
       if (now < event.salesStartAt) throw new AppError("SALES_CLOSED", "As vendas ainda não começaram.");
       if (now >= event.salesEndAt || now >= event.endsAt) throw new AppError("SALES_CLOSED", "As vendas deste evento foram encerradas.");
+
+      // Cupom: trava, numa só instrução, o cupom pedido e os dos pedidos que esta
+      // transação vai liberar (vencidos do evento e o pendente anterior do comprador).
+      const couponRef =
+        couponCode && COUPON_CODE.test(couponCode)
+          ? await tx.coupon.findUnique({ where: { organizationId_code: { organizationId: event.organizationId, code: couponCode } }, select: { id: true } })
+          : null;
+      if (couponCode && !couponRef) throw couponUnavailable();
+      await lockCouponsOfOrders(tx, { eventId: event.id, status: "PENDING_PAYMENT", OR: [{ expiresAt: { lte: now } }, { userId: actor.id }] }, [couponRef?.id]);
 
       await releaseExpiredForEventTx(tx, event.id, now);
       // Um pedido pendente por usuário/evento: o anterior é liberado.
@@ -174,6 +325,19 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       }
       const committed = ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
       if (committed + requested > event.capacity) throw new AppError("SOLD_OUT", "Capacidade do evento esgotada.");
+      // Limite por conta (R4). Sob a trava do evento e depois de liberar o pedido
+      // pendente anterior do comprador, que seria substituído por este.
+      if (event.maxTicketsPerAccount !== null) {
+        const held = await ticketsHeldByAccount(tx, actor.id, event.id, now);
+        if (held + requested > event.maxTicketsPerAccount) {
+          const left = Math.max(0, event.maxTicketsPerAccount - held);
+          throw new AppError(
+            "LIMIT_EXCEEDED",
+            `Este evento permite até ${ticketsWord(event.maxTicketsPerAccount)} por conta. ` +
+              (held ? `Você já tem ${ticketsWord(held)}; ${left ? `pode comprar mais ${left}.` : "não é possível comprar mais."}` : "Reduza a quantidade."),
+          );
+        }
+      }
       if (halfRequested > 0) {
         if (!input.halfPriceDeclaration) throw new AppError("VALIDATION", "Confirme a declaração de direito à meia-entrada.");
         if (event.halfPriceQuotaBps !== null) {
@@ -183,13 +347,30 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
         }
       }
 
+      // Desconto do cupom (validado com o cupom travado e o pedido anterior já liberado).
+      const coupon = couponRef ? await validateCouponTx(tx, couponRef.id, actor.id, event.id, now) : null;
+      const discounts = coupon ? couponDiscounts(coupon, [...merged.keys()].map((id) => byId.get(id)!), ticketTypes) : new Map<string, number>();
+
       // Preços SEMPRE do banco.
       const rule = await resolveCommissionRule(tx, event.organizationId, event.id, now);
       const fees = computeFees(
-        [...merged.values()].map((i) => ({ ticketTypeId: i.ticketTypeId, unitPriceCents: byId.get(i.ticketTypeId)!.priceCents, quantity: i.quantity })),
+        [...merged.values()].map((i) => ({
+          ticketTypeId: i.ticketTypeId,
+          unitPriceCents: byId.get(i.ticketTypeId)!.priceCents,
+          quantity: i.quantity,
+          discountPerUnitCents: discounts.get(i.ticketTypeId) ?? 0,
+        })),
         rule,
       );
+      // Guarda B1 (ADR 0002): repasse negativo quebraria o razão na confirmação do pagamento.
+      const negative = lineWithNegativePayout(fees, rule.bearer);
+      if (negative?.discountPerUnitCents)
+        throw new AppError("VALIDATION", "Desconto alto demais para este ingresso: o preço com desconto fica menor que a taxa da plataforma.");
+      if (negative) throw new AppError("VALIDATION", "O preço deste ingresso é menor que a taxa da plataforma.");
+      const attribution = await resolveAttributionTx(tx, event.id, input.attribution);
       const isFree = fees.totalCents === 0;
+      if (!isFree && opts.paymentsAvailable === false)
+        throw new AppError("SALES_CLOSED", "A compra de ingressos pagos está temporariamente indisponível.");
       if (!isFree && !["CONNECTED", "SIMULATED"].includes(event.organization.paymentAccountStatus))
         throw new AppError("SALES_CLOSED", "O organizador ainda não está habilitado para vender ingressos pagos.");
       if (!isFree && event.organization.paymentAccountStatus === "SIMULATED" && !opts.providerIsSimulated)
@@ -204,6 +385,10 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
           organizationId: event.organizationId,
           subtotalCents: fees.subtotalCents,
           serviceFeeCents: fees.serviceFeeCents,
+          discountCents: fees.discountCents,
+          couponId: coupon?.id ?? null,
+          couponCode: coupon?.code ?? null,
+          ...attribution,
           totalCents: fees.totalCents,
           commissionCents: fees.commissionCents,
           feePolicyVersion: fees.policyVersion,
@@ -222,6 +407,8 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
                 ticketTypeName: t.name,
                 kind: t.kind,
                 unitPriceCents: l.unitPriceCents,
+                listUnitPriceCents: l.listUnitPriceCents,
+                discountPerUnitCents: l.discountPerUnitCents,
                 commissionPerUnitCents: l.commissionPerUnitCents,
                 serviceFeePerUnitCents: l.serviceFeePerUnitCents,
                 quantity: l.quantity,
@@ -236,6 +423,8 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       for (const l of fees.lines) {
         await tx.ticketType.update({ where: { id: l.ticketTypeId }, data: { quantityReserved: { increment: l.quantity } } });
       }
+      // Uso do cupom reservado; vira resgatado em finalizePaidOrderTx (inclusive se gratuito).
+      if (coupon) await tx.coupon.update({ where: { id: coupon.id }, data: { timesReserved: { increment: 1 } } });
 
       if (isFree) {
         await tx.payment.create({
@@ -250,7 +439,12 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
         action: isFree ? "order.free_issued" : "order.created",
         entityType: "Order",
         entityId: order.id,
-        metadata: { totalCents: fees.totalCents, tickets: requested },
+        metadata: {
+          totalCents: fees.totalCents,
+          tickets: requested,
+          ...(coupon ? { couponCode: coupon.code, discountCents: fees.discountCents } : {}),
+          ...(attribution.trackingLinkId ? { trackingLinkId: attribution.trackingLinkId } : {}),
+        },
       });
       return tx.order.findUniqueOrThrow({ where: { id: order.id } });
     }, TX_OPTIONS);

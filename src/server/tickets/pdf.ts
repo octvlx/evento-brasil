@@ -1,6 +1,7 @@
 import "server-only";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import QRCode from "qrcode";
+import type { TicketKind } from "@/generated/prisma/client";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { qrPayload } from "../services/tickets";
 
@@ -9,6 +10,8 @@ export interface PdfTicket {
   validationToken: string;
   holderName: string | null;
   ticketTypeName: string;
+  // Opcional: quem monta o PDF sem o tipo (anexo do e-mail) simplesmente não mostra o aviso de meia.
+  kind?: TicketKind;
   orderCode: string;
   isSimulated: boolean;
   event: { title: string; startsAt: Date; endsAt: Date; timezone: string; place: string; organizer: string; ageRestriction: number };
@@ -17,6 +20,7 @@ export interface PdfTicket {
 const INDIGO = rgb(0.192, 0.18, 0.506);
 const VIOLET = rgb(0.486, 0.227, 0.929);
 const GRAY = rgb(0.37, 0.35, 0.48);
+const HALF_PRICE_NOTE = "MEIA-ENTRADA: APRESENTE O DOCUMENTO COMPROBATÓRIO NA ENTRADA";
 
 /** Um ingresso por página A5 (retrato), com QR para validação online. */
 export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array> {
@@ -33,6 +37,12 @@ export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array
     page.drawText("evento", { x: 28, y: 545, size: 22, font: bold, color: rgb(1, 1, 1) });
     page.drawText("brasil", { x: 28 + bold.widthOfTextAtSize("evento", 22), y: 545, size: 22, font: bold, color: rgb(0.98, 0.45, 0.52) });
     page.drawText("INGRESSO", { x: width - 28 - bold.widthOfTextAtSize("INGRESSO", 11), y: 549, size: 11, font: bold, color: rgb(1, 1, 1) });
+    if (t.kind === "HALF_PRICE") {
+      // Faixa de alto contraste na base do cabeçalho: a portaria exige o documento.
+      page.drawRectangle({ x: 0, y: 515, width, height: 20, color: rgb(0.99, 0.88, 0.28) });
+      const size = Math.min(9, (9 * (width - 28)) / bold.widthOfTextAtSize(HALF_PRICE_NOTE, 9));
+      page.drawText(HALF_PRICE_NOTE, { x: (width - bold.widthOfTextAtSize(HALF_PRICE_NOTE, size)) / 2, y: 522, size, font: bold, color: rgb(0, 0, 0) });
+    }
 
     let y = 480;
     const wrap = (text: string, size: number, maxWidth: number, font = bold) => {

@@ -91,7 +91,9 @@ arredonda o **desconto** meia-para-cima: o comprador ganha no meio centavo.
   públicos. Não há impacto na cota de meia (ela conta ingressos, não valores).
   Até a revisão jurídica, a validação do cupom **recusa** (no pedido) e
   **avisa** (na criação) quando o preço líquido de um ingresso inteiro ficar
-  abaixo do preço da meia do mesmo evento (ex.: cupom de 60%). Se a decisão
+  abaixo do preço da meia do mesmo evento (ex.: cupom de 60%). Só conta quando
+  é o cupom que leva o ingresso abaixo da meia: um tipo cujo preço de tabela já
+  é menor que a meia mais barata não é afetado. Se a decisão
   for "meia acompanha o desconto", o cálculo por unidade já suporta, sem
   mudança no razão.
 
