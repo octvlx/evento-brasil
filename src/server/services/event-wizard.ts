@@ -257,8 +257,16 @@ export async function saveEventWizardStep(db: Db, actor: Actor, eventId: string,
         break;
       }
       case 5: {
-        const input = parseOrThrow(step5Schema, raw);
+        const input = parseOrThrow(step5Schema, {
+          ...raw,
+          transferDeadlineHours: raw.transferDeadlineHours === undefined ? current.transferDeadlineHours : raw.transferDeadlineHours,
+          transferMaxTransfers: raw.transferMaxTransfers === undefined ? current.transferMaxTransfers : raw.transferMaxTransfers,
+          transferAllowReturn: raw.transferAllowReturn === undefined ? current.transferAllowReturn : raw.transferAllowReturn,
+        });
         data = {
+          transferDeadlineHours: input.transferDeadlineHours,
+          transferMaxTransfers: input.transferMaxTransfers,
+          transferAllowReturn: input.transferAllowReturn,
           refundPolicy: input.refundPolicy,
           refundWindowDays: input.refundWindowDays,
           refundMinHoursBeforeEvent: input.refundMinHoursBeforeEvent,
@@ -274,7 +282,13 @@ export async function saveEventWizardStep(db: Db, actor: Actor, eventId: string,
       action: "event.updated",
       entityType: "Event",
       entityId: eventId,
-      metadata: { wizardStep: step },
+      metadata: {
+        wizardStep: step,
+        ...(step === 5 ? { transferPolicy: {
+          before: { transferDeadlineHours: current.transferDeadlineHours, transferMaxTransfers: current.transferMaxTransfers, transferAllowReturn: current.transferAllowReturn },
+          after: { transferDeadlineHours: event.transferDeadlineHours, transferMaxTransfers: event.transferMaxTransfers, transferAllowReturn: event.transferAllowReturn },
+        } } : {}),
+      },
     });
     const next: WizardProgress = await recordWizardProgress(tx, actor, organizationId, eventId, { complete: opts.complete ? step : undefined, lastStep: step });
     return { event, progress: next };
