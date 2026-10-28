@@ -136,14 +136,14 @@ async function HeroCategories() {
 
 async function Featured() {
   await connection();
-  const events = await featuredEvents(db, 6);
+  const events = await featuredEvents(db, 5);
   if (!events.length) return <EventGrid events={[]} emptyText="Nenhum evento em destaque no momento." />;
   const [first, ...rest] = events;
   return (
     <div className="grid gap-5 lg:grid-cols-3">
       <EventCard event={first} priority className="lg:col-span-2 lg:row-span-2 [&_h3]:lg:text-2xl" />
       {rest.slice(0, 4).map((e) => (
-        <EventCard key={e.slug} event={e} priority />
+        <EventCard key={e.slug} event={e} />
       ))}
     </div>
   );
