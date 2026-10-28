@@ -195,10 +195,103 @@ O limite por IP é mais folgado porque redes móveis e Wi-Fi de evento
 compartilham IP. Limitações: limitador em memória por processo
 (`src/server/rate-limit.ts`; com várias instâncias, mover para Redis/Postgres);
 o IP vem do primeiro `x-forwarded-for`, confiável só atrás de proxy que
-sobrescreve o cabeçalho — o limite por conta vale sempre. Limite de ingressos
-por conta por evento e sinal anti-robô continuam pendentes (R4, Fase 2/3).
+sobrescreve o cabeçalho — o limite por conta vale sempre. O limite de ingressos
+por conta por evento está na Fase 3 (L4b, abaixo); sinal anti-robô continua pendente.
+
+## Decreto 13.108/2026 — Fase 3 (L8a, L4b, L5b)
+
+Testes: `tests/integration/z-change-refund-limit-cancellation.test.ts` (14 casos,
+todos terminando com `checkFinancialInvariants() == []`).
+
+### Reembolso integral por alteração relevante (R8, L8a)
+- `openChangeRefundWindow(db, eventId, paidAt, now?)` em `@/server/services/refunds`
+  → `ChangeRefundWindow | null` (`eventChangeId` = alteração original,
+  `grantedById` = linha que dá o prazo vigente, `changedAt`, `refundUntil`).
+  Abre quando há `EventChange` do evento com `relevant = true`, registrada
+  **depois** de `paidAt`, e `now <= refundUntil`. Prorrogação (`extendsChangeId`)
+  herda relevância e data da original (vale para os mesmos pedidos). Várias
+  abertas: vence o `refundUntil` mais longo. Quem grava as linhas e decide o que é
+  relevante e o tamanho da janela é `area-organizador` (D2).
+- `refundEligibility(order, event, tickets, now, changeWindow?)` ganhou o 5º
+  parâmetro opcional e devolve `{ eligible: true, basis: "EVENT_POLICY" }` ou
+  `{ eligible: true, basis: "EVENT_CHANGED", window, message }` (mensagem pt-BR
+  com a data-limite, fuso de São Paulo). Com a janela aberta ignora os prazos
+  normais do evento; pedido não pago, evento cancelado e ingresso já usado
+  continuam recusados.
+- `requestCustomerRefund` usa a janela sozinho: o reembolso sai com
+  `reason = EVENT_CHANGED` e `eventChangeId`, valor `Order.totalCents` (preço +
+  taxa de serviço). A divisão no razão segue a regra de comissão do pedido, como
+  nos demais reembolsos. Ingressos transferidos: só o pagador (`Order.userId`)
+  pede; todos os ingressos do pedido são revogados, inclusive os de outros
+  titulares, e o dinheiro volta ao pagamento original (padrão provisório D7).
+- Reembolso `EVENT_CHANGED` com falha pode ser restaurado pelo admin (como
+  `CUSTOMER_REQUEST`/`ADMIN`).
+
+### Limite de ingressos por conta (R4, L4b)
+- `ticketsHeldByAccount(client, userId, eventId)` em `@/server/services/orders`:
+  ingressos `VALID`/`CHECKED_IN` com `holderUserId = userId` + quantidades dos
+  pedidos `PENDING_PAYMENT` da conta no evento.
+- `createOrder` recusa com `LIMIT_EXCEEDED` quando `ticketsHeldByAccount +
+  quantidade pedida > Event.maxTicketsPerAccount` (NULL = sem limite), sob a
+  trava do evento e depois de liberar o pedido pendente anterior do comprador.
+  Mensagem: *"Este evento permite até 3 ingressos por conta. Você já tem 2
+  ingressos; pode comprar mais 1."*
+- Limitação: pagamento tardio (`acquireLateInventoryTx`) não reconfere o limite
+  — o pedido estava dentro dele quando criado.
+
+### Pedido de cancelamento com protocolo (R5, L5b)
+Serviço `@/server/services/cancellation-requests`:
+- `createCancellationRequest(db, buyer, orderId, reason, now?)`: qualquer pedido
+  do próprio comprador, motivo de 1 a 2000 caracteres. Protocolo
+  `CAN-AAAAMMDD-XXXXXX` (data de São Paulo, base32 Crockford). `respondBy = now +
+  PROVISIONAL_CANCELLATION_RESPONSE_DAYS` (**5 dias corridos, padrão provisório
+  D3, não é prazo legal**). `autoEligibleAtRequest` guarda o resultado de
+  `refundEligibility` (com a janela de alteração) no momento do pedido. Um pedido
+  aberto por pedido: o segundo recebe `INVALID_STATE` com o protocolo existente.
+- `listMyCancellationRequests(db, buyer)`, `listCancellationRequestsForAdmin(db,
+  admin, { status?, take? })` (padrão `OPEN`, pelo prazo mais curto).
+- `withdrawCancellationRequest(db, buyer, id)`: desistência do solicitante.
+- `decideCancellationRequest(db, adapter, admin, id, { decision, note })` →
+  `{ request, outcome, refundId }`. Recusar exige `note` (vai ao comprador).
+  Aprovar, sob as travas Event → Order:
+  - pedido `PAID` → `REFUND_OPENED`: reembolso integral `reason = ADMIN` com
+    `cancellationRequestId`, pelo mesmo `createRefundRequestTx` dos demais
+    (revoga ingressos, guarda contra reembolso em dobro) e `processRefund`;
+    ignora os prazos normais (decisão do admin);
+  - `REFUND_PENDING`/`REFUNDED` → `REFUND_ALREADY_EXISTS` (nenhum novo reembolso);
+  - `PENDING_PAYMENT` → `PENDING_ORDER_CANCELLED` (reserva liberada);
+  - outros status → `INVALID_STATE` (recusar com motivo).
+  A transição `OPEN → decidido` é condicional: decidir duas vezes, ou aprovar
+  junto com `requestCustomerRefund`, nunca gera dois reembolsos (teste de corrida).
+- Auditoria: `cancellation.requested`, `.withdrawn`, `.approved`, `.rejected`
+  (metadados com protocolo, pedido, resultado e reembolso).
+
+Server Actions em `@/features/orders/cancellation-actions`:
+`requestCancellationAction(orderId, reason)` → `{ protocol, respondBy }`;
+`withdrawCancellationAction(requestId)`;
+`adminDecideCancellationAction(requestId, "APPROVE" | "REJECT", note)` →
+`{ outcome, refundStatus }` (exige admin; telas na Fase 4).
 
 ## Contratos com outras áreas
+
+### Fase 3 (Decreto 13.108/2026)
+- **`check-in`** (aceite de transferência): chamar `ticketsHeldByAccount(tx,
+  destinatário, eventId)` com `lockEvent(tx, eventId)` já tomado e recusar se
+  `+ 1 > Event.maxTicketsPerAccount`; é a mesma trava de `createOrder`, então
+  compra e aceite simultâneos não passam do limite.
+- **`area-organizador`**: gravar `EventChange` com `relevant = true` e
+  `refundUntil` nas alterações relevantes; prorrogação = nova linha com
+  `extendsChangeId` e `refundUntil` maior. O financeiro só lê.
+- **`paginas-publicas`** (Fase 4, página do pedido): passar
+  `await openChangeRefundWindow(db, order.eventId, order.paidAt)` como 5º
+  argumento de `refundEligibility` para mostrar a janela e `message`; hoje a
+  página não passa e mostra só a política normal (o servidor aceita o pedido de
+  reembolso pela janela mesmo assim). Formulário de cancelamento:
+  `requestCancellationAction`; histórico: `listMyCancellationRequests`. Tratar o
+  reembolso com `reason = EVENT_CHANGED`.
+- **`admin`** (Fase 4): fila `listCancellationRequestsForAdmin` e
+  `adminDecideCancellationAction`; mostrar `respondBy`, `autoEligibleAtRequest` e,
+  para `REFUND_OPENED` com `refundStatus = FAILED`, a fila de reembolsos com falha.
 
 ### `paginas-publicas` (checkout e pedido)
 Sem mudança de assinatura nas Server Actions. Mudanças de comportamento:
