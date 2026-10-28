@@ -94,12 +94,18 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
         await record("REVOKED", ticket.id);
         return { result: "REVOKED", ticket: view(null) };
       }
-      const { count } = await tx.issuedTicket.updateMany({ where: { id: ticket.id, status: "VALID" }, data: { status: "CHECKED_IN", checkedInAt: now } });
+      // O token entra no WHERE: se uma transferência aceita trocou o QR depois da busca
+      // acima, o QR antigo não admite (defesa extra; o aceite já espera a trava do evento).
+      const { count } = await tx.issuedTicket.updateMany({ where: { id: ticket.id, status: "VALID", validationToken: parsed.token }, data: { status: "CHECKED_IN", checkedInAt: now } });
       if (count === 1) {
         await record("ADMITTED", ticket.id);
         return { result: "ADMITTED", ticket: view(now) };
       }
       const current = await tx.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
+      if (current.validationToken !== parsed.token) {
+        await record("INVALID", null);
+        return { result: "INVALID" };
+      }
       const result: CheckinResult = current.status === "REVOKED" ? "REVOKED" : "DUPLICATE";
       await record(result, ticket.id);
       return { result, ticket: view(current.checkedInAt) };

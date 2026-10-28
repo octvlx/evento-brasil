@@ -10,7 +10,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/orders/[orderId
   if (!user) return new Response("Não autenticado", { status: 401 });
   const order = await db.order.findUnique({ where: { id: orderId }, select: { userId: true, publicCode: true } });
   if (!order || order.userId !== user.id) return new Response("Não encontrado", { status: 404 });
-  const tickets = await loadPdfTickets(db, { orderId });
+  const tickets = await loadPdfTickets(db, { orderId, holderUserId: user.id });
   if (!tickets.length) return new Response("Nenhum ingresso disponível", { status: 410 });
   // O tipo do ingresso (meia-entrada exige documento na portaria) não vem de loadPdfTickets.
   const kinds = await db.issuedTicket.findMany({ where: { orderId }, select: { code: true, ticketType: { select: { kind: true } } } });
