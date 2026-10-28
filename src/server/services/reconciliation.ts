@@ -13,6 +13,7 @@ import { resumeRefund, retryFailedRefunds } from "./refunds";
 export interface ReconciliationReport {
   webhooksReprocessed: number;
   paymentsSynced: number;
+  settledPaymentsSynced: number;
   paymentsLinked: number;
   paymentsClosedNotFound: number;
   paymentsNeedReview: number;
@@ -42,6 +43,7 @@ export async function reconcilePayments(
   const report: ReconciliationReport = {
     webhooksReprocessed: 0,
     paymentsSynced: 0,
+    settledPaymentsSynced: 0,
     paymentsLinked: 0,
     paymentsClosedNotFound: 0,
     paymentsNeedReview: 0,
@@ -82,6 +84,29 @@ export async function reconcilePayments(
     }
   }
 
+  // Pagamentos pagos/disputados continuam sujeitos a estorno e chargeback.
+  // Fila independente das pendências: um grupo não pode consumir o limite do outro.
+  // updatedAt registra também a consulta; ordenar pelo mais antigo faz a fila
+  // avançar entre execuções, inclusive quando uma consulta falha.
+  const settled = await db.payment.findMany({
+    where: { provider: adapter.id, status: { in: ["PAID", "DISPUTED"] }, providerPaymentId: { not: null }, updatedAt: { lt: cutoff } },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    take: limit,
+  });
+  for (const p of settled) {
+    try {
+      await syncPaymentFromProvider(db, adapter, p.providerPaymentId!);
+      report.settledPaymentsSynced++;
+    } catch (err) {
+      fail("settled-payment", p.id, err, p.orderId);
+    }
+    // Nunca sobrescreve um estado financeiro confirmado por webhook concorrente.
+    await db.payment.updateMany({
+      where: { id: p.id, status: { in: ["PAID", "DISPUTED"] } },
+      data: { updatedAt: now },
+    });
+  }
+
   // 3. Pagamentos sem id do provedor: o processo caiu entre criar no provedor e salvar o id.
   const unlinked = await db.payment.findMany({
     where: { provider: adapter.id, status: "PENDING", providerPaymentId: null, method: { not: "FREE" }, createdAt: { lt: cutoff } },
@@ -104,7 +129,7 @@ export async function reconcilePayments(
         report.paymentsClosedNotFound++;
         continue;
       }
-      await db.payment.update({ where: { id: p.id }, data: { providerPaymentId: snapshot.providerPaymentId, providerRawStatus: snapshot.rawStatus } });
+      await db.payment.update({ where: { id: p.id }, data: { providerPaymentId: snapshot.providerPaymentId, providerRawStatus: snapshot.rawStatus, failureReason: null } });
       await applyPaymentSnapshot(db, adapter, snapshot);
       report.paymentsLinked++;
     } catch (err) {
@@ -230,6 +255,45 @@ export async function checkFinancialInvariants(db: Db): Promise<InvariantViolati
       "Ingresso válido em pedido aguardando reembolso (entrada e estorno ao mesmo tempo)",
       db.$queryRaw`SELECT t.id FROM "IssuedTicket" t JOIN "Order" o ON o.id = t."orderId"
         WHERE t.status = 'VALID' AND o.status = 'REFUND_PENDING'`,
+    ],
+    // ── Cupons e links (ADR 0002) ──
+    [
+      "COUPON_COUNTERS_MISMATCH",
+      "Contadores do cupom ≠ pedidos (reservado = pendentes; resgatado = pedidos com ingressos emitidos)",
+      // Resgatado conta pedidos com ingresso emitido (nunca apagado): cobre gratuito,
+      // pago, tardio, reembolsado e chargeback, e exclui o pagamento tardio sem estoque.
+      // Igualdade exata: o uso acima de maxUses (tardio, auditado) não é divergência do contador.
+      db.$queryRaw`SELECT c.id FROM "Coupon" c
+        LEFT JOIN (SELECT o."couponId",
+                     SUM(CASE WHEN o.status = 'PENDING_PAYMENT' THEN 1 ELSE 0 END) AS reserved,
+                     SUM(CASE WHEN EXISTS (SELECT 1 FROM "IssuedTicket" t WHERE t."orderId" = o.id) THEN 1 ELSE 0 END) AS redeemed
+                   FROM "Order" o WHERE o."couponId" IS NOT NULL GROUP BY 1) x ON x."couponId" = c.id
+        WHERE c."timesReserved" <> COALESCE(x.reserved, 0) OR c."timesRedeemed" <> COALESCE(x.redeemed, 0)`,
+    ],
+    [
+      "ORDER_DISCOUNT_MISMATCH",
+      "Desconto do pedido ≠ soma dos descontos dos itens",
+      db.$queryRaw`SELECT o.id FROM "Order" o
+        JOIN (SELECT "orderId", SUM("discountPerUnitCents" * quantity) AS d FROM "OrderItem" GROUP BY 1) i ON i."orderId" = o.id
+        WHERE i.d <> o."discountCents"`,
+    ],
+    [
+      "COUPON_TENANT_MISMATCH",
+      "Cupom ou link ligado a evento, tipo de ingresso ou cupom de outro evento/organização",
+      db.$queryRaw`SELECT o.id FROM "Order" o JOIN "Coupon" c ON c.id = o."couponId"
+          WHERE c."eventId" IS NOT NULL AND c."eventId" <> o."eventId"
+        UNION ALL
+        SELECT o.id FROM "Order" o JOIN "TrackingLink" l ON l.id = o."trackingLinkId"
+          WHERE l."eventId" <> o."eventId"
+        UNION ALL
+        SELECT ct."couponId" || ':' || ct."ticketTypeId" FROM "CouponTicketType" ct
+          JOIN "Coupon" c ON c.id = ct."couponId"
+          JOIN "TicketType" tt ON tt.id = ct."ticketTypeId"
+          JOIN "Event" e ON e.id = tt."eventId"
+          WHERE e."organizationId" <> c."organizationId" OR (c."eventId" IS NOT NULL AND tt."eventId" <> c."eventId")
+        UNION ALL
+        SELECT l.id FROM "TrackingLink" l JOIN "Coupon" c ON c.id = l."couponId"
+          WHERE c."organizationId" <> l."organizationId" OR (c."eventId" IS NOT NULL AND c."eventId" <> l."eventId")`,
     ],
   ];
   const results = await Promise.all(checks.map(([, , q]) => q));

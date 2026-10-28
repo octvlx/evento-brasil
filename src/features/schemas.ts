@@ -105,6 +105,18 @@ export const eventInputSchema = z
     capacity: z.coerce.number().int().positive("Capacidade deve ser positiva").max(1_000_000),
     halfPriceQuotaPercent: z.coerce.number().min(0).max(100).optional(),
     refundPolicy: trimmed(10, 4000, "Descreva a política de reembolso"),
+    refundWindowDays: z.coerce
+      .number({ message: "Informe os dias após a compra" })
+      .int("Use um número inteiro de dias")
+      .min(0, "Mínimo de 0 dias")
+      .max(365, "Máximo de 365 dias")
+      .default(7),
+    refundMinHoursBeforeEvent: z.coerce
+      .number({ message: "Informe as horas antes do evento" })
+      .int("Use um número inteiro de horas")
+      .min(0, "Mínimo de 0 horas")
+      .max(720, "Máximo de 720 horas")
+      .default(48),
     accessibilityInfo: optionalText(2000),
     coverImageUrl: z.string().trim().optional(),
   })
@@ -146,6 +158,51 @@ export const ticketTypeInputSchema = z
   });
 export type TicketTypeInput = z.input<typeof ticketTypeInputSchema>;
 
+// ── Cupons e links de divulgação (ADR 0002) ──
+export const COUPON_CODE_RE = /^[A-Z0-9_-]{3,32}$/;
+const optionalLimit = z.coerce.number().int().min(1).max(1_000_000).nullable().default(null);
+
+export const couponInputSchema = z
+  .object({
+    code: z.string().trim().toUpperCase().regex(COUPON_CODE_RE, "Use de 3 a 32 letras, números, - ou _"),
+    description: optionalText(200),
+    discountType: z.enum(["PERCENT", "FIXED_PER_TICKET"]),
+    // Percentual em pontos-base (1–10000) ou valor fixo em centavos, conforme o tipo.
+    percentBps: z.coerce.number().int().min(1).max(10_000).nullable().default(null),
+    amountCents: z.coerce.number().int().min(1).max(100_000_00).nullable().default(null),
+    validFromLocal: localDateTime.optional().or(z.literal("")),
+    validUntilLocal: localDateTime.optional().or(z.literal("")),
+    maxUses: optionalLimit,
+    maxUsesPerUser: optionalLimit,
+    // Vazio = todos os tipos pagos do evento (exceto meia-entrada).
+    ticketTypeIds: z.array(z.string().min(1)).max(50).default([]),
+  })
+  .superRefine((v, ctx) => {
+    if (v.discountType === "PERCENT" && v.percentBps === null) ctx.addIssue({ code: "custom", path: ["percentBps"], message: "Informe o percentual de desconto" });
+    if (v.discountType === "FIXED_PER_TICKET" && v.amountCents === null)
+      ctx.addIssue({ code: "custom", path: ["amountCents"], message: "Informe o valor do desconto" });
+    if (v.validFromLocal && v.validUntilLocal && v.validUntilLocal <= v.validFromLocal)
+      ctx.addIssue({ code: "custom", path: ["validUntilLocal"], message: "O fim da validade deve ser depois do início" });
+  })
+  .transform((v) => ({
+    ...v,
+    percentBps: v.discountType === "PERCENT" ? v.percentBps : null,
+    amountCents: v.discountType === "FIXED_PER_TICKET" ? v.amountCents : null,
+  }));
+export type CouponInput = z.input<typeof couponInputSchema>;
+
+const utm = optionalText(200);
+export const trackingLinkInputSchema = z.object({
+  name: trimmed(2, 120, "Dê um nome ao link (ex.: Instagram stories)"),
+  utmSource: utm,
+  utmMedium: utm,
+  utmCampaign: utm,
+  utmContent: utm,
+  utmTerm: utm,
+  couponId: z.string().min(1).optional().or(z.literal("")),
+});
+export type TrackingLinkInput = z.input<typeof trackingLinkInputSchema>;
+
 // ── Pedidos ──
 export const attendeeSchema = z.object({ name: trimmed(2, 120, "Nome do participante"), email: email.optional() });
 
@@ -167,6 +224,19 @@ export const createOrderSchema = z.object({
   // Declaração de elegibilidade à meia-entrada (comprovação exigida na entrada).
   halfPriceDeclaration: z.boolean().default(false),
   idempotencyKey: z.string().uuid(),
+  // ADR 0002. Normalizado e validado no serviço (erro genérico para código inválido).
+  couponCode: z.string().max(64).optional(),
+  // Origem da venda; a Server Action preenche a partir do cookie eb_attr. UTMs são truncados em 200.
+  attribution: z
+    .object({
+      trackingLinkId: z.string().max(64).optional(),
+      utmSource: z.string().max(2000).optional(),
+      utmMedium: z.string().max(2000).optional(),
+      utmCampaign: z.string().max(2000).optional(),
+      utmContent: z.string().max(2000).optional(),
+      utmTerm: z.string().max(2000).optional(),
+    })
+    .optional(),
 });
 export type CreateOrderInput = z.input<typeof createOrderSchema>;
 

@@ -6,7 +6,7 @@ import { computeFees } from "@/features/fees/policy";
 import { localDayRange, weekendRange } from "@/lib/datetime";
 import type { PriceQuote } from "@/lib/price-display";
 import type { Db } from "../db";
-import { resolveCommissionRule } from "./commission";
+import { resolveCommissionRule, resolveCommissionRules } from "./commission";
 
 export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
@@ -14,17 +14,29 @@ export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   organization: { status: "APPROVED" },
 });
 
-const cardInclude = {
+// Cards do not need full descriptions, policies, or organizer-only event fields.
+const cardSelect = {
+  id: true,
+  organizationId: true,
+  slug: true,
+  title: true,
+  coverImageUrl: true,
+  startsAt: true,
+  timezone: true,
+  locationType: true,
+  capacity: true,
+  salesStartAt: true,
+  salesEndAt: true,
+  isFeatured: true,
   city: { select: { name: true, state: true, slug: true } },
   venue: { select: { name: true, city: { select: { name: true, state: true, slug: true } } } },
   category: { select: { name: true, slug: true } },
   ticketTypes: {
-    where: { isHidden: false },
-    select: { priceCents: true, quantityTotal: true, quantityReserved: true, quantitySold: true, salesStartAt: true, salesEndAt: true },
+    select: { isHidden: true, priceCents: true, quantityTotal: true, quantityReserved: true, quantitySold: true, salesStartAt: true, salesEndAt: true },
   },
-} satisfies Prisma.EventInclude;
+} satisfies Prisma.EventSelect;
 
-type CardRow = Prisma.EventGetPayload<{ include: typeof cardInclude }>;
+type CardRow = Prisma.EventGetPayload<{ select: typeof cardSelect }>;
 
 export type { PriceQuote };
 
@@ -43,11 +55,10 @@ export function minPriceQuote(prices: number[], rule: Parameters<typeof quoteUni
   return prices.map((p) => quoteUnitPrice(p, rule)).reduce((min, q) => (q.totalCents < min.totalCents ? q : min));
 }
 
-/** Regra de comissão vigente de cada evento (uma consulta por evento distinto). */
+/** Regra de comissão vigente, sem consultas repetidas por evento. */
 async function rulesFor(db: Db, rows: { id: string; organizationId: string }[], now: Date) {
   const unique = [...new Map(rows.map((r) => [r.id, r])).values()];
-  const rules = await Promise.all(unique.map((r) => resolveCommissionRule(db, r.organizationId, r.id, now)));
-  return new Map(unique.map((r, i) => [r.id, rules[i]]));
+  return resolveCommissionRules(db, unique, now);
 }
 
 async function toCards(db: Db, rows: CardRow[], now: Date): Promise<EventCard[]> {
@@ -78,13 +89,18 @@ export interface EventCard {
 
 export function availabilityOf(
   event: { capacity: number; salesStartAt: Date; salesEndAt: Date },
-  types: { quantityTotal: number; quantityReserved: number; quantitySold: number }[],
+  types: { quantityTotal: number; quantityReserved: number; quantitySold: number; isHidden?: boolean; salesStartAt?: Date | null; salesEndAt?: Date | null }[],
   now = new Date(),
 ): Availability {
   if (now < event.salesStartAt) return "NOT_STARTED";
   if (now >= event.salesEndAt) return "CLOSED";
   const committed = types.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
-  const typeAvail = types.reduce((s, t) => s + Math.max(0, t.quantityTotal - t.quantityReserved - t.quantitySold), 0);
+  const visible = types.filter((t) => !t.isHidden);
+  const stock = (t: (typeof types)[number]) => Math.max(0, t.quantityTotal - t.quantityReserved - t.quantitySold);
+  const active = visible.filter((t) => (!t.salesStartAt || now >= t.salesStartAt) && (!t.salesEndAt || now < t.salesEndAt));
+  const typeAvail = active.reduce((s, t) => s + stock(t), 0);
+  if (event.capacity <= committed || !visible.some((t) => stock(t) > 0)) return "SOLD_OUT";
+  if (!typeAvail) return visible.some((t) => stock(t) > 0 && t.salesStartAt && now < t.salesStartAt && (!t.salesEndAt || now < t.salesEndAt)) ? "NOT_STARTED" : "CLOSED";
   const available = Math.min(typeAvail, event.capacity - committed);
   if (available <= 0) return "SOLD_OUT";
   if (available <= Math.max(5, Math.ceil(event.capacity * 0.1))) return "LOW";
@@ -93,6 +109,7 @@ export function availabilityOf(
 
 function toCard(e: CardRow, rule: CommissionRule, now: Date): EventCard {
   const city = e.venue?.city ?? e.city;
+  const visibleTypes = e.ticketTypes.filter((t) => !t.isHidden);
   return {
     id: e.id,
     slug: e.slug,
@@ -106,8 +123,8 @@ function toCard(e: CardRow, rule: CommissionRule, now: Date): EventCard {
     isOnline: e.locationType === "ONLINE",
     categoryName: e.category.name,
     categorySlug: e.category.slug,
-    minPriceCents: e.ticketTypes.length ? Math.min(...e.ticketTypes.map((t) => t.priceCents)) : null,
-    minPrice: minPriceQuote(e.ticketTypes.map((t) => t.priceCents), rule),
+    minPriceCents: visibleTypes.length ? Math.min(...visibleTypes.map((t) => t.priceCents)) : null,
+    minPrice: minPriceQuote(visibleTypes.map((t) => t.priceCents), rule),
     availability: availabilityOf(e, e.ticketTypes, now),
   };
 }
@@ -160,10 +177,11 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
     and.push({ ticketTypes: { some: { isHidden: false, priceCents: priceWhere } } });
   }
   const where = { AND: and };
-  const page = Math.max(1, params.page ?? 1);
+  const requestedPage = params.page ?? 1;
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 && (requestedPage - 1) * PAGE_SIZE <= 2_147_483_647 ? requestedPage : 1;
   const [total, rows] = await Promise.all([
     db.event.count({ where }),
-    db.event.findMany({ where, include: cardInclude, orderBy: [{ startsAt: "asc" }, { id: "asc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+    db.event.findMany({ where, select: cardSelect, orderBy: [{ startsAt: "asc" }, { id: "asc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
   ]);
   return { total, page, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), events: await toCards(db, rows, now) };
 }
@@ -171,7 +189,7 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
 export async function featuredEvents(db: Db, limit = 6, now = new Date()) {
   const rows = await db.event.findMany({
     where: { ...publicEventWhere(now), isFeatured: true },
-    include: cardInclude,
+    select: cardSelect,
     orderBy: { startsAt: "asc" },
     take: limit,
   });
@@ -195,7 +213,7 @@ export interface CityShelf {
 export async function cityShowcase(db: Db, citySlug: string, perShelf = 10, now = new Date()) {
   const rows = await db.event.findMany({
     where: { AND: [publicEventWhere(now), { OR: [{ city: { slug: citySlug } }, { venue: { city: { slug: citySlug } } }] }] },
-    include: { ...cardInclude, category: { select: { name: true, slug: true, sortOrder: true } } },
+    select: { ...cardSelect, category: { select: { name: true, slug: true, sortOrder: true } } },
     orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     take: 300,
   });
@@ -239,7 +257,7 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
       city: true,
       venue: { include: { city: true } },
       images: { orderBy: { sortOrder: "asc" } },
-      ticketTypes: { where: { isHidden: false }, orderBy: { sortOrder: "asc" } },
+      ticketTypes: { orderBy: { sortOrder: "asc" } },
     },
   });
   if (!event) return null;
@@ -248,9 +266,9 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
   const committed = event.ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
   const rule = await resolveCommissionRule(db, event.organizationId, event.id, now);
   return {
-    event,
+    event: { ...event, ticketTypes: event.ticketTypes.filter((t) => !t.isHidden) },
     /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
-    prices: Object.fromEntries(event.ticketTypes.map((t) => [t.id, quoteUnitPrice(t.priceCents, rule)])) as Record<string, PriceQuote>,
+    prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule)])) as Record<string, PriceQuote>,
     buyerPaysFee: rule.bearer === "BUYER",
     availability: availabilityOf(event, event.ticketTypes, now),
     capacityLeft: Math.max(0, event.capacity - committed),
@@ -264,6 +282,51 @@ export async function getPublicOrganizer(db: Db, slug: string, now = new Date())
     select: { id: true, name: true, slug: true, description: true, websiteUrl: true, instagramHandle: true, city: true, createdAt: true },
   });
   if (!org) return null;
-  const rows = await db.event.findMany({ where: { ...publicEventWhere(now), organizationId: org.id }, include: cardInclude, orderBy: { startsAt: "asc" } });
+  const rows = await db.event.findMany({ where: { ...publicEventWhere(now), organizationId: org.id }, select: cardSelect, orderBy: { startsAt: "asc" } });
   return { org, events: await toCards(db, rows, now) };
+}
+
+// ───────────────────────────── Links rastreados (ADR 0002, D5) ─────────────────────────────
+
+// Mesmo formato do CHECK TrackingLink_code_format.
+const TRACKING_CODE = /^[A-Za-z0-9]{6,16}$/;
+
+/**
+ * Clique num link rastreado: conta o clique (incremento atômico) e devolve o
+ * destino e os UTMs do link. Código desconhecido, link arquivado ou evento que
+ * não está público → null (o clique não é contado).
+ */
+export async function recordTrackingClick(db: Db, code: string, now = new Date()) {
+  if (!TRACKING_CODE.test(code)) return null;
+  const link = await db.trackingLink.findFirst({
+    where: { code, archivedAt: null, event: publicEventWhere(now) },
+    select: { id: true, utmSource: true, utmMedium: true, utmCampaign: true, utmContent: true, utmTerm: true, event: { select: { slug: true } } },
+  });
+  if (!link) return null;
+  await db.trackingLink.update({ where: { id: link.id }, data: { clicks: { increment: 1 } } });
+  return link;
+}
+
+/** Código do cupom pré-aplicado por um link deste evento (null se não houver ou estiver desativado). */
+export async function trackingLinkCouponCode(db: Db, linkId: string, eventId: string) {
+  const link = await db.trackingLink.findFirst({
+    where: { id: linkId, eventId, archivedAt: null, coupon: { disabledAt: null } },
+    select: { coupon: { select: { code: true } } },
+  });
+  return link?.coupon?.code ?? null;
+}
+
+// Entradas para o sitemap: apenas o que é público e indexável.
+export async function listSitemapEntries(db: Db, now = new Date()) {
+  const [events, cities, organizers] = await Promise.all([
+    db.event.findMany({ where: publicEventWhere(now), select: { slug: true, updatedAt: true }, orderBy: { startsAt: "asc" } }),
+    // Só cidades com evento público: páginas vazias não entram no índice (a base do IBGE tem milhares).
+    db.city.findMany({
+      where: { OR: [{ events: { some: publicEventWhere(now) } }, { venues: { some: { events: { some: publicEventWhere(now) } } } }] },
+      select: { slug: true },
+      orderBy: { slug: "asc" },
+    }),
+    db.organization.findMany({ where: { status: "APPROVED" }, select: { slug: true, updatedAt: true }, orderBy: { slug: "asc" } }),
+  ]);
+  return { events, cities, organizers };
 }

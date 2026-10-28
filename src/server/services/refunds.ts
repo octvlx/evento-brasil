@@ -4,42 +4,34 @@ import type { RefundReason, RefundStatus } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, assertPlatformAdmin, type Actor } from "../auth/permissions";
-import { env } from "../env";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import type { PaymentProviderAdapter } from "../payments/types";
 import { financeLog } from "./finance-log";
 import { postReversal } from "./ledger";
 import { lockEvent, lockOrder } from "./orders";
 
-export interface RefundPolicyConfig {
-  windowDays: number;
-  minHoursBeforeEvent: number;
-}
-
-export const refundPolicyFromEnv = (): RefundPolicyConfig => ({
-  windowDays: env().REFUND_WINDOW_DAYS,
-  minHoursBeforeEvent: env().REFUND_MIN_HOURS_BEFORE_EVENT,
-});
+/** Padrões da política de reembolso de um evento novo (iguais aos defaults do banco). */
+export const DEFAULT_REFUND_POLICY = { refundWindowDays: 7, refundMinHoursBeforeEvent: 48 } as const;
 
 /**
- * Elegibilidade para reembolso solicitado pelo comprador. Valores padrão
- * (7 dias da compra e 48h antes do evento) são configuráveis e PRECISAM de
- * revisão jurídica (CDC art. 49 e normas aplicáveis a eventos).
+ * Elegibilidade para reembolso solicitado pelo comprador, pela política do
+ * próprio evento: até `refundWindowDays` dias após a compra E até
+ * `refundMinHoursBeforeEvent` horas antes do início. PRECISA de revisão jurídica
+ * (CDC art. 49 e normas aplicáveis a eventos).
  */
 export function refundEligibility(
   order: { status: string; paidAt: Date | null; totalCents: number },
-  event: { startsAt: Date; status: string },
+  event: { startsAt: Date; status: string; refundWindowDays: number; refundMinHoursBeforeEvent: number },
   tickets: { status: string }[],
   now: Date,
-  cfg: RefundPolicyConfig,
 ): { eligible: true } | { eligible: false; reason: string } {
   if (order.status !== "PAID") return { eligible: false, reason: "Somente pedidos pagos podem ser reembolsados." };
   if (event.status === "CANCELLED") return { eligible: false, reason: "Evento cancelado: o reembolso é processado automaticamente." };
   if (tickets.some((t) => t.status === "CHECKED_IN")) return { eligible: false, reason: "Há ingressos já utilizados neste pedido." };
-  if (!order.paidAt || now.getTime() - order.paidAt.getTime() > cfg.windowDays * 86_400_000)
-    return { eligible: false, reason: `O prazo de ${cfg.windowDays} dias após a compra terminou.` };
-  if (event.startsAt.getTime() - now.getTime() < cfg.minHoursBeforeEvent * 3_600_000)
-    return { eligible: false, reason: `Reembolsos só até ${cfg.minHoursBeforeEvent}h antes do evento.` };
+  if (!order.paidAt || now.getTime() - order.paidAt.getTime() > event.refundWindowDays * 86_400_000)
+    return { eligible: false, reason: `O prazo de ${event.refundWindowDays} ${event.refundWindowDays === 1 ? "dia" : "dias"} após a compra terminou.` };
+  if (event.startsAt.getTime() - now.getTime() < event.refundMinHoursBeforeEvent * 3_600_000)
+    return { eligible: false, reason: `Reembolsos só até ${event.refundMinHoursBeforeEvent}h antes do evento.` };
   return { eligible: true };
 }
 
@@ -98,7 +90,7 @@ export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdap
   const order = await db.order.findUnique({ where: { id: orderId }, include: { event: true, tickets: { select: { status: true } } } });
   if (!order) throw notFound();
   if (order.userId !== actor.id) throw forbidden();
-  const check = refundEligibility(order, order.event, order.tickets, now, refundPolicyFromEnv());
+  const check = refundEligibility(order, order.event, order.tickets, now);
   if (!check.eligible) throw new AppError("VALIDATION", check.reason);
   const refund = await createRefundRequest(db, orderId, "CUSTOMER_REQUEST", actor.id);
   await processRefund(db, adapter, refund.id);

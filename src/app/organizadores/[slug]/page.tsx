@@ -6,11 +6,20 @@ import { AtSign, BadgeCheck, Globe } from "lucide-react";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { db } from "@/server/db";
 import { getPublicOrganizer } from "@/server/services/catalog";
+import { DEFAULT_OG_IMAGE } from "@/lib/site";
 
 export async function generateMetadata({ params }: PageProps<"/organizadores/[slug]">): Promise<Metadata> {
   const { slug } = await params;
   const org = await db.organization.findFirst({ where: { slug, status: "APPROVED" }, select: { name: true, description: true } });
-  return org ? { title: org.name, description: org.description?.slice(0, 160) } : { title: "Organizador não encontrado" };
+  if (!org) return { title: "Organizador não encontrado", robots: { index: false } };
+  const description = org.description?.slice(0, 160) ?? `Eventos de ${org.name} no Evento Brasil. Compre ingressos com PIX ou cartão.`;
+  return {
+    title: org.name,
+    description,
+    alternates: { canonical: `/organizadores/${slug}` },
+    // Sem imagem própria do organizador: usa a imagem padrão (um openGraph na página substitui o herdado).
+    openGraph: { type: "website", title: org.name, description, url: `/organizadores/${slug}`, images: [DEFAULT_OG_IMAGE] },
+  };
 }
 
 export default function OrganizerPage({ params }: PageProps<"/organizadores/[slug]">) {

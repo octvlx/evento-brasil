@@ -21,7 +21,7 @@ const notEnabled = () =>
 export class MercadoPagoAdapter implements PaymentProviderAdapter {
   readonly id = "mercadopago";
   readonly isSimulated = false;
-  readonly supportedMethods = ["PIX", "CREDIT_CARD"] as const;
+  readonly supportedMethods = [] as const;
 
   constructor(private readonly webhookSecret: string | undefined) {}
 
