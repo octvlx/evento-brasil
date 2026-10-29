@@ -68,6 +68,7 @@ model PhoneVerificationChallenge {
   email                   String
   phone                   String
   clientKeyHash           String
+  smsConsentAt            DateTime  @db.Timestamptz(3)
   providerVerificationSid String?
   expiresAt               DateTime  @db.Timestamptz(3)
   verifiedAt              DateTime? @db.Timestamptz(3)
