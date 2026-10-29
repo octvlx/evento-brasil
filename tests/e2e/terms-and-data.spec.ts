@@ -1,3 +1,4 @@
+import { verifySignupPhone } from "./helpers";
 import "dotenv/config";
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
@@ -32,11 +33,12 @@ test("cadastro exige termos e privacidade, grava o aceite e a conta baixa os pr�
     await expect(page.getByRole("link", { name: "política de privacidade", exact: true })).toHaveAttribute("href", "/privacidade");
 
     await terms.check();
-    await page.getByRole("button", { name: "Criar conta" }).click();
-    await expect(page.getByText("É preciso aceitar a política de privacidade")).toBeVisible();
+    await page.getByRole("button", { name: "Enviar código por SMS" }).click();
+    await expect(page.getByText("É preciso confirmar a leitura da política de privacidade")).toBeVisible();
     await expect(page).toHaveURL(/\/registrar/);
 
     await privacy.check();
+    await verifySignupPhone(page);
     await page.getByRole("button", { name: "Criar conta" }).click();
     await page.waitForURL((url) => !url.pathname.startsWith("/registrar"));
 

@@ -1,3 +1,4 @@
+import { verifiedSignup } from "../support/signup-proof";
 // Fase 3 (Decreto 13.108/2026): aceite de termos versionados (R10, L10a) e
 // exportação dos dados do titular (R9, L9b). As Server Actions e a rota de
 // exportação rodam de verdade; só o pedido HTTP (cookies, cabeçalhos, sessão) é simulado.
@@ -45,8 +46,8 @@ async function shop() {
   return { owner, org, event, paid: event.ticketTypes[0], free: event.ticketTypes[1] };
 }
 
-const signup = (email: string) =>
-  registerUser(db, { name: "Comprador", email, password: "senha-forte-1", acceptTerms: true, acceptPrivacy: true }, { ip: "198.51.100.9", userAgent: "vitest-agent" });
+const signup = async (email: string) =>
+  registerUser(db, { ...await verifiedSignup(email), name: "Comprador", email, password: "senha-forte-1", acceptTerms: true, acceptPrivacy: true }, { ip: "198.51.100.9", userAgent: "vitest-agent" });
 
 beforeEach(async () => {
   await resetDb();

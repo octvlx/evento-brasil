@@ -10,11 +10,13 @@ import { completeEndedEvents } from "@/server/services/events";
 import { expireStaleOrders } from "@/server/services/orders";
 import { financeLog } from "@/server/services/finance-log";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
+import { cleanupSignupPhoneChallenges } from "@/server/services/phone-verification";
 import { expireTicketTransfers } from "@/server/services/transfers";
 
 export async function POST(req: Request) {
   const secret = req.headers.get("x-cron-secret") ?? "";
   if (!safeEqual(secret, env().CRON_SECRET)) return new Response("forbidden", { status: 403 });
+  const expiredPhoneChallenges = (await cleanupSignupPhoneChallenges(db)).count;
   const expiredOrders = await expireStaleOrders(db);
   const completedEvents = await completeEndedEvents(db);
   const expiredTransfers = await expireTicketTransfers(db);
@@ -28,6 +30,7 @@ export async function POST(req: Request) {
     financeLog("error", `reconciliation.${e.kind}_failed`, { orderId: e.orderId }, { entityId: e.id, message: e.message });
   }
   return Response.json({
+    expiredPhoneChallenges,
     expiredOrders,
     completedEvents,
     expiredTransfers,

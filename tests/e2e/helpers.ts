@@ -21,6 +21,7 @@ export async function login(page: Page, email: string, next = "/") {
 export async function acceptSignupTerms(page: Page) {
   await page.getByRole("checkbox", { name: /termos de uso/ }).check();
   await page.getByRole("checkbox", { name: /política de privacidade/ }).check();
+  await verifySignupPhone(page);
 }
 
 /** Lê o conteúdo do QR direto do banco de desenvolvimento (equivale a ler o QR com a câmera). */
@@ -60,4 +61,14 @@ export async function createCouponLink(eventSlug: string) {
   );
   await client.end();
   return { couponCode, linkCode };
+}
+
+/** Exercise the real server flow against the isolated runner's fake Twilio transport. */
+export async function verifySignupPhone(page: Page) {
+  await page.getByLabel("Celular", { exact: true }).fill("119" + Date.now().toString().slice(-8));
+  await page.getByRole("checkbox", { name: /Autorizo receber SMS/ }).check();
+  await page.getByRole("button", { name: "Enviar código por SMS" }).click();
+  await page.getByLabel("Código de verificação", { exact: true }).fill("123456");
+  await page.getByRole("button", { name: "Verificar celular", exact: true }).click();
+  await expect(page.getByText("Celular verificado. Agora você pode criar sua conta.")).toBeVisible();
 }
