@@ -30,3 +30,25 @@ describe("Twilio Verify server adapter", () => {
     await expect(new Fresh().start(phone)).rejects.toMatchObject({ code: "PROVIDER_ERROR", message: "Não foi possível verificar o celular. Tente novamente mais tarde." });
   });
 });
+
+describe("Twilio Verify defensive response handling", () => {
+  it("maps provider throttling to a safe rate-limit error", async () => {
+    configure(); const { TwilioVerifyProvider: Fresh } = await import("@/server/phone-verification/twilio");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("sensitive-provider-body", { status: 429 })));
+    await expect(new Fresh().start(phone)).rejects.toMatchObject({ code: "RATE_LIMITED", message: "Muitas tentativas. Aguarde antes de tentar novamente." });
+  });
+  it("does not approve pending wrong-code checks or reuse an already approved start", async () => {
+    configure(); const { TwilioVerifyProvider: Fresh } = await import("@/server/phone-verification/twilio");
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ sid, status: "pending", to: phone }))); vi.stubGlobal("fetch", fetch);
+    expect(await new Fresh().check(sid, phone, "000000")).toBe(false);
+    fetch.mockResolvedValue(new Response(JSON.stringify({ sid, status: "approved", to: phone })));
+    await expect(new Fresh().start(phone)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+  });
+  it("rejects malformed successful provider responses safely", async () => {
+    configure(); const { TwilioVerifyProvider: Fresh } = await import("@/server/phone-verification/twilio");
+    const fetch = vi.fn().mockResolvedValue(new Response("not-json")); vi.stubGlobal("fetch", fetch);
+    await expect(new Fresh().start(phone)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    fetch.mockResolvedValue(new Response(JSON.stringify({ status: "pending", to: phone })));
+    await expect(new Fresh().start(phone)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+  });
+});
