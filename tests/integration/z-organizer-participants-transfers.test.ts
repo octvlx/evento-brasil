@@ -12,7 +12,7 @@ beforeEach(resetDb);
 
 const forbidden = { code: "FORBIDDEN" };
 
-async function setup(opts: { startsInDays?: number } = {}) {
+async function setup(opts: { startsInDays?: number; transferMaxTransfers?: number } = {}) {
   const owner = await makeUser();
   const [finance, manager, staff] = await Promise.all([makeUser(), makeUser(), makeUser()]);
   const org = await makeOrg(owner, {
@@ -23,6 +23,7 @@ async function setup(opts: { startsInDays?: number } = {}) {
     ],
   });
   const event = await makeEvent(org, { startsInDays: opts.startsInDays });
+  if (opts.transferMaxTransfers !== undefined) await db.event.update({ where: { id: event.id }, data: { transferMaxTransfers: opts.transferMaxTransfers } });
   const buyer = await makeUser();
   const recipient = await makeUser();
   const { order } = await buyAndPay(buyer, event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 2 }]);
@@ -63,7 +64,8 @@ describe("participantes — titular atual", () => {
 
 describe("histórico de transferências", () => {
   it("de → para, datas e situação; sem token, IP ou user agent", async () => {
-    const { owner, buyer, recipient, tickets, event } = await setup();
+    // Esta cadeia vai a dois novos titulares; o evento precisa permitir dois aceites.
+    const { owner, buyer, recipient, tickets, event } = await setup({ transferMaxTransfers: 2 });
     const third = await makeUser();
     await transfer(buyer, tickets[0].id, recipient);
     await transfer(recipient, tickets[0].id, third);
