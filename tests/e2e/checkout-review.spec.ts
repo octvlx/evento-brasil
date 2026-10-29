@@ -150,6 +150,7 @@ test("accepted quantity and coupon edits survive returning to the event and refr
   await page.getByRole("button", { name: "Salvar ingressos e voltar à revisão" }).click();
   await expect(page.getByText("2× Lote promocional", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Voltar ao evento", exact: true }).click();
+  await page.waitForURL(url => url.pathname === eventPath);
   await page.reload();
   await expect(page.getByText("Ingressos (2)", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Tenho um cupom de desconto", exact: true }).click();
