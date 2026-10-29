@@ -12,6 +12,7 @@ import { qrPayload } from "@/server/services/tickets";
 import { transferBlockedReason } from "@/server/services/transfers";
 import { organizerIdentity, organizerIdentityLine } from "@/server/tickets/organizer-identity";
 import { formatDateLong, formatDateTimeShort, formatTime, timezoneLabel } from "@/lib/datetime";
+import { transferCutoff } from "@/lib/transfer-policy";
 import { TICKET_STATUS } from "@/lib/labels";
 import { revocationText } from "@/features/orders/status-view";
 import { PrintButton } from "@/features/orders/print-button";
@@ -54,7 +55,9 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
   }
   const st = TICKET_STATUS[t.status];
   const organizer = await organizerIdentity(db, t.event.organizationId);
-  const pendingOut = transfers.find((tr) => tr.status === "PENDING" && tr.fromUserId === user.id && tr.expiresAt && tr.expiresAt > now);
+  const cutoff = transferCutoff(t.event.startsAt, t.event);
+  const pendingOut = transfers.find((tr) => tr.status === "PENDING" && tr.fromUserId === user.id && tr.expiresAt && Math.min(tr.expiresAt.getTime(), cutoff.getTime()) > now.getTime());
+  const pendingExpiresAt = pendingOut?.expiresAt ? new Date(Math.min(pendingOut.expiresAt.getTime(), cutoff.getTime())) : null;
   const received = transfers.find((tr) => tr.status === "ACCEPTED" && tr.toUserId === user.id);
   const acceptedCount = transfers.filter((tr) => tr.status === "ACCEPTED").length;
   // Contrato com paginas-publicas (Fase 4): o formulário de transferência fica em
@@ -115,7 +118,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
           {pendingOut && (
             <Alert variant="warning" className="mt-4 text-left print:hidden">
               Transferência pendente para <strong>{pendingOut.toHolderName ?? pendingOut.toEmail}</strong> ({pendingOut.toEmail})
-              {pendingOut.expiresAt && <>, válida até {formatDateTimeShort(pendingOut.expiresAt, tz)}</>}. O ingresso continua com você até o aceite.{" "}
+              {pendingExpiresAt && <>, válida até {formatDateTimeShort(pendingExpiresAt, tz)}</>}. O ingresso continua com você até o aceite.{" "}
               <Link href="/meus-ingressos" className="font-semibold underline">
                 Gerenciar ou cancelar
               </Link>
