@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { Suspense } from "react";
 import QRCode from "qrcode";
 import { CalendarDays, FlaskConical } from "lucide-react";
@@ -32,6 +33,8 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
   const user = await requireUser(`/checkout/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
   if (order.status !== "PENDING_PAYMENT") redirect(`/pedido/${orderId}`);
+  const draft = order.checkoutReviewRequired ? await db.checkoutDraft.findUnique({ where: { orderId: order.id }, select: { id: true, confirmedAt: true } }) : null;
+  if (order.checkoutReviewRequired && (!order.checkoutReviewedAt || !draft?.confirmedAt)) redirect(draft ? `/checkout/revisao/${draft.id}` : `/eventos/${order.event.slug}`);
   const step = checkoutStep(order.payments);
   const termsPending = (await pendingTermsKinds(db, user.id)).length > 0;
   const confirmingPayment = order.payments.some((p) => p.status === "PENDING" && (!p.providerPaymentId || (p.method === "PIX" && !p.pixCopyPaste && !p.pixQrCodeBase64)));
@@ -42,9 +45,13 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
     : pix?.pixCopyPaste
       ? await QRCode.toDataURL(pix.pixCopyPaste, { margin: 1, width: 448 })
       : null;
+  // Request-time snapshot keeps the countdown identical during server/client hydration.
+  // eslint-disable-next-line react-hooks/purity -- The async Server Component has already read authenticated uncached data.
+  const initialNow = Date.now();
   return (
     <div className="mt-6 grid gap-8 lg:grid-cols-[1fr_360px]">
       <div className="space-y-4">
+        {draft && <Link className="inline-block text-sm font-semibold text-secondary underline" href={`/checkout/revisao/${draft.id}`}>Voltar à revisão da compra</Link>}
         {order.isSimulated && (
           <Alert variant="warning" className="flex gap-2">
             <FlaskConical className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -60,6 +67,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
         ) : <CheckoutPanel
           orderId={order.id}
           expiresAt={order.expiresAt.toISOString()}
+          initialNow={initialNow}
           isSimulated={order.isSimulated}
           pendingPix={pix ? { copyPaste: pix.pixCopyPaste, qrDataUrl } : null}
           cardProcessing={step === "card-processing"}

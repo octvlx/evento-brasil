@@ -9,7 +9,8 @@ import { formatBRL } from "@/lib/money";
 import { feeBreakdownText } from "@/lib/price-display";
 import { TICKET_KIND } from "@/lib/labels";
 import { TermsReaccept } from "@/features/auth/terms-reaccept";
-import { createOrderAction } from "./actions";
+import { startCheckoutDraftAction } from "./review-actions";
+import { usePersistentCartState } from "./persistent-cart";
 import { isCouponError } from "./status-view";
 
 export interface SelectorTicket {
@@ -40,24 +41,24 @@ interface Props {
   initialCouponCode?: string | null;
 }
 
-export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user, halfPriceLeft, paymentsAvailable, initialCouponCode }: Props) {
+export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfPriceLeft, paymentsAvailable, initialCouponCode }: Props) {
   const router = useRouter();
-  const [qty, setQty] = useState<Record<string, number>>({});
-  const [attendees, setAttendees] = useState<Record<string, string[]>>({});
+  const [qty, setQty] = usePersistentCartState<Record<string, number>>(eventId, "quantities", {});
+  const [attendees, setAttendees] = usePersistentCartState<Record<string, string[]>>(eventId, "attendees", {});
   const [buyerName, setBuyerName] = useState(user?.name ?? "");
   const [buyerEmail, setBuyerEmail] = useState(user?.email ?? "");
-  const [halfDecl, setHalfDecl] = useState(false);
+  const [halfDecl, setHalfDecl] = usePersistentCartState(eventId, "halfPrice", false);
   // O servidor pede o aceite quando há versão vigente dos termos não aceita.
   const [termsRequired, setTermsRequired] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [coupon, setCoupon] = useState(initialCouponCode ?? "");
+  const [coupon, setCoupon] = usePersistentCartState(eventId, "coupon", initialCouponCode ?? "");
   const [couponOpen, setCouponOpen] = useState(Boolean(initialCouponCode));
   const [couponError, setCouponError] = useState<string | null>(null);
   const couponCode = coupon.trim();
   const [pending, start] = useTransition();
   // Chave de idempotência por tentativa: evita pedidos duplicados em duplo clique.
-  const [idempotencyKey, setKey] = useState(() => crypto.randomUUID());
+  const [idempotencyKey, setKey] = usePersistentCartState(eventId, "idempotencyKey", "");
 
   const lines = tickets.filter((t) => (qty[t.id] ?? 0) > 0);
   const totals = useMemo(() => {
@@ -68,6 +69,7 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
   const hasHalf = lines.some((t) => t.kind === "HALF_PRICE");
 
   const change = (t: SelectorTicket, delta: number) => {
+    setKey(crypto.randomUUID());
     setQty((q) => {
       const current = q[t.id] ?? 0;
       let next = current + delta;
@@ -80,32 +82,29 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
   };
 
   const submit = () => {
-    if (!user) {
-      router.push(`/entrar?next=${encodeURIComponent(`/eventos/${eventSlug}`)}`);
-      return;
-    }
     setError(null);
     setCouponError(null);
     start(async () => {
-      const res = await createOrderAction({
+      const key = idempotencyKey || crypto.randomUUID();
+      if (!idempotencyKey) setKey(key);
+      const res = await startCheckoutDraftAction({
         eventId,
         items: lines.map((t) => ({
           ticketTypeId: t.id,
           quantity: qty[t.id],
           attendees: t.requiresAttendeeInfo ? Array.from({ length: qty[t.id] }, (_, i) => ({ name: attendees[t.id]?.[i] ?? "" })) : undefined,
         })),
-        buyerName,
-        buyerEmail,
+        buyerName: buyerName.trim() || user?.name || "Visitante",
+        buyerEmail: buyerEmail.trim() || user?.email || "visitante@checkout.invalid",
         halfPriceDeclaration: halfDecl,
-        idempotencyKey,
+        idempotencyKey: key,
         couponCode: couponCode || undefined,
-      }, { acceptTerms: termsRequired ? acceptTerms : undefined });
-      if (res.ok) router.push(`/checkout/${res.data.orderId}`);
+      });
+      if (res.ok) router.push(`/checkout/revisao/${res.data.draftId}`);
       else {
         if (res.code === "TERMS_REQUIRED") setTermsRequired(true);
         if (isCouponError(res, Boolean(couponCode))) setCouponError(res.error);
         else setError(res.error);
-        setKey(crypto.randomUUID());
       }
     });
   };
@@ -158,6 +157,7 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
                       value={attendees[t.id]?.[i] ?? ""}
                       onChange={(e) =>
                         setAttendees((a) => {
+                          setKey(crypto.randomUUID());
                           const list = [...(a[t.id] ?? [])];
                           list[i] = e.target.value;
                           return { ...a, [t.id]: list };
@@ -174,7 +174,7 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
 
       {hasHalf && (
         <label className="flex items-start gap-2 rounded-xl bg-muted p-3 text-sm">
-          <input type="checkbox" className="mt-0.5 size-4 accent-[var(--secondary)]" checked={halfDecl} onChange={(e) => setHalfDecl(e.target.checked)} />
+          <input type="checkbox" className="mt-0.5 size-4 accent-[var(--secondary)]" checked={halfDecl} onChange={(e) => { setKey(crypto.randomUUID()); setHalfDecl(e.target.checked); }} />
           <span>
             Declaro ter direito à <strong>meia-entrada</strong> e apresentarei documento comprobatório na entrada. A falta de comprovação pode impedir o acesso.
             {halfPriceLeft !== null && <span className="block text-xs text-muted-foreground">Cota de meia-entrada restante: {halfPriceLeft}</span>}
@@ -206,6 +206,7 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
                 id="couponCode"
                 value={coupon}
                 onChange={(e) => {
+                  setKey(crypto.randomUUID());
                   setCoupon(e.target.value.toUpperCase());
                   setCouponError(null);
                 }}
@@ -225,6 +226,7 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
                   size="icon"
                   aria-label="Remover cupom"
                   onClick={() => {
+                    setKey(crypto.randomUUID());
                     setCoupon("");
                     setCouponError(null);
                   }}
@@ -277,10 +279,10 @@ export function TicketSelector({ eventId, eventSlug, tickets, buyerPaysFee, user
       {error && <Alert variant="danger">{error}</Alert>}
 
       <Button size="lg" className="w-full" variant="accent" onClick={submit} disabled={pending || totals.count === 0 || (hasHalf && !halfDecl) || (termsRequired && !acceptTerms)}>
-        {pending ? "Reservando…" : !user ? "Entrar para comprar" : totals.count === 0 ? "Selecione os ingressos" : "Continuar para o pagamento"}
+        {pending ? "Salvando seleção…" : totals.count === 0 ? "Selecione os ingressos" : "Continuar para revisão"}
       </Button>
       <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-        <ShieldCheck className="size-3.5" aria-hidden /> Os ingressos ficam reservados por alguns minutos enquanto você paga.
+        <ShieldCheck className="size-3.5" aria-hidden /> Sua seleção será preservada. A reserva dos ingressos tem prazo limitado e será informada na revisão.
       </p>
     </div>
   );

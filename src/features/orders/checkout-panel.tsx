@@ -12,6 +12,7 @@ import { simulatePaymentAction, startPaymentAction } from "./actions";
 interface Props {
   orderId: string;
   expiresAt: string;
+  initialNow: number;
   isSimulated: boolean;
   pendingPix: { copyPaste: string | null; qrDataUrl: string | null } | null;
   /** Há uma tentativa com cartão pendente no provedor: não oferecer nova tentativa. */
@@ -20,8 +21,8 @@ interface Props {
   termsPending: boolean;
 }
 
-function useCountdown(target: string) {
-  const [left, setLeft] = useState(() => new Date(target).getTime() - Date.now());
+function useCountdown(target: string, initialNow: number) {
+  const [left, setLeft] = useState(() => new Date(target).getTime() - initialNow);
   useEffect(() => {
     const t = setInterval(() => setLeft(new Date(target).getTime() - Date.now()), 1000);
     return () => clearInterval(t);
@@ -29,7 +30,7 @@ function useCountdown(target: string) {
   return Math.max(0, left);
 }
 
-export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, cardProcessing, termsPending }: Props) {
+export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pendingPix, cardProcessing, termsPending }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<"PIX" | "CREDIT_CARD">("PIX");
   const [cardOutcome, setCardOutcome] = useState<"approve" | "decline">("approve");
@@ -38,7 +39,7 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, car
   const [termsRequired, setTermsRequired] = useState(termsPending);
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [pending, start] = useTransition();
-  const left = useCountdown(expiresAt);
+  const left = useCountdown(expiresAt, initialNow);
   const mm = String(Math.floor(left / 60000)).padStart(2, "0");
   const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
   const expired = left === 0;

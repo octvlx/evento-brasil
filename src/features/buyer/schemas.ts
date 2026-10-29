@@ -21,5 +21,5 @@ export const buyerAddressSchema = z.object({
 export type BuyerAddressInput = z.input<typeof buyerAddressSchema>;
 export type BuyerAddress = z.output<typeof buyerAddressSchema>;
 export interface BuyerCheckoutProfile {
-  name: string; email: string; emailVerified: boolean; cpfMasked: string | null; birthDate: string | null; personalComplete: boolean; address: BuyerAddress | null;
+  name: string; email: string; emailVerified: boolean; cpfMasked: string | null; birthDate: string | null; personalComplete: boolean; address: (Omit<BuyerAddress, "state"> & { state: string }) | null;
 }
