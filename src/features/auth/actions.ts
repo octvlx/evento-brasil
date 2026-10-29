@@ -3,8 +3,10 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { loginSchema, profileSchema, type RegisterInput } from "@/features/schemas";
+import { loginSchema, profileSchema, registerDetailsSchema, type RegisterInput } from "@/features/schemas";
 import { db } from "@/server/db";
+import { z } from "zod";
+import { startSignupPhoneVerification, verifySignupPhoneVerification } from "@/server/services/phone-verification";
 import { isProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { failureLimiter, rateLimit } from "@/server/rate-limit";
@@ -39,6 +41,28 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
     throw err;
   }
   redirect(safeNext(formData.get("next")?.toString()));
+}
+
+const signupPhoneSchema = registerDetailsSchema.pick({ email: true, phone: true, smsConsent: true });
+const signupPhoneCodeSchema = signupPhoneSchema.omit({ smsConsent: true }).extend({
+  challengeToken: z.string().min(1).max(256),
+  code: z.string().regex(/^\d{6}$/, "Informe o código de 6 dígitos enviado por SMS"),
+});
+
+export async function sendSignupPhoneCodeAction(input: { email: string; phone: string; smsConsent: true }) {
+  return toActionResult(async () => {
+    const parsed = signupPhoneSchema.safeParse(input);
+    if (!parsed.success) throw new AppError("VALIDATION", parsed.error.issues[0]?.message ?? "Dados inválidos.");
+    return startSignupPhoneVerification(db, parsed.data, { ip: await clientKey() });
+  });
+}
+
+export async function verifySignupPhoneCodeAction(input: { email: string; phone: string; challengeToken: string; code: string }) {
+  return toActionResult(async () => {
+    const parsed = signupPhoneCodeSchema.safeParse(input);
+    if (!parsed.success) throw new AppError("VALIDATION", parsed.error.issues[0]?.message ?? "Código inválido.");
+    return verifySignupPhoneVerification(db, parsed.data, { ip: await clientKey() });
+  });
 }
 
 export async function registerAction(input: RegisterInput, next?: string): Promise<ActionResult<{ redirectTo: string }>> {

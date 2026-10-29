@@ -19,13 +19,18 @@ const mobile = z
 const localDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Data/hora inválida");
 
 // ── Contas ──
-export const registerSchema = z.object({
+export const registerDetailsSchema = z.object({
   name: trimmed(2, 120, "Informe seu nome"),
   email,
   password: z.string().min(8, "A senha deve ter ao menos 8 caracteres").max(200),
-  phone: mobile.optional(),
+  phone: mobile.min(1, "Informe seu celular para verificar a conta"),
+  smsConsent: z.literal(true, { error: "Autorize o SMS de verificação para confirmar seu celular" }),
   acceptTerms: z.literal(true, { error: "É preciso aceitar os termos de uso" }),
-  acceptPrivacy: z.literal(true, { error: "É preciso aceitar a política de privacidade" }),
+  acceptPrivacy: z.literal(true, { error: "É preciso confirmar a leitura da política de privacidade" }),
+});
+export type RegisterDetailsInput = z.input<typeof registerDetailsSchema>;
+export const registerSchema = registerDetailsSchema.extend({
+  phoneVerificationToken: z.string().min(1, "Verifique seu celular antes de criar a conta").max(256),
 });
 export type RegisterInput = z.input<typeof registerSchema>;
 
