@@ -98,6 +98,8 @@ async function prepareTx(tx: Tx, actor: Actor, current: CheckoutDraft) {
   let draft = current.userId ? current : await tx.checkoutDraft.update({ where: { id: current.id }, data: { userId: actor.id } });
   await lockEvent(tx, draft.eventId);
   const fingerprint = await financialFingerprint(tx, draft);
+  // Serialize against payment initiation before deciding whether an existing hold can be replaced.
+  if (draft.orderId) await lockOrder(tx, draft.orderId);
   const previous = draft.orderId ? await tx.order.findUniqueOrThrow({ where: { id: draft.orderId }, include: { payments: true } }) : null;
   if (previous?.status === "PAID") return draft;
   const reusable = previous?.status === "PENDING_PAYMENT" && previous.expiresAt > new Date() && draft.pricingHash === fingerprint;

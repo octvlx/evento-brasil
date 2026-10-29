@@ -146,3 +146,19 @@ describe("review consent and subsequent purchase", () => {
     expect(await db.order.count()).toBe(1); expect(await db.payment.count()).toBe(0);
   });
 });
+
+
+it("serializes financial repricing with an in-flight payment initiation", async () => {
+  const x = await setup(); const review = await prepareCheckoutReview(db, x.buyer, x.draftId, x.token);
+  await confirmCheckoutReview(db, x.buyer, x.draftId, review.reviewHash!);
+  await db.ticketType.update({ where: { id: x.event.ticketTypes[0].id }, data: { priceCents: 12000 } });
+  const results = await Promise.allSettled([
+    startPayment(db, adapter, x.buyer, review.order!.id, "PIX"),
+    prepareCheckoutReview(db, x.buyer, x.draftId),
+  ]);
+  expect(results.filter(r => r.status === "fulfilled").length).toBeLessThanOrEqual(1);
+  const payments = await db.payment.findMany();
+  expect(payments.length).toBeLessThanOrEqual(1);
+  if (payments.length) expect((await db.order.findUniqueOrThrow({ where: { id: payments[0].orderId } })).status).toBe("PENDING_PAYMENT");
+  expect(await db.issuedTicket.count()).toBe(0);
+});
