@@ -21,6 +21,8 @@ const schema = z.object({
   MERCADO_PAGO_CLIENT_ID: z.string().optional(),
   MERCADO_PAGO_CLIENT_SECRET: z.string().optional(),
   MERCADO_PAGO_WEBHOOK_SECRET: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
   SETTLEMENT_ENABLED: bool,
   RESERVATION_MINUTES: int(15),
   EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
@@ -58,6 +60,7 @@ export function env(): Env {
   }
   const e = parsed.data;
   if (e.NODE_ENV === "production") {
+    if (new URL(e.APP_URL).protocol !== "https:") throw new Error("APP_URL deve usar HTTPS em produção.");
     const devOnly = (["AUTH_SECRET", "DATA_ENCRYPTION_KEY", "CRON_SECRET", "SIMULATED_WEBHOOK_SECRET"] as const).filter((k) =>
       e[k].startsWith("dev-only"),
     );

@@ -58,6 +58,10 @@ export const getActiveMembership = cache(async (userId: string) => {
 
 /** Rota segura para redirect pós-login (somente caminhos internos). */
 export function safeNext(next: string | null | undefined, fallback = "/"): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return fallback;
-  return next;
+  if (!next || !next.startsWith("/") || /[\\\u0000-\u0020]/.test(next)) return fallback;
+  try {
+    const target = new URL(next, "https://return.eventobrasil.invalid");
+    if (target.origin !== "https://return.eventobrasil.invalid") return fallback;
+    return target.pathname + target.search + target.hash;
+  } catch { return fallback; }
 }
