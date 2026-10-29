@@ -107,6 +107,7 @@ model CheckoutDraft {
   revision       Int       @default(0)
   expiresAt      DateTime  @db.Timestamptz(3)
   orderId        String?   @unique
+  pricingHash    String?
   reviewHash     String?
   confirmedAt    DateTime? @db.Timestamptz(3)
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)

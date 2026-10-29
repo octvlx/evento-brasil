@@ -50,6 +50,7 @@ CREATE TABLE "CheckoutDraft" (
     "expiresAt" TIMESTAMPTZ(3) NOT NULL,
     "orderId" TEXT,
     "reviewHash" TEXT,
+    "pricingHash" TEXT,
     "confirmedAt" TIMESTAMPTZ(3),
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ(3) NOT NULL,
@@ -108,7 +109,7 @@ ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_orderId_userId_eventId
 -- The database also rejects partial/unencrypted document representations.
 ALTER TABLE "User" ADD CONSTRAINT "User_buyer_cpf_complete" CHECK (
   ("cpfEncrypted" IS NULL AND "cpfHash" IS NULL AND "cpfLast2" IS NULL)
-  OR ("cpfEncrypted" LIKE 'v1.%' AND "cpfHash" ~ '^[0-9a-f]{64}$' AND "cpfLast2" ~ '^[0-9]{2}$')
+  OR ("cpfEncrypted" IS NOT NULL AND "cpfHash" IS NOT NULL AND "cpfLast2" IS NOT NULL AND "cpfEncrypted" LIKE 'v1.%' AND "cpfHash" ~ '^[0-9a-f]{64}$' AND "cpfLast2" ~ '^[0-9]{2}$')
 );
 ALTER TABLE "User" ADD CONSTRAINT "User_birth_date_range" CHECK (
   "birthDate" IS NULL OR ("birthDate" >= DATE '1900-01-01' AND "birthDate" <= CURRENT_DATE)
@@ -123,7 +124,7 @@ ALTER TABLE "UserAddress" ADD CONSTRAINT "UserAddress_required_text" CHECK (
 ALTER TABLE "EmailVerificationToken" ADD CONSTRAINT "EmailVerificationToken_hash" CHECK ("tokenHash" ~ '^[0-9a-f]{64}$');
 ALTER TABLE "EmailVerificationToken" ADD CONSTRAINT "EmailVerificationToken_expiry" CHECK ("expiresAt" > "createdAt");
 ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_hashes" CHECK (
-  "tokenHash" ~ '^[0-9a-f]{64}$' AND ("reviewHash" IS NULL OR "reviewHash" ~ '^[0-9a-f]{64}$')
+ "tokenHash" ~ '^[0-9a-f]{64}$' AND ("reviewHash" IS NULL OR "reviewHash" ~ '^[0-9a-f]{64}$') AND ("pricingHash" IS NULL OR "pricingHash" ~ '^[0-9a-f]{64}$')
 );
 ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_revision" CHECK ("revision" >= 0);
 ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_selection_object" CHECK (jsonb_typeof("selection") = 'object');
