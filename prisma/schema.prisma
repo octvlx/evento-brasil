@@ -30,6 +30,13 @@ model User {
   name            String
   phone           String?
   passwordHash    String
+  // Complemento do comprador: separado do cadastro básico e do KYC do organizador.
+  emailVerifiedAt DateTime?    @db.Timestamptz(3)
+  cpfEncrypted    String?
+  cpfHash         String?      @unique
+  cpfLast2        String?      @db.VarChar(2)
+  birthDate       DateTime?    @db.Date
+  googleSubject   String?      @unique
   platformRole    PlatformRole @default(USER)
   status          UserStatus   @default(ACTIVE)
   suspendedReason String?
@@ -38,14 +45,17 @@ model User {
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  sessions         Session[]
-  memberships      OrganizationMember[]
-  orders           Order[]
-  tickets          IssuedTicket[]         @relation("TicketBuyer")
-  heldTickets      IssuedTicket[]         @relation("TicketHolder")
-  staffAssignments EventStaffAssignment[] @relation("StaffAssignee")
-  checkins         TicketCheckin[]
-  auditLogs        AuditLog[]
+  address                 UserAddress?
+  emailVerificationTokens EmailVerificationToken[]
+  checkoutDrafts          CheckoutDraft[]
+  sessions                Session[]
+  memberships             OrganizationMember[]
+  orders                  Order[]
+  tickets                 IssuedTicket[]           @relation("TicketBuyer")
+  heldTickets             IssuedTicket[]           @relation("TicketHolder")
+  staffAssignments        EventStaffAssignment[]   @relation("StaffAssignee")
+  checkins                TicketCheckin[]
+  auditLogs               AuditLog[]
 
   transfersOut          TicketTransfer[]      @relation("TransferFrom")
   transfersIn           TicketTransfer[]      @relation("TransferTo")
@@ -56,6 +66,57 @@ model User {
   cancellationsAssigned CancellationRequest[] @relation("CancellationAssignee")
   cancellationsDecided  CancellationRequest[] @relation("CancellationDecider")
   termsAcceptances      TermsAcceptance[]
+}
+
+// Endereço salvo somente quando o comprador informa no checkout.
+model UserAddress {
+  userId     String   @id
+  postalCode String   @db.VarChar(8)
+  street     String   @db.VarChar(200)
+  number     String   @db.VarChar(30)
+  complement String?  @db.VarChar(200)
+  district   String   @db.VarChar(120)
+  city       String   @db.VarChar(120)
+  state      String   @db.VarChar(2)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model EmailVerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime  @db.Timestamptz(3)
+  consumedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+// Carrinho persistido: não representa estoque reservado nem pagamento confirmado.
+model CheckoutDraft {
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  userId      String?
+  eventId     String
+  selection   Json
+  revision    Int       @default(0)
+  expiresAt   DateTime  @db.Timestamptz(3)
+  orderId     String?   @unique
+  reviewHash  String?
+  confirmedAt DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  order       Order?    @relation(fields: [orderId, userId, eventId], references: [id, userId, eventId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([orderId, userId, eventId])
+  @@index([userId, updatedAt])
+  @@index([expiresAt])
 }
 
 model Session {
@@ -336,6 +397,7 @@ model Event {
   city             City?                  @relation(fields: [cityId], references: [id])
   images           EventImage[]
   ticketTypes      TicketType[]
+  checkoutDrafts   CheckoutDraft[]
   orders           Order[]
   tickets          IssuedTicket[]
   checkins         TicketCheckin[]
@@ -466,43 +528,45 @@ enum OrderStatus {
 }
 
 model Order {
-  id               String      @id @default(cuid())
-  publicCode       String      @unique
-  userId           String
-  eventId          String
-  organizationId   String
-  status           OrderStatus @default(PENDING_PAYMENT)
-  currency         String      @default("BRL")
+  id                     String      @id @default(cuid())
+  publicCode             String      @unique
+  userId                 String
+  eventId                String
+  organizationId         String
+  status                 OrderStatus @default(PENDING_PAYMENT)
+  currency               String      @default("BRL")
   // Soma dos valores de face.
-  subtotalCents    Int
+  subtotalCents          Int
   // Taxa de serviço cobrada do comprador (0 quando a comissão é do organizador).
-  serviceFeeCents  Int
-  totalCents       Int
+  serviceFeeCents        Int
+  totalCents             Int
   // Comissão da plataforma (independente de quem paga).
-  commissionCents  Int
-  feePolicyVersion String
-  commissionRuleId String?
-  buyerName        String
-  buyerEmail       String
-  buyerPhone       String?
-  idempotencyKey   String
-  isSimulated      Boolean     @default(false)
-  expiresAt        DateTime    @db.Timestamptz(3)
-  paidAt           DateTime?   @db.Timestamptz(3)
-  cancelledAt      DateTime?   @db.Timestamptz(3)
-  createdAt        DateTime    @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime    @updatedAt @db.Timestamptz(3)
+  commissionCents        Int
+  feePolicyVersion       String
+  commissionRuleId       String?
+  buyerName              String
+  buyerEmail             String
+  buyerPhone             String?
+  checkoutReviewRequired Boolean     @default(false)
+  checkoutReviewedAt     DateTime?   @db.Timestamptz(3)
+  idempotencyKey         String
+  isSimulated            Boolean     @default(false)
+  expiresAt              DateTime    @db.Timestamptz(3)
+  paidAt                 DateTime?   @db.Timestamptz(3)
+  cancelledAt            DateTime?   @db.Timestamptz(3)
+  createdAt              DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime    @updatedAt @db.Timestamptz(3)
   // Instantâneos imutáveis da compra (ADR 0002). couponCode é a cópia do código usado.
-  couponId         String?
-  couponCode       String?     @db.VarChar(32)
+  couponId               String?
+  couponCode             String?     @db.VarChar(32)
   // Σ discountPerUnitCents × quantity dos itens.
-  discountCents    Int         @default(0)
-  trackingLinkId   String?
-  utmSource        String?     @db.VarChar(200)
-  utmMedium        String?     @db.VarChar(200)
-  utmCampaign      String?     @db.VarChar(200)
-  utmContent       String?     @db.VarChar(200)
-  utmTerm          String?     @db.VarChar(200)
+  discountCents          Int         @default(0)
+  trackingLinkId         String?
+  utmSource              String?     @db.VarChar(200)
+  utmMedium              String?     @db.VarChar(200)
+  utmCampaign            String?     @db.VarChar(200)
+  utmContent             String?     @db.VarChar(200)
+  utmTerm                String?     @db.VarChar(200)
 
   user             User                         @relation(fields: [userId], references: [id])
   event            Event                        @relation(fields: [eventId], references: [id])
@@ -520,7 +584,10 @@ model Order {
   cancellations    CancellationRequest[]
   termsAcceptances TermsAcceptance[]
 
+  checkoutDraft CheckoutDraft?
+
   @@unique([userId, idempotencyKey])
+  @@unique([id, userId, eventId])
   @@unique([id, eventId, organizationId])
   @@index([eventId, status])
   @@index([organizationId, status, createdAt])
@@ -1231,11 +1298,11 @@ model AuditLog {
 
   actor        User?         @relation(fields: [actorUserId], references: [id])
   organization Organization? @relation(fields: [organizationId], references: [id])
+  // Filtro por prefixo de ação: AuditLog_action_prefix_idx (text_pattern_ops, parcial),
+  // escrito à mão em 20261028120000_query_plan_indexes.
 
   @@index([entityType, entityId])
   @@index([organizationId, createdAt])
   @@index([actorUserId, createdAt])
   @@index([createdAt])
-  // Filtro por prefixo de ação: AuditLog_action_prefix_idx (text_pattern_ops, parcial),
-  // escrito à mão em 20261028120000_query_plan_indexes.
 }
