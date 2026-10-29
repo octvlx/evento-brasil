@@ -5,23 +5,31 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label } from "@/components/ui/primitives";
 import { acceptTransferAction, cancelTransferAction, declineTransferAction, requestTransferAction } from "@/features/checkin/transfer-actions";
+import { formatDateTimeShort, timezoneLabel } from "@/lib/datetime";
+import { transferCutoff, TRANSFER_ACCEPT_WINDOW_HOURS, type TransferPolicy } from "@/lib/transfer-policy";
 
-/**
- * Regras mostradas antes de transferir. TODO(jurídico): texto provisório — D7 (dinheiro
- * volta ao pagador num reembolso) e prazo/limite de transferências pendentes de revisão
- * (docs/conformidade-decreto-13108.md). Os valores vêm de TRANSFER_POLICY no servidor.
- */
-export function TransferRules({ acceptWindowHours, maxTransfers }: { acceptWindowHours: number; maxTransfers: number }) {
+/** Regras do evento, mostradas antes de solicitar uma transferência. */
+export function TransferRules({ policy, startsAt, timezone }: { policy: TransferPolicy; startsAt: string; timezone: string }) {
+  const cutoff = transferCutoff(startsAt, policy);
   return (
     <div className="space-y-1 rounded-xl bg-muted p-3 text-xs text-muted-foreground" data-testid="transfer-rules">
       <ul className="list-disc space-y-1 pl-4">
         <li>A transferência é gratuita.</li>
-        <li>Quem recebe precisa aceitar em até {acceptWindowHours} horas (e antes do início do evento), entrando com a conta do e-mail informado.</li>
+        <li>
+          A solicitação e o aceite devem ocorrer até {formatDateTimeShort(cutoff, timezone)} ({timezoneLabel(cutoff, timezone)}, horário do evento),
+          {policy.transferDeadlineHours === 0 ? " antes do início do evento." : ` ${policy.transferDeadlineHours} ${policy.transferDeadlineHours === 1 ? "hora" : "horas"} antes do início do evento.`}
+        </li>
+        <li>Quem recebe precisa aceitar em até {TRANSFER_ACCEPT_WINDOW_HOURS} horas do convite, respeitando esse prazo, entrando com a conta do e-mail informado.</li>
         <li>Ao aceitar, o ingresso ganha um novo QR code no nome de quem recebeu. O QR, o PDF e os passes de carteira que você tem agora deixam de valer.</li>
-        <li>O pedido continua no seu nome: um eventual reembolso volta para quem pagou, não para quem recebeu.</li>
-        <li>Cada ingresso pode ser transferido no máximo {maxTransfers} vezes.</li>
+        <li>A transferência não muda o comprador do pedido: um eventual reembolso volta para quem pagou, não para quem recebeu.</li>
+        <li>Cada ingresso pode ter no máximo {policy.transferMaxTransfers} {policy.transferMaxTransfers === 1 ? "transferência aceita" : "transferências aceitas"}.</li>
+        <li>Você pode cancelar o convite enquanto ele ainda não foi aceito.</li>
+        <li>
+          {policy.transferAllowReturn
+            ? "Depois do aceite não há desfazer. Uma devolução a um titular anterior exige uma nova transferência, iniciada pelo titular atual e aceita pelo destinatário, e também conta para o limite."
+            : "Depois do aceite não é possível desfazer nem devolver o ingresso a um titular anterior."}
+        </li>
       </ul>
-      <p className="font-semibold text-warning">Texto provisório, pendente de revisão jurídica.</p>
     </div>
   );
 }
@@ -30,14 +38,16 @@ export function TransferRules({ acceptWindowHours, maxTransfers }: { acceptWindo
 export function TransferForm({
   ticketId,
   ticketLabel,
-  acceptWindowHours,
-  maxTransfers,
+  policy,
+  startsAt,
+  timezone,
   defaultOpen = false,
 }: {
   ticketId: string;
   ticketLabel: string;
-  acceptWindowHours: number;
-  maxTransfers: number;
+  policy: TransferPolicy;
+  startsAt: string;
+  timezone: string;
   /** Já aberto e rolado até a vista (link `?transferir=` da página do ingresso). */
   defaultOpen?: boolean;
 }) {
@@ -93,7 +103,7 @@ export function TransferForm({
           <Input id={`to-email-${ticketId}`} type="email" value={toEmail} onChange={(e) => setToEmail(e.target.value)} required maxLength={254} disabled={confirming || pending} autoComplete="off" />
         </div>
       </div>
-      <TransferRules acceptWindowHours={acceptWindowHours} maxTransfers={maxTransfers} />
+      <TransferRules policy={policy} startsAt={startsAt} timezone={timezone} />
       {confirming ? (
         <div className="space-y-2 rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm">
           <p>
