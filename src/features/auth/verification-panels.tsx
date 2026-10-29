@@ -23,13 +23,13 @@ export function EmailConfirmationPanel({ next, email, emailVerified }: { next: s
     {email && !alreadyVerified && <Button variant="outline" disabled={pending} onClick={() => start(async () => { setError(""); const result = await resendEmailConfirmationAction(next); if (result.ok) setMessage("Enviamos um link de confirmação para seu e-mail. Confira também a caixa de spam."); else setError(result.error); })}>Reenviar e-mail de confirmação</Button>}
     {error && <div role="alert"><Alert variant="danger">{error}</Alert></div>}
     {message && <p role="status" className="text-sm">{message}</p>}
-    <Link href={email ? next : `/entrar?next=${encodeURIComponent(next)}`} className="block font-semibold text-secondary underline">{email ? "Voltar e continuar" : "Entrar e continuar"}</Link>
+    <a href={email ? next : `/entrar?next=${encodeURIComponent(next)}`} className="block font-semibold text-secondary underline">{email ? "Voltar e continuar" : "Entrar e continuar"}</a>
   </div>;
 }
 
 export function GoogleSignupConsent({ name, email }: { name: string; email: string }) {
-  const [terms, setTerms] = useState(false); const [privacy, setPrivacy] = useState(false); const [pending, start] = useTransition(); const [error, setError] = useState(""); const router = useRouter();
-  return <form className="space-y-4" onSubmit={event => { event.preventDefault(); start(async () => { setError(""); const result = await googleSignupAction(terms, privacy); if (result.ok) { router.push(result.data.redirectTo); router.refresh(); } else setError(result.error); }); }}>
+  const [terms, setTerms] = useState(false); const [privacy, setPrivacy] = useState(false); const [pending, start] = useTransition(); const [error, setError] = useState("");
+  return <form className="space-y-4" onSubmit={event => { event.preventDefault(); start(async () => { setError(""); const result = await googleSignupAction(terms, privacy); if (result.ok) { window.location.assign(result.data.redirectTo); } else setError(result.error); }); }}>
     <p className="text-sm">Criar conta para {name} ({email}). Seu e-mail já foi confirmado pelo Google.</p>
     <label className="flex gap-2 text-sm"><input type="checkbox" checked={terms} onChange={e => setTerms(e.target.checked)} /> <span>Li e aceito os <Link href="/termos" target="_blank" className="underline">termos de uso</Link>.</span></label>
     <label className="flex gap-2 text-sm"><input type="checkbox" checked={privacy} onChange={e => setPrivacy(e.target.checked)} /> <span>Li e estou ciente da <Link href="/privacidade" target="_blank" className="underline">política de privacidade</Link>.</span></label>
