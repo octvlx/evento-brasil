@@ -8,9 +8,11 @@ import { EventCover } from "@/components/site/event-cover";
 import { CancelTransferButton, IncomingTransferActions, TransferForm } from "@/features/transfers/transfer-controls";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
-import { listMyTransfers, TRANSFER_POLICY } from "@/server/services/transfers";
+import { listMyTransfers } from "@/server/services/transfers";
 import { formatDateShort, formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
+import { normalizeTransferPolicy, transferCutoff } from "@/lib/transfer-policy";
+import { timezoneLabel } from "@/lib/datetime";
 import { CANCEL_HELP_HREF } from "@/lib/help-links";
 import { ORDER_STATUS, TICKET_STATUS } from "@/lib/labels";
 
@@ -39,19 +41,26 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
       include: {
         ticketType: { select: { name: true } },
         order: { select: { status: true } },
-        event: { select: { id: true, title: true, slug: true, startsAt: true, endsAt: true, timezone: true, coverImageUrl: true, status: true } },
+        event: { select: { id: true, title: true, slug: true, startsAt: true, endsAt: true, timezone: true, coverImageUrl: true, status: true, transferDeadlineHours: true, transferMaxTransfers: true, transferAllowReturn: true } },
       },
       orderBy: { event: { startsAt: "asc" } },
     }),
     db.order.findMany({ where: { userId: user.id }, include: { event: { select: { title: true } } }, orderBy: { createdAt: "desc" }, take: 5 }),
     listMyTransfers(db, user),
   ]);
-  const isOpen = (t: { status: string; expiresAt: Date | null }) => t.status === "PENDING" && !!t.expiresAt && t.expiresAt > now;
+  // One batched count for all owned tickets; never expose other holders' details.
+  const acceptedCounts = tickets.length ? await db.ticketTransfer.groupBy({
+    by: ["ticketId"],
+    where: { ticketId: { in: tickets.map((t) => t.id) }, status: "ACCEPTED" },
+    _count: { _all: true },
+  }) : [];
+  const acceptedByTicket = new Map(acceptedCounts.map((t) => [t.ticketId, t._count._all]));
+  const isOpen = (t: { status: string; effectiveExpiresAt: Date | null }) => t.status === "PENDING" && !!t.effectiveExpiresAt && t.effectiveExpiresAt > now;
   const outgoing = new Map(transfers.sent.filter(isOpen).map((t) => [t.ticket.id, t]));
   const incoming = transfers.received.filter(isOpen);
   const transferredAway = transfers.sent.filter((t) => t.status === "ACCEPTED");
   // Só decide se o botão aparece; o serviço reconfere tudo (inclusive o limite de transferências).
-  const canTransfer = (t: (typeof tickets)[number]) => t.status === "VALID" && t.order.status === "PAID" && t.event.status === "PUBLISHED" && t.event.startsAt > now;
+  const canTransfer = (t: (typeof tickets)[number]) => t.status === "VALID" && t.order.status === "PAID" && t.event.status === "PUBLISHED" && transferCutoff(t.event.startsAt, t.event) > now && (acceptedByTicket.get(t.id) ?? 0) < t.event.transferMaxTransfers;
 
   const byEvent = new Map<string, typeof tickets>();
   for (const t of tickets) byEvent.set(t.event.id, [...(byEvent.get(t.event.id) ?? []), t]);
@@ -81,6 +90,11 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
           <CalendarDays className="size-3.5" aria-hidden /> {formatEventDateTime(g[0].event.startsAt, g[0].event.timezone)}
         </p>
         <h3 className="mt-1 font-display text-lg font-bold">{g[0].event.title}</h3>
+        <p className="mt-2 text-xs text-muted-foreground" data-testid="transfer-policy-summary">
+          Transferência gratuita: solicitação e aceite até {formatDateTimeShort(transferCutoff(g[0].event.startsAt, g[0].event), g[0].event.timezone)} ({timezoneLabel(transferCutoff(g[0].event.startsAt, g[0].event), g[0].event.timezone)}).
+          {" "}Máximo de {g[0].event.transferMaxTransfers} {g[0].event.transferMaxTransfers === 1 ? "transferência aceita" : "transferências aceitas"} por ingresso.
+          {" "}{g[0].event.transferAllowReturn ? "Devolução apenas por nova transferência com aceite, dentro do limite." : "Sem desfazer ou devolução após o aceite."}
+        </p>
         <ul className="mt-3 space-y-2">
           {g.map((t) => {
             const s = TICKET_STATUS[t.status];
@@ -95,20 +109,25 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
                   <span className="flex flex-wrap items-center gap-2 text-sm" data-testid="outgoing-transfer">
                     <Badge variant="warning">Transferência pendente</Badge>
                     <span className="text-muted-foreground">
-                      para {out.toHolderName ?? out.toEmail} ({out.toEmail}), até {formatDateTimeShort(out.expiresAt!, t.event.timezone)}
+                      para {out.toHolderName ?? out.toEmail} ({out.toEmail}), até {formatDateTimeShort(out.effectiveExpiresAt!, t.event.timezone)}
                     </span>
                     <CancelTransferButton transferId={out.id} />
                   </span>
                 ) : (
-                  canTransfer(t) && (
+                  canTransfer(t) ? (
                     <TransferForm
                       ticketId={t.id}
                       ticketLabel={`${t.ticketType.name} · ${t.event.title}`}
-                      acceptWindowHours={TRANSFER_POLICY.acceptWindowHours}
-                      maxTransfers={TRANSFER_POLICY.maxTransfersPerTicket}
+                      policy={normalizeTransferPolicy(t.event)}
+                      startsAt={t.event.startsAt.toISOString()}
+                      timezone={t.event.timezone}
                       defaultOpen={t.code === preselect}
                     />
-                  )
+                  ) : t.status === "VALID" && t.order.status === "PAID" && t.event.status === "PUBLISHED" ? (
+                    <span className="text-xs text-muted-foreground" data-testid="transfer-unavailable">
+                      {(acceptedByTicket.get(t.id) ?? 0) >= t.event.transferMaxTransfers ? "Limite de transferências atingido para este ingresso." : "Prazo para solicitar e aceitar transferências encerrado."}
+                    </span>
+                  ) : null
                 )}
               </li>
             );
@@ -134,7 +153,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
                     {formatEventDateTime(t.event.startsAt, t.event.timezone)}).
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Gratuito. Ao aceitar, o ingresso passa para o seu nome com um QR code novo. Responda até {formatDateTimeShort(t.expiresAt!, t.event.timezone)}.
+                    Gratuito. Ao aceitar, o ingresso passa para o seu nome com um QR code novo. Responda até {formatDateTimeShort(t.effectiveExpiresAt!, t.event.timezone)}.
                   </p>
                   <IncomingTransferActions transferId={t.id} />
                 </Card>

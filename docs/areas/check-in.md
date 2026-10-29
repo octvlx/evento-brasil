@@ -105,11 +105,29 @@ Leituras para telas: `transferBlockedReason(ticket, now)` (mesma regra do servi�
 a tela só esconde o botão, o serviço reconfere sob as travas) e
 `DECLINED_BY_RECIPIENT` (motivo da recusa).
 
-**Regras (valores provisórios em `TRANSFER_POLICY`, não exigência do decreto):**
-gratuita; até **3** transferências aceitas por ingresso; convite vale **48h**,
-nunca depois do início do evento, e não se pede transferência com o evento
-iniciado (D7 decide o prazo-limite). Pedido e aceite exigem ingresso VALID,
-pedido PAID e evento PUBLISHED. O limite por conta do evento
+**Política de transferência por evento:**
+
+A transferência é gratuita. Por padrão, pedido e aceite devem ocorrer **antes
+do corte de 24 horas para o início do evento**, com no máximo **uma** transferência
+aceita por ingresso e sem devolução a um titular anterior. O instante exato do
+corte já está encerrado. O organizador pode configurar `transferDeadlineHours`
+(0–8760; 0 permite até antes do início), `transferMaxTransfers` (1–10) e
+`transferAllowReturn` (padrão false). Permitir devolução exige limite mínimo 2.
+Uma devolução permitida é uma nova transferência solicitada pelo titular atual,
+aceita pelo destinatário e contabilizada no limite; nunca desfaz unilateralmente
+um aceite nem reutiliza um QR antigo. Convites ainda pendentes podem ser
+cancelados ou recusados.
+
+O convite vale até 48 horas, limitado pelo corte do evento. Pedido e aceite
+revalidam a política atual e o relógio depois das travas. O cron e as telas usam
+o corte efetivo, inclusive para convites antigos e eventos remarcados. Aceites
+anteriores permanecem no histórico imutável mesmo que excedam o novo padrão.
+Pedido e aceite exigem ingresso VALID, pedido PAID e evento PUBLISHED.
+Com ingressos vendidos ou reservados, o organizador só pode flexibilizar a
+política; a mudança é auditada. Os padrões são decisões do produto, não uma
+alegação de prazo legal obrigatório.
+
+O limite por conta do evento
 (`Event.maxTicketsPerAccount`) vale no aceite, pelo contrato (a): usa
 `ticketsHeldByAccount` de `orders.ts` (ingressos VALID/CHECKED_IN em mãos +
 pedidos PENDING_PAYMENT não vencidos), sob a mesma trava do evento do `createOrder`. O reembolso

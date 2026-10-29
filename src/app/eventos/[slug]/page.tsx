@@ -8,6 +8,8 @@ import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
 import { cookies } from "next/headers";
+import { TransferRules } from "@/features/transfers/transfer-controls";
+import { normalizeTransferPolicy } from "@/lib/transfer-policy";
 import { TicketSelector } from "@/features/orders/ticket-selector";
 import { UtmCapture } from "@/features/orders/utm-capture";
 import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
@@ -193,6 +195,11 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               <p className="text-[15px] text-foreground/90">{event.accessibilityInfo ?? event.venue?.accessibilityInfo}</p>
             </section>
           )}
+
+          <section aria-labelledby="event-transfer-title">
+            <h2 id="event-transfer-title" className="mb-3 font-display text-xl font-bold">Transferência de ingresso</h2>
+            <TransferRules policy={normalizeTransferPolicy(event)} startsAt={event.startsAt.toISOString()} timezone={tz} />
+          </section>
 
           <section>
             <h2 className="mb-3 flex items-center gap-2 font-display text-xl font-bold">

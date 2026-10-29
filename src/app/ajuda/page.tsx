@@ -10,6 +10,7 @@ import { getCurrentUser } from "@/server/auth/current";
 import { listMyCancellationRequests, PROVISIONAL_CANCELLATION_RESPONSE_DAYS } from "@/server/services/cancellation-requests";
 import { DEFAULT_REFUND_POLICY } from "@/server/services/refunds";
 import { formatDateShort } from "@/lib/datetime";
+import { DEFAULT_TRANSFER_POLICY } from "@/lib/transfer-policy";
 
 export const metadata: Metadata = { title: "Central de ajuda" };
 
@@ -22,6 +23,20 @@ export default function HelpPage() {
         <li>Pague com PIX (ou cartão, quando disponível). Os ingressos são emitidos somente após a confirmação do provedor de pagamento.</li>
         <li>Seus ingressos ficam em “Meus ingressos”, com QR code e PDF, e também chegam por e-mail.</li>
       </ul>
+      <h2 id="transferencia">Transferência de ingresso</h2>
+      <p>
+        A transferência é gratuita. Consulte as regras do evento antes de comprar e em “Meus ingressos”: o organizador define o prazo para solicitar e aceitar,
+        o limite de transferências aceitas e se permite devolver o ingresso a um titular anterior.
+      </p>
+      <p>
+        Por padrão, a solicitação e o aceite devem ocorrer até {DEFAULT_TRANSFER_POLICY.transferDeadlineHours} horas antes do início do evento,
+        com no máximo {DEFAULT_TRANSFER_POLICY.transferMaxTransfers} transferência aceita por ingresso e sem devolução após o aceite.
+        O prazo exato é exibido no fuso do evento. Você pode cancelar um convite que ainda não foi aceito.
+      </p>
+      <p>
+        Depois do aceite, o ingresso e um novo QR code passam para o destinatário. Não há desfazer: quando o evento permite devolução, ela exige uma nova transferência
+        iniciada pelo titular atual, o aceite do destinatário e saldo no limite de transferências. Um eventual reembolso continua voltando para quem pagou.
+      </p>
       <h2>Meia-entrada</h2>
       <p>Ao escolher meia-entrada, você declara ter direito ao benefício e deve apresentar o documento comprobatório na entrada do evento.</p>
       <h2 id="taxas">Taxas e repasses</h2>
