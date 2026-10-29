@@ -9,7 +9,8 @@ test("participantes mostram o titular atual, o histórico e exportam CSV", async
   await page.getByRole("button", { name: "Ver" }).click();
   await page.waitForURL(/evento=/);
 
-  const moved = page.locator("tr").filter({ hasText: "amiga@demo.eventobrasil.test" });
+  // A mesma titular pode receber vários ingressos em outros fluxos da suíte.
+  const moved = page.getByRole("row").filter({ hasText: "amiga@demo.eventobrasil.test" }).first();
   await expect(moved.getByText("Transferido", { exact: true })).toBeVisible();
   await moved.getByText(/Histórico de transferências \(1\)/).click();
   await expect(moved.getByText(/cliente@demo\.eventobrasil\.test.*→.*amiga@demo\.eventobrasil\.test.*Aceita/)).toBeVisible();
