@@ -18,7 +18,7 @@ export async function exportUserData(db: Db, actor: Actor) {
   const [user, sessions, memberships, orders, heldTickets, transfers, cancellations, acceptances] = await Promise.all([
     db.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { id: true, name: true, email: true, phone: true, platformRole: true, status: true, createdAt: true, updatedAt: true },
+      select: { id: true, name: true, email: true, phone: true, emailVerifiedAt: true, cpfLast2: true, birthDate: true, address: { select: { postalCode: true, street: true, number: true, complement: true, district: true, city: true, state: true } }, platformRole: true, status: true, createdAt: true, updatedAt: true },
     }),
     db.session.findMany({ where: { userId }, select: { createdAt: true, lastSeenAt: true, expiresAt: true, userAgent: true }, orderBy: { createdAt: "desc" } }),
     db.organizationMember.findMany({ where: { userId }, select: { role: true, createdAt: true, organization: { select: { name: true, slug: true } } } }),
@@ -111,7 +111,7 @@ export async function exportUserData(db: Db, actor: Actor) {
   return {
     format: DATA_EXPORT_FORMAT,
     generatedAt: new Date().toISOString(),
-    profile: { ...user, createdAt: iso(user.createdAt), updatedAt: iso(user.updatedAt) },
+    profile: { ...user, cpfMasked: user.cpfLast2 ? `***.***.***-${user.cpfLast2}` : null, emailVerifiedAt: iso(user.emailVerifiedAt), birthDate: user.birthDate?.toISOString().slice(0, 10) ?? null, createdAt: iso(user.createdAt), updatedAt: iso(user.updatedAt) },
     sessions: sessions.map((s) => ({ createdAt: iso(s.createdAt), lastSeenAt: iso(s.lastSeenAt), expiresAt: iso(s.expiresAt), userAgent: s.userAgent })),
     organizations: memberships.map((m) => ({ name: m.organization.name, slug: m.organization.slug, role: m.role, since: iso(m.createdAt) })),
     orders: orders.map((o) => ({

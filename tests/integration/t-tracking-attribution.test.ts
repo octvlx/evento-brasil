@@ -1,3 +1,4 @@
+import { makeBuyerReady } from "../support/buyer-ready";
 // ADR 0002, passo 4: rota pública /r/[code] (clique, cookie eb_attr, links
 // arquivados/desconhecidos) e atribuição do pedido lida só do cookie na Server Action.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -111,7 +112,7 @@ describe("T — atribuição na Server Action", () => {
     const { event, coupon, link } = await setup();
     const l = await link({ code: "comcupom", couponId: coupon.id });
     jar.set("eb_attr", attrCookie(await visit("comcupom"))!.value);
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
 
     const res = await createOrderAction(
       orderInput(event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 1 }], {
@@ -126,7 +127,7 @@ describe("T — atribuição na Server Action", () => {
 
   it("sem cookie, a atribuição do corpo é descartada", async () => {
     const { event } = await setup();
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
     const res = await createOrderAction(
       orderInput(event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 1 }], { attribution: { utmSource: "forjado" } }) as Parameters<typeof createOrderAction>[0],
     );
@@ -139,7 +140,7 @@ describe("T — atribuição na Server Action", () => {
     const { event, other, link } = await setup();
     await link({ code: "outroev", eventId: other.id });
     jar.set("eb_attr", attrCookie(await visit("outroev"))!.value);
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
 
     // Cookie de link de outro evento: o pedido deste evento fica sem link e sem os UTMs do link.
     let res = await createOrderAction(orderInput(event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 1 }]) as Parameters<typeof createOrderAction>[0]);
@@ -156,7 +157,7 @@ describe("T — atribuição na Server Action", () => {
 
   it("cookie adulterado é ignorado", async () => {
     const { event } = await setup();
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
     jar.set("eb_attr", "{not json");
     const res = await createOrderAction(orderInput(event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 1 }]) as Parameters<typeof createOrderAction>[0]);
     expect(res.ok).toBe(true);
