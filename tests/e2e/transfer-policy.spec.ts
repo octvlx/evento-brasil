@@ -24,9 +24,12 @@ async function eventWithTicket(hoursUntilStart = 7 * 24) {
       JOIN "TicketType" tt ON tt.id = t."ticketTypeId"
       JOIN "Order" o ON o.id = t."orderId"
       JOIN "OrderItem" oi ON oi.id = t."orderItemId"
-      WHERE u.email = $1 AND e.slug = 'festival-litoral-sonoro-rio-de-janeiro'
-        AND t.status = 'VALID' AND o.status = 'PAID'
-      ORDER BY t.id LIMIT 1`, [USERS.customer]);
+      WHERE u.email = $1 AND t.status = 'VALID' AND o.status = 'PAID'
+        AND EXISTS (
+          SELECT 1 FROM "OrganizationMember" m JOIN "User" producer ON producer.id = m."userId"
+          WHERE m."organizationId" = e."organizationId" AND producer.email = $2 AND m.role = 'OWNER'
+        )
+      ORDER BY t.id LIMIT 1`, [USERS.customer, USERS.producer]);
     expect(rows[0], "Ingresso pago de demonstração para copiar somente no banco descartável").toBeTruthy();
     const source = rows[0];
     const suffix = randomUUID();

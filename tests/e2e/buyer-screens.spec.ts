@@ -1,16 +1,44 @@
 // Fase 4 (paginas-publicas): telas do comprador sobre o seed de demonstração —
 // transferência, reembolso pela janela de alteração e pedido de cancelamento.
+import pg from "pg";
 import { expect, test } from "@playwright/test";
 import { login, qrPayloadFor, USERS } from "./helpers";
 
 const FRIEND = "amiga@demo.eventobrasil.test";
 
+/** Other specs may refund the Festival seed order; resolve actual transferable inventory. */
+async function transferableCustomerTicket() {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ code: string; title: string }>(`
+      SELECT t.code, e.title
+      FROM "IssuedTicket" t
+      JOIN "User" u ON u.id = t."holderUserId"
+      JOIN "Order" o ON o.id = t."orderId"
+      JOIN "Event" e ON e.id = t."eventId"
+      WHERE u.email = $1 AND t.status = 'VALID' AND o.status = 'PAID'
+        AND e.status = 'PUBLISHED'
+        AND e."startsAt" - e."transferDeadlineHours" * interval '1 hour' > now()
+        AND EXISTS (
+          SELECT 1 FROM "OrganizationMember" m JOIN "User" producer ON producer.id = m."userId"
+          WHERE m."organizationId" = e."organizationId" AND producer.email = $2 AND m.role = 'OWNER'
+        )
+        AND NOT EXISTS (SELECT 1 FROM "TicketTransfer" pending WHERE pending."ticketId" = t.id AND pending.status = 'PENDING')
+        AND (SELECT count(*) FROM "TicketTransfer" accepted WHERE accepted."ticketId" = t.id AND accepted.status = 'ACCEPTED') < e."transferMaxTransfers"
+      ORDER BY t.id LIMIT 1`, [USERS.customer, USERS.producer]);
+    expect(rows[0], "Ingresso válido e transferível do cliente em evento do produtor").toBeTruthy();
+    return rows[0];
+  } finally {
+    await client.end();
+  }
+}
+
 test("transferência: envia em Meus ingressos → outra conta aceita → QR antigo recusado na portaria", async ({ browser }) => {
+  test.skip(process.env.E2E_ISOLATED !== "1", "Transferência e check-in somente no banco descartável do E2E isolado.");
+  const { code, title } = await transferableCustomerTicket();
   const sender = await (await browser.newContext()).newPage();
   await login(sender, USERS.customer, "/meus-ingressos");
-  const festival = sender.locator("li").filter({ has: sender.getByRole("heading", { name: "Festival Litoral Sonoro" }) });
-  const row = festival.getByTestId("my-ticket").filter({ has: sender.getByRole("button", { name: /^Transferir/ }) }).first();
-  const code = (await row.locator('a[href^="/ingressos/"]').getAttribute("href"))!.split("/").pop()!;
   const before = await qrPayloadFor(code);
 
   // Link da página do ingresso (contrato com check-in): já abre o formulário daquele ingresso.
@@ -27,18 +55,18 @@ test("transferência: envia em Meus ingressos → outra conta aceita → QR anti
   // A amiga aceita na própria lista.
   const friend = await (await browser.newContext()).newPage();
   await login(friend, FRIEND, "/meus-ingressos");
-  const incoming = friend.getByTestId("incoming-transfer").filter({ hasText: "Festival Litoral Sonoro" });
+  const incoming = friend.getByTestId("incoming-transfer").filter({ hasText: title });
   await expect(incoming).toBeVisible();
   await incoming.getByRole("button", { name: "Aceitar" }).click();
   // Aceita: vai para o ingresso, agora no nome dela.
   await friend.waitForURL(new RegExp(`/ingressos/${code}$`));
   await friend.goto("/meus-ingressos");
   await expect(friend.locator(`#ingresso-${code}`)).toBeVisible();
-  await expect(friend.getByTestId("incoming-transfer").filter({ hasText: "Festival Litoral Sonoro" })).toHaveCount(0);
+  await expect(friend.getByTestId("incoming-transfer").filter({ hasText: title })).toHaveCount(0);
 
   // Quem enviou vê o histórico; o ingresso sai da lista.
   await sender.reload();
-  await expect(sender.getByTestId("transferred-away").filter({ hasText: "Festival Litoral Sonoro" }).first()).toContainText("Ana Amiga");
+  await expect(sender.getByTestId("transferred-away").filter({ hasText: title }).first()).toContainText("Ana Amiga");
   await expect(sender.locator(`#ingresso-${code}`)).toHaveCount(0);
 
   // Portaria: o QR antigo não vale; o novo libera a entrada.
@@ -58,6 +86,7 @@ test("transferência: envia em Meus ingressos → outra conta aceita → QR anti
 });
 
 test("alteração relevante: o pedido mostra o que mudou e o reembolso integral até a data", async ({ page }) => {
+  test.skip(process.env.E2E_ISOLATED !== "1", "Reembolso somente no banco descartável do E2E isolado.");
   await login(page, USERS.customer, "/meus-pedidos");
   await page.getByRole("link").filter({ hasText: "Pôr do Sol Eletrônico" }).first().click();
   await page.waitForURL(/\/pedido\//);
@@ -74,6 +103,7 @@ test("alteração relevante: o pedido mostra o que mudou e o reembolso integral 
 });
 
 test("pedido de cancelamento: pela central de ajuda, com protocolo, e listado nos pedidos", async ({ page }) => {
+  test.skip(process.env.E2E_ISOLATED !== "1", "Pedido de cancelamento somente no banco descartável do E2E isolado.");
   await login(page, USERS.customer, "/ajuda#cancelamento");
   // O pedido do Festival já tem um aberto (seed): aparece com o protocolo.
   await expect(page.getByTestId("cancellation-requests")).toContainText("SEED01");
