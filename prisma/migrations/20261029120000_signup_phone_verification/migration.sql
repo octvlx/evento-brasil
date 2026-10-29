@@ -25,7 +25,6 @@ CREATE TABLE "PhoneVerificationChallenge" (
 );
 
 CREATE UNIQUE INDEX "PhoneVerificationChallenge_tokenHash_key" ON "PhoneVerificationChallenge"("tokenHash");
-CREATE UNIQUE INDEX "PhoneVerificationChallenge_providerVerificationSid_key" ON "PhoneVerificationChallenge"("providerVerificationSid");
 CREATE INDEX "PhoneVerificationChallenge_phone_createdAt_idx" ON "PhoneVerificationChallenge"("phone", "createdAt");
 CREATE INDEX "PhoneVerificationChallenge_clientKeyHash_createdAt_idx" ON "PhoneVerificationChallenge"("clientKeyHash", "createdAt");
 CREATE INDEX "PhoneVerificationChallenge_expiresAt_idx" ON "PhoneVerificationChallenge"("expiresAt");

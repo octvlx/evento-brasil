@@ -68,7 +68,7 @@ model PhoneVerificationChallenge {
   email                   String
   phone                   String
   clientKeyHash           String
-  providerVerificationSid String?   @unique
+  providerVerificationSid String?
   expiresAt               DateTime  @db.Timestamptz(3)
   verifiedAt              DateTime? @db.Timestamptz(3)
   consumedAt              DateTime? @db.Timestamptz(3)
