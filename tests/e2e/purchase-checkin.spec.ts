@@ -1,3 +1,4 @@
+import { proceedThroughReview } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { login, qrPayloadFor, USERS } from "./helpers";
 
@@ -9,9 +10,9 @@ test("compra com PIX simulado → ingresso com QR → check-in → leitura dupli
   const lote = buyer.locator("li").filter({ hasText: "Lote promocional" });
   await lote.getByRole("button", { name: "Aumentar" }).click();
   await expect(buyer.getByText("Ingressos (1)")).toBeVisible();
-  await buyer.getByRole("button", { name: "Continuar para o pagamento" }).click();
+  await buyer.getByRole("button", { name: "Continuar para revisão" }).click();
 
-  await buyer.waitForURL(/\/checkout\//);
+  await proceedThroughReview(buyer);
   await expect(buyer.getByText("Pagamento simulado.")).toBeVisible();
   await buyer.getByRole("button", { name: "Gerar PIX" }).click();
   await expect(buyer.getByText(/SIMULADO-NAO-PAGUE/)).toBeVisible();
@@ -75,8 +76,8 @@ test("meia-entrada: a portaria vê o aviso para exigir o documento, também no d
   const meia = buyer.locator("li").filter({ hasText: "Meia-entrada" });
   await meia.getByRole("button", { name: "Aumentar" }).click();
   await buyer.getByRole("checkbox", { name: /direito à meia-entrada/ }).check();
-  await buyer.getByRole("button", { name: "Continuar para o pagamento" }).click();
-  await buyer.waitForURL(/\/checkout\//);
+  await buyer.getByRole("button", { name: "Continuar para revisão" }).click();
+  await proceedThroughReview(buyer);
   await buyer.getByRole("button", { name: "Gerar PIX" }).click();
   await buyer.getByRole("button", { name: "Aprovar PIX" }).click();
   await buyer.waitForURL(/\/pedido\//);

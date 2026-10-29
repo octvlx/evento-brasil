@@ -1,3 +1,4 @@
+import { proceedThroughReview } from "./helpers";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import pg from "pg";
@@ -72,8 +73,8 @@ test("página de cidade e 404 para evento inexistente", async ({ page }) => {
 test("reembolso: pedido mostra a situação e os ingressos ficam cancelados com o motivo", async ({ page }) => {
   await login(page, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
   await page.locator("li").filter({ hasText: "Lote promocional" }).getByRole("button", { name: "Aumentar" }).click();
-  await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
-  await page.waitForURL(/\/checkout\//);
+  await page.getByRole("button", { name: "Continuar para revisão" }).click();
+  await proceedThroughReview(page);
   await page.getByRole("button", { name: "Gerar PIX" }).click();
   await page.getByRole("button", { name: "Aprovar PIX" }).click();
   await page.waitForURL(/\/pedido\//);
@@ -110,15 +111,16 @@ test("link rastreado → cupom pré-aplicado → pedido com desconto", async ({ 
   await expect(coupon).toHaveValue(couponCode);
   await page.locator("li").filter({ hasText: "Inteira" }).getByRole("button", { name: "Aumentar" }).click();
 
-  // Erro do serviço aparece junto ao campo; o comprador pode trocar ou remover o cupom.
+  // The authoritative coupon validation now happens on the review step.
   await coupon.fill("NAOEXISTE");
-  await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
+  await page.getByRole("button", { name: "Continuar para revisão" }).click();
+  await page.waitForURL(/\/checkout\/revisao\//);
+  await page.getByRole("button", { name: "Revisar valores e ingressos" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Cupom inválido ou indisponível." })).toBeVisible();
-  await expect(coupon).toHaveAttribute("aria-invalid", "true");
-
-  await coupon.fill(couponCode.toLowerCase());
-  await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
-  await page.waitForURL(/\/checkout\//);
+  await page.getByRole("button", { name: "Alterar ingressos", exact: true }).click();
+  await page.getByLabel("Cupom de desconto", { exact: true }).filter({ visible: true }).fill(couponCode.toLowerCase());
+  await page.getByRole("button", { name: "Salvar ingressos e voltar à revisão" }).click();
+  await proceedThroughReview(page);
   // O Next mantém a página anterior oculta no DOM: só o resumo visível.
   const summary = page.locator("dl:visible").filter({ hasText: "Subtotal" });
   await expect(summary).toContainText("1× Inteira");
@@ -176,8 +178,8 @@ test.describe("preço total com taxa (Decreto 13.108/2026)", () => {
     await expect(ticket.getByTestId("ticket-total")).toHaveText(/R\$\s166,50/);
     await expect(ticket).toContainText(/R\$\s150,00 \+ R\$\s16,50 de taxa de serviço/);
     await ticket.getByRole("button", { name: "Aumentar" }).click();
-    await page.getByRole("button", { name: "Continuar para o pagamento" }).click();
-    await page.waitForURL(/\/checkout\//);
+    await page.getByRole("button", { name: "Continuar para revisão" }).click();
+    await proceedThroughReview(page);
     const total = page.locator("dl div").filter({ has: page.getByText("Total", { exact: true }) }).last();
     await expect(total).toContainText(/R\$\s166,50/);
 

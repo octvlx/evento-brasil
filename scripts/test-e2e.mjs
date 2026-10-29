@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { ensureDatabase, startLocalPostgres } from "./pg-local.mjs";
 
 async function freePort() {
@@ -41,6 +42,7 @@ try {
     APP_URL: `http://localhost:${appPort}`,
     E2E_BASE_URL: `http://localhost:${appPort}`,
     E2E_ISOLATED: "1",
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import="${pathToFileURL(path.join(root, "tests/support/checkout-fetch-mock.mjs")).href}"`,
     AUTH_SECRET: randomBytes(32).toString("hex"),
     DATA_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
     CRON_SECRET: randomBytes(16).toString("hex"),
