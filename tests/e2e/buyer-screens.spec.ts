@@ -78,7 +78,7 @@ test("transferência: envia em Meus ingressos → outra conta aceita → QR anti
   const result = (text: string | RegExp) => staff.getByRole("alert").filter({ hasText: text });
   await input.fill(before.payload);
   await staff.getByRole("button", { name: "Validar" }).click();
-  await expect(result(/inválido/i)).toBeVisible();
+  await expect(result("QR SUBSTITUÍDO")).toBeVisible();
   await staff.waitForTimeout(2600);
   await input.fill(after.payload);
   await staff.getByRole("button", { name: "Validar" }).click();

@@ -40,8 +40,9 @@ async function eventWithTicket(hoursUntilStart = 7 * 24) {
     const orderId = `policy-order-${suffix}`;
     const itemId = `policy-item-${suffix}`;
     const ticketId = `policy-ticket-${suffix}`;
-    const code = randomBytes(8).toString("hex").toUpperCase();
-    const startsAt = new Date(Date.now() + hoursUntilStart * HOUR);
+    const code = randomBytes(8).toString("hex").slice(0, 10).toUpperCase();
+    // Match the minute precision of organizer datetime-local fields.
+    const startsAt = new Date(Math.floor((Date.now() + hoursUntilStart * HOUR) / 60_000) * 60_000);
     const timezone = "America/Manaus";
     const insert = async (table: string, record: Record<string, unknown>) => {
       // Table names are constants owned by this helper, never user input.
@@ -62,7 +63,7 @@ async function eventWithTicket(hoursUntilStart = 7 * 24) {
     await insert("OrderItem", { ...source.item, id: itemId, orderId, ticketTypeId: typeId, quantity: 1 });
     await insert("IssuedTicket", {
       ...source.ticket, id: ticketId, code, orderId, orderItemId: itemId, eventId: id, ticketTypeId: typeId,
-      sequence: 1, validationToken: randomBytes(32).toString("hex"),
+      sequence: 1, validationToken: randomBytes(32).toString("base64url"),
     });
     await client.query("COMMIT");
     return { id, title, slug, code, startsAt, timezone };
