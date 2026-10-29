@@ -5,6 +5,7 @@ import { CalendarClock, CheckCircle2, Clock, Download, FileText, RotateCcw, Tick
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { OrderSummary } from "@/components/site/order-summary";
+import { ClearPurchasedCart } from "@/features/orders/persistent-cart";
 import { PendingPoller, RefundButton } from "@/features/orders/order-actions";
 import { CancellationRequestForm } from "@/features/orders/cancellation-form";
 import { CancellationRequestList } from "@/features/orders/cancellation-list";
@@ -37,6 +38,7 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
   const { orderId } = await params;
   const user = await requireUser(`/pedido/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
+  const completedDraft = order.status === "PAID" && order.checkoutReviewRequired ? await db.checkoutDraft.findUnique({ where: { orderId: order.id }, select: { idempotencyKey: true } }) : null;
   const st = ORDER_STATUS[order.status];
   const now = new Date();
   const [changeWindow, cancellations] = await Promise.all([
@@ -56,6 +58,7 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
 
   return (
     <>
+      {completedDraft && <ClearPurchasedCart eventId={order.eventId} idempotencyKey={completedDraft.idempotencyKey} />}
       {order.status === "PENDING_PAYMENT" && <PendingPoller orderId={order.id} />}
       <div className="flex items-start gap-4">
         <Icon className={`size-10 shrink-0 ${order.status === "PAID" ? "text-success" : order.status === "PENDING_PAYMENT" || order.status === "REFUND_PENDING" ? "text-warning" : "text-muted-foreground"}`} aria-hidden />

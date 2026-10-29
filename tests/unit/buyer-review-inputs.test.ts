@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+import { buyerPersonalSchema, buyerAddressSchema } from "@/features/buyer/schemas";
+import { clearPurchasedSelection, decodeCartField } from "@/features/orders/cart-storage";
+
+describe("buyer checkout inputs", () => {
+  it("validates CPF and civil birth dates without inventing an adult-only rule", () => {
+    expect(buyerPersonalSchema.parse({ name: "Pessoa Teste", cpf: "529.982.247-25", birthDate: "2015-04-15" }).cpf).toBe("52998224725");
+    for (const birthDate of ["2025-02-29", "2999-01-01", "2026-13-01"]) expect(buyerPersonalSchema.safeParse({ name: "Pessoa Teste", birthDate }).success).toBe(false);
+    expect(buyerPersonalSchema.safeParse({ name: "Pessoa Teste", cpf: "11111111111", birthDate: "1995-04-15" }).success).toBe(false);
+  });
+  it("supports manual addresses when CEP lookup is unavailable and normalizes CEP", () => {
+    const address = { postalCode: "01001-000", street: "Praça da Sé", number: "s/n", complement: "", district: "Sé", city: "São Paulo", state: "SP" };
+    expect(buyerAddressSchema.parse(address)).toMatchObject({ postalCode: "01001000", number: "s/n", complement: undefined });
+    expect(buyerAddressSchema.safeParse({ ...address, number: "" }).success).toBe(false);
+    expect(buyerAddressSchema.safeParse({ ...address, state: "XX" }).success).toBe(false);
+  });
+});
+describe("durable buyer cart", () => {
+  it("restores valid quantities and rejects malformed or unbounded browser storage", () => {
+    expect(decodeCartField("quantities", '{"ticket":2}', {})).toEqual({ ticket: 2 });
+    for (const raw of ['{"ticket":-1}', '{"ticket":1000000}', '{"ticket":"2"}', 'broken']) expect(decodeCartField("quantities", raw, {})).toEqual({});
+  });
+  it("clears a completed cart for a second purchase while preserving a newer selection", () => {
+    const oldKey = "a387a1bf-7965-4979-ac3e-7209a882e10a"; const newKey = "78d8aee9-9fae-4ed7-875c-97b66149010d";
+    const values = new Map([["eb-cart:event:idempotencyKey", JSON.stringify(newKey)], ["eb-cart:event:quantities", '{"ticket":2}']]);
+    const storage = { getItem: (key: string) => values.get(key) ?? null, removeItem: (key: string) => { values.delete(key); } };
+    expect(clearPurchasedSelection(storage, "event", oldKey)).toBe(false); expect(values.size).toBe(2);
+    expect(clearPurchasedSelection(storage, "event", newKey)).toBe(true); expect(values.size).toBe(0);
+  });
+});
