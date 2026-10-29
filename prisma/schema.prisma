@@ -29,6 +29,8 @@ model User {
   email           String       @unique
   name            String
   phone           String?
+  // Null for legacy accounts; set only after server-side verification.
+  phoneVerifiedAt DateTime?    @db.Timestamptz(3)
   passwordHash    String
   platformRole    PlatformRole @default(USER)
   status          UserStatus   @default(ACTIVE)
@@ -56,6 +58,29 @@ model User {
   cancellationsAssigned CancellationRequest[] @relation("CancellationAssignee")
   cancellationsDecided  CancellationRequest[] @relation("CancellationDecider")
   termsAcceptances      TermsAcceptance[]
+}
+
+// Short-lived signup proof. Store only a hash of the opaque browser token, never OTP codes.
+// A challenge is consumed atomically in the same transaction that creates its user.
+model PhoneVerificationChallenge {
+  id                      String    @id @default(cuid())
+  tokenHash               String    @unique
+  email                   String
+  phone                   String
+  clientKeyHash           String
+  providerVerificationSid String?   @unique
+  expiresAt               DateTime  @db.Timestamptz(3)
+  verifiedAt              DateTime? @db.Timestamptz(3)
+  consumedAt              DateTime? @db.Timestamptz(3)
+  sendCount               Int       @default(0)
+  checkCount              Int       @default(0)
+  lastSentAt              DateTime? @db.Timestamptz(3)
+  createdAt               DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([phone, createdAt])
+  @@index([clientKeyHash, createdAt])
+  @@index([expiresAt])
 }
 
 model Session {
