@@ -39,7 +39,7 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
   const [venueMode, setVenueMode] = useState<"existing" | "new">(defaults.venueId || !venues.length ? (defaults.venueId ? "existing" : "new") : "existing");
   const form = useForm<EventInput>({
     resolver: zodResolver(eventInputSchema),
-    defaultValues: { locationType: "VENUE", timezone: "America/Sao_Paulo", ageRestriction: 0, refundWindowDays: 7, refundMinHoursBeforeEvent: 48, ...defaults },
+    defaultValues: { locationType: "VENUE", timezone: "America/Sao_Paulo", ageRestriction: 0, refundWindowDays: 7, refundMinHoursBeforeEvent: 48, transferDeadlineHours: 24, transferMaxTransfers: 1, transferAllowReturn: false, ...defaults },
   });
   const { errors } = form.formState;
   const locationType = useWatch({ control: form.control, name: "locationType" });
@@ -314,6 +314,25 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
           O comprador pode pedir reembolso integral até esse número de dias após a compra e até essas horas antes do início (padrão: 7 dias e 48 horas). Depois que houver ingressos vendidos, os prazos só podem
           ficar mais favoráveis ao comprador. Configure conforme orientação jurídica.
         </p>
+        <div>
+          <Label htmlFor="transferDeadlineHours">Transferência: horas antes do início</Label>
+          <Input id="transferDeadlineHours" type="number" min={0} max={8760} step="1" className="mt-1.5" {...field("transferDeadlineHours")} {...form.register("transferDeadlineHours")} />
+          <FieldError message={errors.transferDeadlineHours?.message} />
+          <p className="mt-1 text-xs text-muted-foreground">Padrão: 24 horas. Use 0 para permitir até o início.</p>
+        </div>
+        <div>
+          <Label htmlFor="transferMaxTransfers">Máximo de transferências por ingresso</Label>
+          <Input id="transferMaxTransfers" type="number" min={1} max={10} step="1" className="mt-1.5" {...field("transferMaxTransfers")} {...form.register("transferMaxTransfers")} />
+          <FieldError message={errors.transferMaxTransfers?.message} />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" {...form.register("transferAllowReturn")} /> Permitir nova transferência para um titular anterior
+          </label>
+          <FieldError message={errors.transferAllowReturn?.message} />
+          <p className="mt-1 text-xs text-muted-foreground">A devolução exige pedido do titular atual e aceite do destinatário, e consome uma transferência do limite. Permita ao menos 2 para habilitá-la. Não é um desfazer unilateral.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Com ingressos vendidos ou reservados, reduza a antecedência, aumente o limite ou habilite a devolução; os direitos já oferecidos não podem ser reduzidos.</p>
+        </div>
         <div className="sm:col-span-2">
           <Label htmlFor="accessibilityInfo">Acessibilidade</Label>
           <Textarea id="accessibilityInfo" className="mt-1.5" placeholder="Rampas, banheiros adaptados, Libras, espaço para cadeirantes…" {...form.register("accessibilityInfo")} />

@@ -9,9 +9,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { qrPayload } from "@/server/services/tickets";
-import { TRANSFER_POLICY, transferBlockedReason } from "@/server/services/transfers";
+import { transferBlockedReason } from "@/server/services/transfers";
 import { organizerIdentity, organizerIdentityLine } from "@/server/tickets/organizer-identity";
 import { formatDateLong, formatDateTimeShort, formatTime, timezoneLabel } from "@/lib/datetime";
+import { transferCutoff } from "@/lib/transfer-policy";
 import { TICKET_STATUS } from "@/lib/labels";
 import { revocationText } from "@/features/orders/status-view";
 import { PrintButton } from "@/features/orders/print-button";
@@ -37,7 +38,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
     include: { ticketType: true, order: { select: { id: true, publicCode: true, isSimulated: true, status: true } }, event: { include: { venue: { include: { city: true } }, city: true } } },
   });
   if (!t) notFound();
-  // Histórico de transferências do ingresso (poucas linhas: no máximo TRANSFER_POLICY aceitas).
+  // Histórico de transferências do ingresso (poucas linhas: limite de aceites definido no evento).
   const transfers = await db.ticketTransfer.findMany({
     where: { ticketId: t.id },
     orderBy: { createdAt: "desc" },
@@ -54,13 +55,15 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
   }
   const st = TICKET_STATUS[t.status];
   const organizer = await organizerIdentity(db, t.event.organizationId);
-  const pendingOut = transfers.find((tr) => tr.status === "PENDING" && tr.fromUserId === user.id && tr.expiresAt && tr.expiresAt > now);
+  const cutoff = transferCutoff(t.event.startsAt, t.event);
+  const pendingOut = transfers.find((tr) => tr.status === "PENDING" && tr.fromUserId === user.id && tr.expiresAt && Math.min(tr.expiresAt.getTime(), cutoff.getTime()) > now.getTime());
+  const pendingExpiresAt = pendingOut?.expiresAt ? new Date(Math.min(pendingOut.expiresAt.getTime(), cutoff.getTime())) : null;
   const received = transfers.find((tr) => tr.status === "ACCEPTED" && tr.toUserId === user.id);
   const acceptedCount = transfers.filter((tr) => tr.status === "ACCEPTED").length;
   // Contrato com paginas-publicas (Fase 4): o formulário de transferência fica em
   // /meus-ingressos e abre para o ingresso indicado em ?transferir=<código>.
   // Pendente vencida não bloqueia: requestTransfer a expira antes de criar a nova.
-  const canTransfer = !pendingOut && transferBlockedReason(t, now) === null && acceptedCount < TRANSFER_POLICY.maxTransfersPerTicket;
+  const canTransfer = !pendingOut && transferBlockedReason(t, now) === null && acceptedCount < t.event.transferMaxTransfers;
   const city = t.event.venue?.city ?? t.event.city;
   // Botões de carteira só quando a conta da Apple/Google estiver configurada (docs/wallet.md).
   const wallet = t.status === "VALID" ? walletAvailability() : { apple: false, google: false };
@@ -115,7 +118,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
           {pendingOut && (
             <Alert variant="warning" className="mt-4 text-left print:hidden">
               Transferência pendente para <strong>{pendingOut.toHolderName ?? pendingOut.toEmail}</strong> ({pendingOut.toEmail})
-              {pendingOut.expiresAt && <>, válida até {formatDateTimeShort(pendingOut.expiresAt, tz)}</>}. O ingresso continua com você até o aceite.{" "}
+              {pendingExpiresAt && <>, válida até {formatDateTimeShort(pendingExpiresAt, tz)}</>}. O ingresso continua com você até o aceite.{" "}
               <Link href="/meus-ingressos" className="font-semibold underline">
                 Gerenciar ou cancelar
               </Link>
