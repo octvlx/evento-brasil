@@ -98,21 +98,22 @@ model EmailVerificationToken {
 
 // Carrinho persistido: não representa estoque reservado nem pagamento confirmado.
 model CheckoutDraft {
-  id          String    @id @default(cuid())
-  tokenHash   String    @unique
-  userId      String?
-  eventId     String
-  selection   Json
-  revision    Int       @default(0)
-  expiresAt   DateTime  @db.Timestamptz(3)
-  orderId     String?   @unique
-  reviewHash  String?
-  confirmedAt DateTime? @db.Timestamptz(3)
-  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
-  user        User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
-  event       Event     @relation(fields: [eventId], references: [id], onDelete: Restrict)
-  order       Order?    @relation(fields: [orderId, userId, eventId], references: [id, userId, eventId], onDelete: Restrict, onUpdate: Cascade)
+  idempotencyKey String    @unique
+  id             String    @id @default(cuid())
+  tokenHash      String    @unique
+  userId         String?
+  eventId        String
+  selection      Json
+  revision       Int       @default(0)
+  expiresAt      DateTime  @db.Timestamptz(3)
+  orderId        String?   @unique
+  reviewHash     String?
+  confirmedAt    DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  user           User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  event          Event     @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  order          Order?    @relation(fields: [orderId, userId, eventId], references: [id, userId, eventId], onDelete: Restrict, onUpdate: Cascade)
 
   @@unique([orderId, userId, eventId])
   @@index([userId, updatedAt])

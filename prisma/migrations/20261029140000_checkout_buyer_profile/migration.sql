@@ -40,6 +40,7 @@ CREATE TABLE "EmailVerificationToken" (
 
 -- CreateTable
 CREATE TABLE "CheckoutDraft" (
+    "idempotencyKey" TEXT NOT NULL,
     "id" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
     "userId" TEXT,
@@ -127,3 +128,5 @@ ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_hashes" CHECK (
 ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_revision" CHECK ("revision" >= 0);
 ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_selection_object" CHECK (jsonb_typeof("selection") = 'object');
 ALTER TABLE "CheckoutDraft" ADD CONSTRAINT "CheckoutDraft_link_requires_owner" CHECK ("orderId" IS NULL OR "userId" IS NOT NULL);
+
+CREATE UNIQUE INDEX "CheckoutDraft_idempotencyKey_key" ON "CheckoutDraft"("idempotencyKey");
