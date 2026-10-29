@@ -25,7 +25,7 @@ async function Content() {
   const org = active ? await db.organization.findUnique({ where: { id: active.organizationId } }) : null;
   return (
     <>
-      <PageTitle title="Venda ingressos no Evento Brasil" subtitle="Cadastre sua organização. Após a aprovação, você poderá publicar eventos." />
+      <PageTitle title="Venda ingressos no Evento Brasil" subtitle="Identifique o responsável pela organização. Esta análise é separada da sua conta de comprador e da verificação para recebimentos." />
       {org?.status === "REJECTED" && (
         <Alert variant="danger" className="mb-6">
           Seu cadastro anterior foi recusado: {org.statusReason ?? "sem motivo informado"}. Corrija os dados e envie novamente.

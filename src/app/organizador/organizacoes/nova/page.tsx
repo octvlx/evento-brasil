@@ -25,7 +25,7 @@ async function Content() {
   ]);
   return (
     <>
-      <PageTitle title="Nova organização" subtitle="Você será o responsável (OWNER). A nova organização passa por análise antes de publicar eventos." />
+      <PageTitle title="Nova organização" subtitle="Você será o responsável (OWNER). Cada organização passa por análise própria; a verificação para recebimentos é feita separadamente pelo provedor de pagamento." />
       {pending >= MAX_PENDING_APPLICATIONS && (
         <Alert variant="warning" className="mb-6">
           Você já tem {pending} cadastros aguardando análise — o limite é {MAX_PENDING_APPLICATIONS}. Aguarde a resposta antes de criar outra organização.

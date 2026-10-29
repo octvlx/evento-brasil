@@ -42,6 +42,12 @@ export function ApplicationForm({
 
   return (
     <form onSubmit={onSubmit} className="grid gap-5 sm:grid-cols-2" noValidate>
+      <div className="sm:col-span-2 rounded-xl bg-muted p-4 text-sm">
+        <p className="font-semibold">Identificação do organizador</p>
+        <p className="mt-1 text-muted-foreground">
+          Sua conta de comprador já está criada. Estes dados identificam a pessoa ou empresa responsável pela organização e são analisados separadamente.
+        </p>
+      </div>
       <fieldset className="sm:col-span-2">
         <legend className="mb-2 text-sm font-medium">Tipo de cadastro</legend>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -82,7 +88,7 @@ export function ApplicationForm({
         />
         <FieldError message={errors.document?.message} />
         <p id="doc-help" className="mt-1 text-xs text-muted-foreground">
-          Necessário para repasses e obrigações fiscais. Armazenado cifrado; exibimos apenas os últimos dígitos.
+          Usado na análise do organizador, separado do cadastro de comprador. Armazenamos o documento cifrado e mostramos apenas os últimos dígitos neste cadastro.
         </p>
       </div>
       <div>
@@ -130,7 +136,7 @@ export function ApplicationForm({
           {pending ? "Enviando…" : "Enviar para análise"}
         </Button>
         <p className="mt-2 text-xs text-muted-foreground">
-          A equipe da plataforma analisa o cadastro. A verificação de identidade para recebimentos é feita pelo provedor de pagamento na conexão da conta.
+          A aprovação deste cadastro permite organizar eventos na plataforma. Para receber pagamentos, o provedor fará sua própria verificação de identidade e poderá solicitar dados e documentos adicionais. A aprovação da plataforma não substitui essa verificação.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           Ao enviar, você aceita os <Link href="/termos" target="_blank" className="text-secondary underline">termos para organizadores</Link> em nome da organização.
