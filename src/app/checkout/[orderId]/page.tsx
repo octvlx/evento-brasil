@@ -43,6 +43,9 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
     : pix?.pixCopyPaste
       ? await QRCode.toDataURL(pix.pixCopyPaste, { margin: 1, width: 448 })
       : null;
+  // Request-time server snapshot, serialized for the client's identical first render.
+  // eslint-disable-next-line react-hooks/purity -- Async Server Component has already read uncached authenticated data.
+  const initialNow = Date.now();
   return (
     <div className="mt-6 grid gap-8 lg:grid-cols-[1fr_360px]">
       <div className="space-y-4">
@@ -61,6 +64,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
         ) : <CheckoutPanel
           orderId={order.id}
           expiresAt={order.expiresAt.toISOString()}
+          initialNow={initialNow}
           isSimulated={order.isSimulated}
           pendingPix={pix ? { copyPaste: pix.pixCopyPaste, qrDataUrl } : null}
           cardProcessing={step === "card-processing"}
