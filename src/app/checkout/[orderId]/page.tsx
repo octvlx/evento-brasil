@@ -32,6 +32,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
   const user = await requireUser(`/checkout/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
   if (order.status !== "PENDING_PAYMENT") redirect(`/pedido/${orderId}`);
+  const adapter = getPaymentAdapter();
   const step = checkoutStep(order.payments);
   const termsPending = (await pendingTermsKinds(db, user.id)).length > 0;
   const confirmingPayment = order.payments.some((p) => p.status === "PENDING" && (!p.providerPaymentId || (p.method === "PIX" && !p.pixCopyPaste && !p.pixQrCodeBase64)));
@@ -53,7 +54,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
             </span>
           </Alert>
         )}
-        {getPaymentAdapter().supportedMethods.length === 0 ? (
+        {adapter.supportedMethods.length === 0 ? (
           <Alert variant="warning">O pagamento está temporariamente indisponível. Nenhuma nova cobrança será iniciada.</Alert>
         ) : confirmingPayment ? (
           <Alert variant="warning">Estamos confirmando seu pagamento. Acompanhe o pedido antes de tentar novamente.</Alert>
@@ -64,6 +65,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
           pendingPix={pix ? { copyPaste: pix.pixCopyPaste, qrDataUrl } : null}
           cardProcessing={step === "card-processing"}
           termsPending={termsPending}
+          payerRequirements={{ PIX: adapter.payerRequirements?.("PIX") ?? {}, CREDIT_CARD: adapter.payerRequirements?.("CREDIT_CARD") ?? {} }}
         />}
       </div>
       <Card className="h-fit p-5">

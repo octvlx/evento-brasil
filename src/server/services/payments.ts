@@ -2,6 +2,7 @@
 // status autoritativo do provedor. Um redirect de checkout NUNCA confirma
 // pagamento; só `getPayment` no provedor, após webhook verificado ou consulta.
 import "server-only";
+import { payerDetailsSchema } from "@/features/orders/payer-details";
 import type { Prisma } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
@@ -20,7 +21,7 @@ export async function startPayment(
   actor: Actor,
   orderId: string,
   method: "PIX" | "CREDIT_CARD",
-  opts: { simulatedCardOutcome?: "approve" | "decline" } = {},
+  opts: { simulatedCardOutcome?: "approve" | "decline"; payerDetails?: unknown } = {},
 ) {
   assertActive(actor);
   if (!adapter.supportedMethods.includes(method)) throw new AppError("VALIDATION", "Forma de pagamento indisponível.");
@@ -55,6 +56,8 @@ export async function startPayment(
           : "Já há um pagamento com cartão em processamento para este pedido. Aguarde o resultado.",
       );
     }
+    const parsedPayer = payerDetailsSchema(adapter.payerRequirements?.(method) ?? {}).safeParse(opts.payerDetails ?? {});
+    if (!parsedPayer.success) throw new AppError("VALIDATION", "Preencha os dados de pagamento solicitados pelo provedor com informações válidas.");
     const attempts = await tx.payment.count({ where: { orderId } });
     const payment = await tx.payment.create({
       data: {
@@ -66,7 +69,7 @@ export async function startPayment(
         idempotencyKey: `${orderId}:${method}:${attempts + 1}`,
       },
     });
-    return { kind: "new", payment, order } as const;
+    return { kind: "new", payment, order, payerDetails: parsedPayer.data } as const;
   }, TX_OPTIONS);
   if (decision.kind === "reuse") return decision.payment;
   if (decision.kind === "await") return awaitPixInFlight(db, decision.paymentId);
@@ -80,7 +83,7 @@ export async function startPayment(
       amountCents: order.totalCents,
       method,
       description: `${order.event.title} — pedido ${order.publicCode}`,
-      payer: { email: order.buyerEmail, name: order.buyerName },
+      payer: { email: order.buyerEmail, name: order.buyerName, ...decision.payerDetails },
       expiresAt: order.expiresAt,
       idempotencyKey: payment.idempotencyKey,
       marketplace: { sellerAccountId: order.organization.paymentAccountExternalId, applicationFeeCents: order.commissionCents },

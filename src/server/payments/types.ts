@@ -5,13 +5,24 @@ export type ProviderMethod = "PIX" | "CREDIT_CARD";
 
 export type ProviderPaymentStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "CANCELLED" | "REFUNDED" | "DISPUTED" | "CHARGED_BACK";
 
+export interface PayerRequirements {
+  /** Only declare fields verified as necessary for this provider/method. */
+  document?: readonly ("CPF" | "CNPJ")[];
+  billingAddress?: boolean;
+}
+
+export interface PaymentPayerDetails {
+  document?: { type: "CPF" | "CNPJ"; number: string };
+  billingAddress?: { postalCode: string; street: string; number: string; district: string; city: string; state: string; country: "BR" };
+}
+
 export interface CreatePaymentInput {
   /** Nosso Payment.id — enviado como referência externa. */
   paymentId: string;
   amountCents: number;
   method: ProviderMethod;
   description: string;
-  payer: { email: string; name: string };
+  payer: { email: string; name: string } & PaymentPayerDetails;
   /** Prazo do provedor alinhado ao fim da reserva de estoque. */
   expiresAt: Date;
   idempotencyKey: string;
@@ -67,6 +78,7 @@ export interface PaymentProviderAdapter {
   readonly id: string;
   readonly isSimulated: boolean;
   readonly supportedMethods: readonly ProviderMethod[];
+  payerRequirements?(method: ProviderMethod): PayerRequirements;
   createPayment(input: CreatePaymentInput): Promise<CreatedPayment>;
   getPayment(providerPaymentId: string): Promise<ProviderPaymentSnapshot>;
   refundPayment(input: { providerPaymentId: string; amountCents: number; idempotencyKey: string }): Promise<RefundResult>;

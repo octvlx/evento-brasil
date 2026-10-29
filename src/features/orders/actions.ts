@@ -57,7 +57,7 @@ export async function captureUtmAction(params: Record<string, string>): Promise<
   if (utms) (await cookies()).set(ATTR_COOKIE, encodeAttribution(utms), attributionCookieOptions());
 }
 
-export async function startPaymentAction(orderId: string, method: "PIX" | "CREDIT_CARD", simulatedCardOutcome?: "approve" | "decline", acceptTerms?: boolean) {
+export async function startPaymentAction(orderId: string, method: "PIX" | "CREDIT_CARD", simulatedCardOutcome?: "approve" | "decline", acceptTerms?: boolean, payerDetails?: unknown) {
   const user = await requireUser(`/checkout/${orderId}`);
   const client = await clientKey();
   const result = await toActionResult(async () => {
@@ -69,7 +69,7 @@ export async function startPaymentAction(orderId: string, method: "PIX" | "CREDI
       if (!own) throw new AppError("FORBIDDEN", "Pedido não encontrado.");
       await recordCheckoutAcceptance(user.id, pendingTerms, orderId, client);
     }
-    return startPayment(db, getPaymentAdapter(), user, orderId, method, { simulatedCardOutcome });
+    return startPayment(db, getPaymentAdapter(), user, orderId, method, { simulatedCardOutcome, payerDetails });
   });
   if (!result.ok) return result;
   refresh();

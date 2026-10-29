@@ -6,6 +6,9 @@ import { Copy, CreditCard, FlaskConical, Loader2, QrCode, TimerReset } from "luc
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import { PayerFields } from "./payer-fields";
+import { payerDetailsSchema } from "./payer-details";
+import type { PaymentPayerDetails, PayerRequirements, ProviderMethod } from "@/server/payments/types";
 import { TermsReaccept } from "@/features/auth/terms-reaccept";
 import { simulatePaymentAction, startPaymentAction } from "./actions";
 
@@ -18,6 +21,7 @@ interface Props {
   cardProcessing: boolean;
   /** Há versão vigente dos termos não aceita pelo comprador (R10). */
   termsPending: boolean;
+  payerRequirements?: Partial<Record<ProviderMethod, PayerRequirements>>;
 }
 
 function useCountdown(target: string) {
@@ -29,9 +33,11 @@ function useCountdown(target: string) {
   return Math.max(0, left);
 }
 
-export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, cardProcessing, termsPending }: Props) {
+export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, cardProcessing, termsPending, payerRequirements = {} }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<"PIX" | "CREDIT_CARD">("PIX");
+  const [payerDetails, setPayerDetails] = useState<PaymentPayerDetails>({});
+  const requirements = payerRequirements[method] ?? {};
   const [cardOutcome, setCardOutcome] = useState<"approve" | "decline">("approve");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -46,7 +52,9 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, car
   const pay = () =>
     start(async () => {
       setError(null);
-      const res = await startPaymentAction(orderId, method, method === "CREDIT_CARD" && isSimulated ? cardOutcome : undefined, termsRequired ? acceptTerms : undefined);
+      const parsed = payerDetailsSchema(requirements).safeParse(payerDetails);
+      if (!parsed.success) { setError("Preencha os dados de pagamento solicitados pelo provedor com informações válidas."); return; }
+      const res = await startPaymentAction(orderId, method, method === "CREDIT_CARD" && isSimulated ? cardOutcome : undefined, termsRequired ? acceptTerms : undefined, parsed.data);
       if (!res.ok) {
         setError(res.error);
         if (res.code === "TERMS_REQUIRED") setTermsRequired(true);
@@ -134,7 +142,7 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, car
                   value === "CREDIT_CARD" && !isSimulated && "pointer-events-none opacity-50",
                 )}
               >
-                <input type="radio" name="method" value={value} checked={method === value} onChange={() => setMethod(value)} className="sr-only" disabled={value === "CREDIT_CARD" && !isSimulated} />
+                <input type="radio" name="method" value={value} checked={method === value} onChange={() => { setMethod(value); setPayerDetails({}); setError(null); }} className="sr-only" disabled={value === "CREDIT_CARD" && !isSimulated} />
                 <Icon className="size-5 text-secondary" aria-hidden />
                 <span>
                   <span className="block font-semibold">{label}</span>
@@ -155,6 +163,7 @@ export function CheckoutPanel({ orderId, expiresAt, isSimulated, pendingPix, car
               </div>
             </div>
           )}
+          <PayerFields requirements={requirements} value={payerDetails} onChange={setPayerDetails} disabled={pending || expired} />
           {termsRequired && <TermsReaccept checked={acceptTerms} onChange={setAcceptTerms} />}
           <Button size="lg" variant="accent" className="w-full" onClick={pay} disabled={pending || expired || (termsRequired && !acceptTerms)}>
             {pending ? "Processando…" : method === "PIX" ? "Gerar PIX" : "Pagar com cartão"}
