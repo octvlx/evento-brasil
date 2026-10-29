@@ -8,6 +8,7 @@ import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import type { PaymentProviderAdapter, ProviderPaymentSnapshot, WebhookRequest } from "../payments/types";
+import { assertCheckoutReviewed } from "./checkout-review";
 import { financeLog } from "./finance-log";
 import { postProcessingFee, postReversal, postSale } from "./ledger";
 import { acquireLateInventoryTx, finalizePaidOrderTx, lockEvent, lockOrder, releaseOrderTx } from "./orders";
@@ -33,6 +34,7 @@ export async function startPayment(
     if (exists.userId !== actor.id) throw forbidden();
     await lockOrder(tx, orderId);
     const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { event: { select: { title: true } }, organization: true } });
+    await assertCheckoutReviewed(tx, order);
     if (order.status !== "PENDING_PAYMENT") throw invalidState("Este pedido não está aguardando pagamento.");
     if (order.expiresAt <= new Date()) throw new AppError("SALES_CLOSED", "A reserva expirou. Faça um novo pedido.");
     if (order.totalCents === 0) throw invalidState("Pedido gratuito não requer pagamento.");
