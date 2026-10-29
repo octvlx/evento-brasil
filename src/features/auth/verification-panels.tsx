@@ -14,12 +14,13 @@ function subscribeHash(callback: () => void) { window.addEventListener("hashchan
 export function EmailConfirmationPanel({ next, email, emailVerified }: { next: string; email: string | null; emailVerified: boolean }) {
   const fragment = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
   const token = new URLSearchParams(fragment.slice(1)).get("token");
-  const [pending, start] = useTransition(); const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [confirmed, setConfirmed] = useState(emailVerified);
+  const [pending, start] = useTransition(); const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [confirmed, setConfirmed] = useState(false);
+  const alreadyVerified = confirmed || (emailVerified && !token);
   const router = useRouter();
   return <div className="space-y-4">
-    <p className="text-sm text-muted-foreground">{confirmed ? "Seu e-mail está confirmado." : email ? `Confirme o acesso a ${email} para continuar sua compra. Seu carrinho permanece salvo.` : "Confirme seu e-mail pelo link recebido. Depois, entre na sua conta para continuar."}</p>
-    {token && !confirmed && <Button disabled={pending} onClick={() => start(async () => { setError(""); const result = await confirmEmailAction(token); if (result.ok) { setConfirmed(true); setMessage("E-mail confirmado com sucesso."); window.history.replaceState(null, "", window.location.pathname + window.location.search); router.refresh(); } else setError(result.error); })}>Confirmar meu e-mail</Button>}
-    {email && !confirmed && <Button variant="outline" disabled={pending} onClick={() => start(async () => { setError(""); const result = await resendEmailConfirmationAction(next); if (result.ok) setMessage("Enviamos um link de confirmação para seu e-mail. Confira também a caixa de spam."); else setError(result.error); })}>Reenviar e-mail de confirmação</Button>}
+    <p className="text-sm text-muted-foreground">{alreadyVerified ? "Seu e-mail está confirmado." : token ? "Confirme o e-mail associado ao link recebido. Essa confirmação não troca a conta conectada." : email ? `Confirme o acesso a ${email} para continuar sua compra. Seu carrinho permanece salvo.` : "Confirme seu e-mail pelo link recebido. Depois, entre na sua conta para continuar."}</p>
+    {token && !alreadyVerified && <Button disabled={pending} onClick={() => start(async () => { setError(""); const result = await confirmEmailAction(token); if (result.ok) { setConfirmed(true); setMessage("E-mail confirmado com sucesso."); window.history.replaceState(null, "", window.location.pathname + window.location.search); router.refresh(); } else setError(result.error); })}>Confirmar meu e-mail</Button>}
+    {email && !alreadyVerified && <Button variant="outline" disabled={pending} onClick={() => start(async () => { setError(""); const result = await resendEmailConfirmationAction(next); if (result.ok) setMessage("Enviamos um link de confirmação para seu e-mail. Confira também a caixa de spam."); else setError(result.error); })}>Reenviar e-mail de confirmação</Button>}
     {error && <div role="alert"><Alert variant="danger">{error}</Alert></div>}
     {message && <p role="status" className="text-sm">{message}</p>}
     <Link href={email ? next : `/entrar?next=${encodeURIComponent(next)}`} className="block font-semibold text-secondary underline">{email ? "Voltar e continuar" : "Entrar e continuar"}</Link>
