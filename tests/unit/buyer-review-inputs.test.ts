@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buyerPersonalSchema, buyerAddressSchema } from "@/features/buyer/schemas";
-import { clearPurchasedSelection, decodeCartField } from "@/features/orders/cart-storage";
+import { acceptedCartEntries, clearPurchasedSelection, decodeCartField, persistAcceptedCartSelection } from "@/features/orders/cart-storage";
 
 describe("buyer checkout inputs", () => {
   it("validates CPF and civil birth dates without inventing an adult-only rule", () => {
@@ -22,6 +22,18 @@ describe("buyer checkout inputs", () => {
   });
 });
 describe("durable buyer cart", () => {
+  it("syncs accepted ticket edits without buyer data and keeps the original checkout key", () => {
+    const key = "a387a1bf-7965-4979-ac3e-7209a882e10a";
+    const entries = acceptedCartEntries({ eventId: "event", items: [{ ticketTypeId: "ticket", quantity: 2 }], buyerName: "Private Buyer", buyerEmail: "private@example.test", couponCode: "PROMO10", halfPriceDeclaration: true, idempotencyKey: key });
+    expect(entries).not.toBeNull();
+    const values = new Map<string, string>();
+    expect(persistAcceptedCartSelection({ setItem: (name, value) => { values.set(name, value); } }, entries!)).toBe(true);
+    expect(decodeCartField("quantities", values.get("eb-cart:event:quantities") ?? null, {})).toEqual({ ticket: 2 });
+    expect(JSON.parse(values.get("eb-cart:event:coupon")!)).toBe("PROMO10");
+    expect(JSON.parse(values.get("eb-cart:event:idempotencyKey")!)).toBe(key);
+    expect(JSON.stringify([...values])).not.toMatch(/Private Buyer|private@example/);
+    expect(persistAcceptedCartSelection({ setItem: () => { throw new Error("storage unavailable"); } }, entries!)).toBe(false);
+  });
   it("restores valid quantities and rejects malformed or unbounded browser storage", () => {
     expect(decodeCartField("quantities", '{"ticket":2}', {})).toEqual({ ticket: 2 });
     for (const raw of ['{"ticket":-1}', '{"ticket":1000000}', '{"ticket":"2"}', 'broken']) expect(decodeCartField("quantities", raw, {})).toEqual({});

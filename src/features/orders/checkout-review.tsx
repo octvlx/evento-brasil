@@ -10,6 +10,7 @@ import { TermsReaccept } from "@/features/auth/terms-reaccept";
 import { BuyerAddressForm, BuyerPersonalForm } from "@/features/buyer/forms";
 import type { BuyerCheckoutProfile } from "@/features/buyer/schemas";
 import { formatBRL } from "@/lib/money";
+import { syncAcceptedCartSelection } from "./persistent-cart";
 import type { CheckoutReviewData } from "./review-types";
 import { prepareCheckoutReviewAction, updateCheckoutDraftAction, confirmCheckoutReviewAction } from "./review-actions";
 
@@ -73,8 +74,9 @@ function TicketEdit({ data, onSaved, onCancel }: { data: CheckoutReviewData; onS
   const [error, setError] = useState<string | null>(null); const [pending, start] = useTransition();
   return <form className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); start(async () => {
     setError(null); const items = data.tickets.filter((ticket) => (quantities[ticket.id] ?? 0) > 0).map((ticket) => ({ ticketTypeId: ticket.id, quantity: quantities[ticket.id], attendees: ticket.requiresAttendeeInfo ? Array.from({ length: quantities[ticket.id] }, (_, index) => ({ name: attendees[ticket.id]?.[index] ?? "" })) : undefined }));
-    const result = await updateCheckoutDraftAction(data.draftId, { ...data.selection, items, couponCode: coupon.trim() || undefined, halfPriceDeclaration: halfPrice });
-    if (result.ok) onSaved(); else setError(result.error);
+    const selection = { ...data.selection, items, couponCode: coupon.trim() || undefined, halfPriceDeclaration: halfPrice };
+    const result = await updateCheckoutDraftAction(data.draftId, selection);
+    if (result.ok) { syncAcceptedCartSelection(selection); onSaved(); } else setError(result.error);
   }); }}>
     {data.tickets.map((ticket) => <div key={ticket.id} className="space-y-2 rounded-xl border border-border p-3"><div className="flex items-center justify-between gap-4"><Label htmlFor={`review-ticket-${ticket.id}`}>{ticket.name}</Label><Input className="w-24" id={`review-ticket-${ticket.id}`} type="number" min={0} max={Math.min(ticket.maxPerOrder, ticket.available)} value={quantities[ticket.id] ?? 0} onChange={(event) => setQuantities((current) => ({ ...current, [ticket.id]: Math.max(0, Math.min(50, Number(event.target.value) || 0)) }))} disabled={pending} /></div>{ticket.requiresAttendeeInfo && Array.from({ length: quantities[ticket.id] ?? 0 }, (_, index) => <Input key={index} aria-label={`Nome do participante ${index + 1} (${ticket.name})`} value={attendees[ticket.id]?.[index] ?? ""} maxLength={120} placeholder={`Nome do participante ${index + 1}`} disabled={pending} onChange={(event) => setAttendees((current) => { const names = [...(current[ticket.id] ?? [])]; names[index] = event.target.value; return { ...current, [ticket.id]: names }; })} />)}</div>)}
     <div><Label htmlFor="review-coupon">Cupom de desconto</Label><Input id="review-coupon" className="mt-1.5 uppercase" maxLength={32} value={coupon} disabled={pending} onChange={(event) => setCoupon(event.target.value.toUpperCase())} /></div>

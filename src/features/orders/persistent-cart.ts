@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore, type SetStateAction } from "react";
-import { clearPurchasedSelection, decodeCartField } from "./cart-storage";
+import type { CreateOrderInput } from "@/features/schemas";
+import { acceptedCartEntries, clearPurchasedSelection, decodeCartField, persistAcceptedCartSelection } from "./cart-storage";
 const fallback = new Map<string, string>();
 const eventName = "evento-brasil-cart-change";
 function subscribe(onChange: () => void) { window.addEventListener("storage", onChange); window.addEventListener(eventName, onChange); return () => { window.removeEventListener("storage", onChange); window.removeEventListener(eventName, onChange); }; }
-function read(key: string) { try { return window.localStorage.getItem(key); } catch { return fallback.get(key) ?? null; } }
+function read(key: string) { if (fallback.has(key)) return fallback.get(key)!; try { return window.localStorage.getItem(key); } catch { return null; } }
 /** Persists only ticket selection; no passwords, CPF, DOB or address enter browser storage. */
 export function usePersistentCartState<T>(eventId: string, field: string, initial: T): [T, (value: SetStateAction<T>) => void] {
   const key = `eb-cart:${eventId}:${field}`;
@@ -15,7 +16,7 @@ export function usePersistentCartState<T>(eventId: string, field: string, initia
     const current = decodeCartField(field, read(key), initial);
     const resolved = typeof next === "function" ? (next as (current: T) => T)(current) : next;
     const serialized = JSON.stringify(resolved);
-    try { window.localStorage.setItem(key, serialized); } catch { fallback.set(key, serialized); }
+    try { window.localStorage.setItem(key, serialized); fallback.delete(key); } catch { fallback.set(key, serialized); }
     window.dispatchEvent(new Event(eventName));
   };
   return [value, setValue];
@@ -28,4 +29,13 @@ export function ClearPurchasedCart({ eventId, idempotencyKey }: { eventId: strin
     window.dispatchEvent(new Event(eventName));
   }, [eventId, idempotencyKey]);
   return null;
+}
+
+export function syncAcceptedCartSelection(selection: CreateOrderInput) {
+  const entries = acceptedCartEntries(selection);
+  if (!entries) return;
+  let persisted = false;
+  try { persisted = persistAcceptedCartSelection(window.localStorage, entries); } catch { /* Storage itself can be unavailable. */ }
+  for (const [key, value] of entries) { if (persisted) fallback.delete(key); else fallback.set(key, value); }
+  window.dispatchEvent(new Event(eventName));
 }
