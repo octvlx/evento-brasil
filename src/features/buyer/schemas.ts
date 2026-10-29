@@ -8,7 +8,7 @@ export const buyerPersonalSchema = z.object({
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Informe sua data de nascimento").refine((value) => {
     const date = new Date(value + "T00:00:00.000Z");
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value && value <= new Date().toISOString().slice(0, 10);
-  }, "Informe uma data de nascimento válida, que não esteja no futuro"),
+  }, "Informe uma data de nascimento válida, que não esteja no futuro").refine((value) => value >= "1900-01-01", "A data de nascimento deve ser igual ou posterior a 01/01/1900"),
 });
 export type BuyerPersonalInput = z.input<typeof buyerPersonalSchema>;
 

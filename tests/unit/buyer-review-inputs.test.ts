@@ -8,6 +8,12 @@ describe("buyer checkout inputs", () => {
     for (const birthDate of ["2025-02-29", "2999-01-01", "2026-13-01"]) expect(buyerPersonalSchema.safeParse({ name: "Pessoa Teste", birthDate }).success).toBe(false);
     expect(buyerPersonalSchema.safeParse({ name: "Pessoa Teste", cpf: "11111111111", birthDate: "1995-04-15" }).success).toBe(false);
   });
+  it("matches the database birth-date lower boundary with a field-validation message", () => {
+    expect(buyerPersonalSchema.safeParse({ name: "Pessoa Teste", birthDate: "1900-01-01" }).success).toBe(true);
+    const earlier = buyerPersonalSchema.safeParse({ name: "Pessoa Teste", birthDate: "1899-12-31" });
+    expect(earlier.success).toBe(false);
+    if (!earlier.success) expect(earlier.error.issues).toContainEqual(expect.objectContaining({ path: ["birthDate"], message: "A data de nascimento deve ser igual ou posterior a 01/01/1900" }));
+  });
   it("supports manual addresses when CEP lookup is unavailable and normalizes CEP", () => {
     const address = { postalCode: "01001-000", street: "Praça da Sé", number: "s/n", complement: "", district: "Sé", city: "São Paulo", state: "SP" };
     expect(buyerAddressSchema.parse(address)).toMatchObject({ postalCode: "01001000", number: "s/n", complement: undefined });
