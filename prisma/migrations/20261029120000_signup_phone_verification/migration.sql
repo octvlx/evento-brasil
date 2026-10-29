@@ -7,6 +7,7 @@ CREATE TABLE "PhoneVerificationChallenge" (
     "email" TEXT NOT NULL,
     "phone" TEXT NOT NULL,
     "clientKeyHash" TEXT NOT NULL,
+    "smsConsentAt" TIMESTAMPTZ(3) NOT NULL,
     "providerVerificationSid" TEXT,
     "expiresAt" TIMESTAMPTZ(3) NOT NULL,
     "verifiedAt" TIMESTAMPTZ(3),
