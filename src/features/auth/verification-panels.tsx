@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { confirmEmailAction, resendEmailConfirmationAction, googleSignupAction } from "./actions";
 
 export function GoogleAuthLink({ enabled, next }: { enabled: boolean; next?: string }) {
-  return enabled ? <Link href={`/auth/google?next=${encodeURIComponent(next ?? "/")}`} className="block rounded-xl border border-border p-3 text-center text-sm font-semibold">Continuar com Google</Link> : <Button type="button" variant="outline" className="w-full" disabled>Google indisponível no momento</Button>;
+  return enabled ? <Link prefetch={false} href={`/auth/google?next=${encodeURIComponent(next ?? "/")}`} className="block rounded-xl border border-border p-3 text-center text-sm font-semibold">Continuar com Google</Link> : <Button type="button" variant="outline" className="w-full" disabled>Google indisponível no momento</Button>;
 }
 
 function subscribeHash(callback: () => void) { window.addEventListener("hashchange", callback); return () => window.removeEventListener("hashchange", callback); }
