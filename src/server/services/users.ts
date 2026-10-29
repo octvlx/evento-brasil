@@ -1,6 +1,7 @@
 import "server-only";
 import { profileSchema, registerSchema, type RegisterInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
+import { consumeSignupPhoneVerification } from "./phone-verification";
 import type { Db } from "../db";
 import { audit } from "../audit";
 import { DUMMY_HASH, hashPassword, verifyPassword } from "../auth/password";
@@ -16,8 +17,9 @@ export async function registerUser(db: Db, raw: RegisterInput, client: { ip?: st
   if (exists) throw new AppError("CONFLICT", "Já existe uma conta com este e-mail.");
   const passwordHash = await hashPassword(input.password);
   return db.$transaction(async (tx) => {
+    const { smsConsentAt, ...verifiedPhone } = await consumeSignupPhoneVerification(tx, input);
     const user = await tx.user.create({
-      data: { name: input.name, email: input.email, phone: input.phone ? onlyDigits(input.phone) : null, passwordHash },
+      data: { name: input.name, email: input.email, ...verifiedPhone, passwordHash },
     });
     const accepted = await recordAcceptanceTx(tx, user.id, BUYER_KINDS, { context: "SIGNUP", ...client });
     await audit(tx, {
@@ -25,7 +27,7 @@ export async function registerUser(db: Db, raw: RegisterInput, client: { ip?: st
       action: "user.registered",
       entityType: "User",
       entityId: user.id,
-      metadata: { termsAccepted: accepted.map((v) => `${v.kind}:${v.version}`) },
+      metadata: { termsAccepted: accepted.map((v) => `${v.kind}:${v.version}`), smsConsentAt: smsConsentAt.toISOString(), smsConsentPurpose: "signup-security-sms@1" },
     });
     return user;
   });
@@ -44,9 +46,13 @@ export async function authenticate(db: Db, email: string, password: string, opts
 export async function updateProfile(db: Db, actor: Actor, raw: unknown) {
   assertActive(actor);
   const input = profileSchema.parse(raw);
-  return db.user.update({
-    where: { id: actor.id },
-    data: { name: input.name, phone: input.phone ? onlyDigits(input.phone) : null },
+  return db.$transaction(async (tx) => {
+    // Serialize profile edits so changing a phone cannot retain a stale verification flag.
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.id} FOR UPDATE`;
+    const current = await tx.user.findUniqueOrThrow({ where: { id: actor.id }, select: { phone: true } });
+    const phone = input.phone ? onlyDigits(input.phone) : null;
+    const canonical = (value: string | null) => { const d = onlyDigits(value ?? ""); return d.length === 11 ? `55${d}` : d; };
+    return tx.user.update({ where: { id: actor.id }, data: { name: input.name, phone, ...(canonical(phone) !== canonical(current.phone) ? { phoneVerifiedAt: null } : {}) } });
   });
 }
 
