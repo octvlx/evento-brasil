@@ -345,3 +345,32 @@ permissão de `CREATE DATABASE` (o banco embutido dos testes tem).
    descartável) e `npm run build`.
 7. Em produção, só `prisma migrate deploy`, com backup prévio, aprovação e
    plano de recuperação. Nunca `migrate dev`, `db:reset` ou seed.
+
+## Política de transferência por evento
+
+A migração aditiva `20261028180000_event_transfer_policy` adiciona três colunas
+`NOT NULL` em `Event`; os padrões também valem para eventos anteriores:
+
+| Coluna | Padrão | Restrição |
+| --- | --- | --- |
+| `transferDeadlineHours` | 24 | Inteiro de 0 a 8760 |
+| `transferMaxTransfers` | 1 | Inteiro de 1 a 10 |
+| `transferAllowReturn` | false | Booleano obrigatório |
+
+O serviço aplica o prazo `startsAt - transferDeadlineHours`: no instante do
+limite ou depois dele, não há transferência. Retorno permitido é uma nova
+transferência com consentimento ao titular anterior, e conta no limite total;
+para um retorno ser útil, o organizador precisa permitir pelo menos duas
+transferências. Não é desfazer unilateralmente o histórico.
+
+A migração não muda nem remove ingressos, titulares, transferências ou
+lançamentos financeiros. Históricos com mais transferências que o novo padrão
+continuam preservados; a política limita novas operações. Os CHECKs de faixa
+estão no SQL, pois o Prisma não os representa. Em tabelas grandes, programar a
+aplicação com cuidado: o `ALTER TABLE` adquire trava exclusiva, ainda que os
+padrões constantes permitam a adição eficiente das colunas no PostgreSQL 17.
+
+Os testes `tests/integration/zb-event-transfer-policy-schema.test.ts` verificam
+padrões em eventos novos e na atualização de uma relação antiga isolada,
+faixas e nulabilidade por SQL direto, e preservação do histórico aceito após
+reduzir o limite. Executá-los usa o PostgreSQL descartável da suíte.

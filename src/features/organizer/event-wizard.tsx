@@ -288,7 +288,10 @@ export function EventWizard(props: Props) {
     if (!restore) return;
     setRestore(null);
     // Só os campos das etapas que tinham alterações pendentes; o resto vem do servidor.
-    for (const s of restore.dirtySteps) for (const f of STEP_FIELDS[s]) form.setValue(f as keyof WizardValues, restore.values[f as keyof WizardValues], { shouldDirty: true });
+    for (const s of restore.dirtySteps) for (const f of STEP_FIELDS[s]) {
+      // Backups anteriores podem não conter configurações adicionadas depois.
+      if (f in restore.values) form.setValue(f as keyof WizardValues, restore.values[f as keyof WizardValues], { shouldDirty: true });
+    }
     // Reenvia as etapas já liberadas que estiverem válidas.
     for (const s of restore.dirtySteps) {
       if (s !== step && !completed.includes(s)) continue;
@@ -667,6 +670,8 @@ function Review(
         <Row k="Reembolso">
           Até {v.refundWindowDays} dias após a compra e até {v.refundMinHoursBeforeEvent} horas antes do início.
         </Row>
+        <Row k="Transferência">Até {v.transferDeadlineHours} horas antes do início; no máximo {v.transferMaxTransfers} transferência(s) por ingresso.</Row>
+        <Row k="Devolução ao titular anterior">{v.transferAllowReturn ? "Permitida com pedido, aceite e consumo do limite" : "Não permitida"}</Row>
         <Row k="Política">{v.refundPolicy}</Row>
       </Section>
 
