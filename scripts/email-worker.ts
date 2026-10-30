@@ -9,18 +9,27 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   stop = true;
 });
-try {
-  do {
-    const result = await dispatchEmailOutbox(db, { limit: 20 });
-    console.log(JSON.stringify(result));
-    if (watch && !stop)
-      await new Promise((resolve) => setTimeout(resolve, 10_000));
-  } while (watch && !stop);
-} catch {
+async function main() {
+  try {
+    do {
+      const result = await dispatchEmailOutbox(db, { limit: 20 });
+      console.log(JSON.stringify(result));
+      if (watch && !stop)
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+    } while (watch && !stop);
+  } catch {
+    console.error(
+      "Falha no processamento de e-mails. Verifique configuração e conectividade.",
+    );
+    process.exitCode = 1;
+  } finally {
+    await db.$disconnect();
+  }
+}
+
+void main().catch(() => {
   console.error(
-    "Falha no processamento de e-mails. Verifique configuração e conectividade.",
+    "Falha na operação de e-mail. Verifique configuração e conectividade.",
   );
   process.exitCode = 1;
-} finally {
-  await db.$disconnect();
-}
+});

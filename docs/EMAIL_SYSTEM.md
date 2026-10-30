@@ -29,6 +29,26 @@ PASSWORD_RESET_EXPIRATION_MINUTES=30
 
 O console não envia mensagens reais nem exige domínio/API Key. Escreve arquivos `.html`, `.txt` e anexos em `.data/outbox/`, diretório local ignorado pelo Git. O terminal informa somente a referência/caminho da mensagem. Abra o HTML local para visualizar o e-mail e copiar seu botão de confirmação ou recuperação. Esses arquivos contêm links de acesso e ingressos: não publique nem compartilhe a pasta, e remova os artefatos locais após os testes. O modo console é recusado em produção.
 
+### Testar sem alterar bancos existentes (recomendado para auditoria)
+
+Use a branch feature/transactional-email-system no worktree correto. O inicializador abaixo ignora a DATABASE_URL herdada, cria um cluster PostgreSQL novo em pasta temporária exclusiva, aplica as migrações somente nele e força EMAIL_PROVIDER=console, sem chaves Resend. Não modifica .env, configuração compartilhada nem bancos preexistentes.
+
+```powershell
+Set-Location "C:\Users\octav\.codex\worktrees\checkout-address-review\evento-brasil"
+git branch --show-current
+node scripts/email-sandbox.mjs --serve
+```
+
+Abra a URL SANDBOX impressa no terminal. Esse comando inicia aplicação, worker e dados demo exclusivamente descartáveis. Use uma conta nova para verificar cadastro e recuperação; cliente@demo.eventobrasil.test / Demo@2026! é uma conta fictícia para explorar pedidos. Os HTMLs/anexos ficam em .data/outbox. Ctrl+C encerra os processos deste sandbox e remove somente a pasta temporária criada por ele. Cada execução começa com dados novos; ele não persiste suas alterações manuais entre execuções.
+
+Para testar automaticamente os comandos reais de worker/status/retry, sem manter a aplicação aberta:
+
+```powershell
+node scripts/email-sandbox.mjs
+```
+
+O smoke test deve terminar com 2 SENT, 1 CANCELLED e sem duplicação ao reiniciar o worker. Use --serve-check para verificar também inicialização HTTP da aplicação e do worker e encerrar automaticamente. As instruções da seção seguinte são para quem autorizar a migração de seu próprio banco de desenvolvimento; não as use quando a regra for preservar bancos existentes.
+
 ### Windows/PowerShell
 
 Na pasta da branch de implementação, com `DATABASE_URL` apontando para PostgreSQL de desenvolvimento:
@@ -53,7 +73,7 @@ npm run dev
 3. Confirme explicitamente na página. Abrir a URL não consome o token por GET.
 4. Tente reutilizar o link: a operação deve ser recusada.
 5. Para recuperação, abra `/esqueci-minha-senha`, informe o endereço e veja a resposta genérica em `/email-enviado`.
-6. Abra o novo e-mail local e use `/redefinir-senha#token=...` para definir uma senha de8 a 200 caracteres. A confirmação encerra as sessões existentes e não autentica automaticamente nem confirma o e-mail da conta.
+6. Abra o novo e-mail local e use `/redefinir-senha#token=...` para definir uma senha de 8 a 200 caracteres. A confirmação encerra as sessões existentes e não autentica automaticamente nem confirma o e-mail da conta.
 7. Com pagamento simulado no ambiente local, aprove um pedido pelos controles existentes. Somente a confirmação autoritativa no backend produz as mensagens de compra/ingressos. Pedidos grátis seguem o gate existente de revisão/termos antes da emissão.
 
 Novas páginas públicas de autenticação permanecem disponíveis para pessoas não autenticadas ou com e-mail não confirmado. Compras e operações que exigem endereço verificado continuam protegidas no backend.

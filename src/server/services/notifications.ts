@@ -201,11 +201,11 @@ export async function sendOrderTicketsEmail(
 }
 
 export function notifyOrderPaid(db: Db, orderId: string) {
-  sendOrderTicketsEmail(db, orderId).catch((err) =>
-    console.error(
-      `[notificações] falha ao enviar ingressos do pedido ${orderId}:`,
-      err,
-    ),
+  // issueTicketsTx already committed the delivery intents with the payment.
+  // Tests dispatch explicitly; do not leave database work racing fixture cleanup.
+  if (env().NODE_ENV === "test") return;
+  void dispatchEmailOutbox(db).catch(() =>
+    console.error(`[notificações] fila do pedido ${orderId} aguarda nova tentativa.`),
   );
 }
 

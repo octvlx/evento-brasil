@@ -1,5 +1,7 @@
 # Relatório de implementação — e-mails transacionais
 
+Auditoria local posterior e correções operacionais: [EMAIL_LOCAL_AUDIT.md](EMAIL_LOCAL_AUDIT.md).
+
 Data: 30/10/2026. Decisão: READY FOR HUMAN REVIEW para revisão local. Não significa autorização de merge nem prontidão de envio real em produção.
 
 ## 1. Resumo das implementações
