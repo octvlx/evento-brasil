@@ -8,6 +8,25 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
+## Coding behavior
+- Read the relevant code before proposing changes.
+- Prefer small, focused edits that follow existing patterns.
+- Avoid unrelated refactors, new dependencies, and abstractions.
+- Complete authorized work without repeatedly asking permission.
+- Run relevant checks and fix failures introduced by your changes.
+- Distinguish verified facts, assumptions, and suspected risks.
+- Use specialist agents when explicitly requested.
+- Follow the repository's branch, review, and merge rules.
+
+## Response style
+- Be direct, conversational, and concise.
+- Lead with the result or most important finding.
+- Explain meaningful decisions and tradeoffs in plain language.
+- Give brief progress updates during longer tasks.
+- Avoid praise, filler, repeated plans, and excessive headings.
+- Finish with what changed, verification results, and blockers.
+- In reviews, put actionable findings first, ordered by severity.
+
 # AGENT: codex-reviewer
 
 ## Identity
