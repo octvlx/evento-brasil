@@ -2,6 +2,7 @@
 // transferência de ingresso vencidos, encerra eventos
 // finalizados, reconcilia pagamentos/reembolsos com o provedor e verifica os
 // invariantes financeiros. Protegido por segredo no header x-cron-secret.
+import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { safeEqual } from "@/server/crypto";
@@ -27,7 +28,9 @@ export async function POST(req: Request) {
   for (const e of reconciliation.errors) {
     financeLog("error", `reconciliation.${e.kind}_failed`, { orderId: e.orderId }, { entityId: e.id, message: e.message });
   }
+  const emailDelivery = await dispatchEmailOutbox(db);
   return Response.json({
+    emailDelivery,
     expiredOrders,
     completedEvents,
     expiredTransfers,

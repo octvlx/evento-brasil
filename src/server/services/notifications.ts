@@ -1,9 +1,12 @@
 // Notificações pós-confirmação. Executadas fora da transação; falhas de envio
 // não afetam o estado do pedido (podem ser reenviadas).
 import "server-only";
-import type { Db } from "../db";
+import type { Db, Tx } from "../db";
+import { enqueueEmail, dispatchEmailOutbox } from "../email/outbox";
+import { enqueueOrderEmailsTx } from "../email/events";
+import { transactionalEmail, emailLayout } from "../email/templates";
 import { env } from "../env";
-import { escapeHtml, getEmailAdapter, type EmailAdapter } from "../email";
+import { escapeHtml, type EmailAdapter, type EmailMessage } from "../email";
 import { audit } from "../audit";
 import { describeChangeValue, isRelevantField, RELEVANT_FIELD_LABELS, type ChangeSnapshotJson } from "@/features/organizer/event-change-rules";
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
@@ -49,12 +52,15 @@ async function applePassesForEmail(db: Db, tickets: PdfTicket[], orderId: string
   }
 }
 
-export async function sendOrderTicketsEmail(db: Db, orderId: string): Promise<void> {
-  if (env().NODE_ENV === "test") return;
+export async function buildQueuedOrderEmail(db: Db, template: string, orderId: string): Promise<EmailMessage | null> {
   const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, include: { event: true, items: true } });
+  if (order.status !== "PAID") return null;
+  const place = order.event.locationType === "ONLINE" ? "Online" : (await db.venue.findUnique({ where: { id: order.event.venueId ?? "" }, select: { name: true, addressLine: true } }));
+  const lines = [order.event.title, formatEventDateTime(order.event.startsAt, order.event.timezone), typeof place === "string" ? place : [place?.name, place?.addressLine].filter(Boolean).join(", "), "Pedido " + order.publicCode, "Quantidade: " + order.items.reduce((sum, item) => sum + item.quantity, 0), "Total: " + formatBRL(order.totalCents), ...(order.isSimulated ? ["AMBIENTE DE TESTES: pagamento simulado, ingresso sem valor."] : [])];
+  if (template === "PURCHASE_CONFIRMATION") return { to: order.buyerEmail, ...transactionalEmail("purchase", "Compra confirmada!", lines, env().APP_URL + "/pedido/" + order.id) };
   // Só os que o comprador ainda tem (R6): um ingresso transferido tem QR do novo titular.
   const tickets = await loadPdfTickets(db, { orderId, holderUserId: order.userId });
-  if (!tickets.length) return;
+  if (!tickets.length) return null;
   const pdf = await renderTicketsPdf(tickets);
   const url = `${env().APP_URL}/pedido/${order.id}`;
   // Carteiras: só quando configuradas (docs/wallet.md). Um .pkpass por ingresso;
@@ -76,16 +82,21 @@ ${order.isSimulated ? '<p style="color:#be123c"><strong>Ambiente de testes:</str
 ${walletHtml}
 </body></html>`;
   const text = `Seus ingressos chegaram!\n${order.event.title}\n${when}\nPedido ${order.publicCode}\nAcesse: ${url}${googleUrl ? `\nGoogle Wallet: ${googleUrl}` : ""}`;
-  await getEmailAdapter().send({
+  return {
     to: order.buyerEmail,
-    subject: `Ingressos: ${order.event.title}`,
-    html,
+    subject: "Seus ingressos chegaram! | Evento Brasil",
+    html: emailLayout("Seus ingressos chegaram!", html.replace(/^[\s\S]*?<body[^>]*>/, "").replace(/<\/body>[\s\S]*$/, "")),
     text,
     attachments: [
       { filename: `ingressos-${order.publicCode}.pdf`, content: pdf, contentType: "application/pdf" },
       ...passes.map((p) => ({ filename: `ingresso-${p.code}.pkpass`, content: new Uint8Array(p.pass), contentType: "application/vnd.apple.pkpass" })),
     ],
-  });
+  };
+}
+
+export async function sendOrderTicketsEmail(db: Db, orderId: string): Promise<void> {
+  await enqueueOrderEmailsTx(db, orderId);
+  if (env().NODE_ENV !== "test") await dispatchEmailOutbox(db);
 }
 
 export function notifyOrderPaid(db: Db, orderId: string) {
@@ -97,7 +108,7 @@ export function notifyOrderPaid(db: Db, orderId: string) {
  * sobre uma alteração relevante ou a prorrogação da janela de reembolso (R8).
  * Um e-mail por endereço. Registra `event.change_notified` com a quantidade enviada.
  */
-export async function notifyEventChange(db: Db, changeId: string, adapter: EmailAdapter = getEmailAdapter()): Promise<{ sent: number; failed: number }> {
+export async function notifyEventChange(db: Db | Tx, changeId: string, adapter?: EmailAdapter): Promise<{ sent: number; failed: number }> {
   const change = await db.eventChange.findUniqueOrThrow({ where: { id: changeId }, include: { event: true, extends: true } });
   const root = change.extends ?? change;
   const orders = await db.order.findMany({
@@ -144,7 +155,8 @@ ${until ? `<p>Se não puder ou não quiser ir, você pode pedir o <strong>reembo
   let failed = 0;
   for (const to of recipients) {
     try {
-      await adapter.send({ to, subject, html, text });
+      if (adapter) await adapter.send({ to, subject, html, text });
+      else await enqueueEmail(db, { dedupeKey: "event-change:" + change.id + ":" + to, template: "EVENT_CHANGED", recipient: to, message: { subject, html: emailLayout(isExtension ? "Prazo de reembolso prorrogado" : "O evento mudou", html.replace(/^[\s\S]*?<body[^>]*>/, "").replace(/<\/body>[\s\S]*$/, "")), text } });
       sent++;
     } catch (err) {
       failed++;
@@ -163,5 +175,6 @@ ${until ? `<p>Se não puder ou não quiser ir, você pode pedir o <strong>reembo
 
 export function notifyEventChangeInBackground(db: Db, changeId: string) {
   if (env().NODE_ENV === "test") return;
-  notifyEventChange(db, changeId).catch((err) => console.error(`[notificações] falha ao avisar a alteração ${changeId}:`, err));
+  void changeId;
+  dispatchEmailOutbox(db).catch((err) => console.error(`[notificações] falha ao avisar a alteração ${changeId}:`, err));
 }

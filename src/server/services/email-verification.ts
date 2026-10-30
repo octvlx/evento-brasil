@@ -5,9 +5,11 @@ import type { Actor } from "../auth/permissions";
 import { assertActive } from "../auth/permissions";
 import { randomToken, hashToken } from "../crypto";
 import { env } from "../env";
-import { getEmailAdapter, escapeHtml, type EmailAdapter } from "../email";
+import { type EmailAdapter } from "../email";
 import { AppError } from "../errors";
 import { audit } from "../audit";
+import { authEmail } from "../email/templates";
+import { enqueueEmail, consumeEmailRateLimit, dispatchEmailOutbox } from "../email/outbox";
 
 export function internalReturnPath(value?: string | null) {
   if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u0020]/.test(value)) return "/";
@@ -20,10 +22,11 @@ export function authAppUrl() {
 }
 
 /** Attempts remain counted even on failed delivery; only token hashes enter the database. */
-export async function requestEmailVerification(db: Db, actor: Actor, next?: string, adapter: EmailAdapter = getEmailAdapter()) {
+export async function requestEmailVerification(db: Db, actor: Actor, next?: string, adapter?: EmailAdapter, client: { ip?: string } = {}) {
   assertActive(actor);
+  if (client.ip) await consumeEmailRateLimit(db, "verification-ip:" + client.ip, 20, 3_600_000);
   const rawToken = randomToken(); const now = new Date();
-  const user = await db.$transaction(async (tx) => {
+  const delivery = await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.id} FOR UPDATE`;
     const user = await tx.user.findUniqueOrThrow({ where: { id: actor.id }, select: { email: true, emailVerifiedAt: true } });
     if (user.emailVerifiedAt) return null;
@@ -33,16 +36,19 @@ export async function requestEmailVerification(db: Db, actor: Actor, next?: stri
     ]);
     if (count >= 5 || (recent && now.getTime() - recent.createdAt.getTime() < 30_000)) throw new AppError("RATE_LIMITED", "Aguarde antes de solicitar outro e-mail de confirmação.");
     await tx.emailVerificationToken.updateMany({ where: { userId: actor.id, consumedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
-    await tx.emailVerificationToken.create({ data: { userId: actor.id, tokenHash: hashToken(rawToken), expiresAt: new Date(now.getTime() + 60 * 60_000) } });
-    return user;
+    const expiresAt = new Date(now.getTime() + env().EMAIL_VERIFICATION_EXPIRATION_MINUTES * 60_000);
+    const token = await tx.emailVerificationToken.create({ data: { userId: actor.id, tokenHash: hashToken(rawToken), expiresAt } });
+    await tx.emailOutbox.updateMany({ where: { dedupeKey: { startsWith: "verification:" + actor.id + ":" }, status: "QUEUED" }, data: { status: "CANCELLED", messageEncrypted: null } });
+    const url = new URL("/confirmar-email", authAppUrl());
+    url.searchParams.set("next", internalReturnPath(next));
+    url.hash = new URLSearchParams({ token: rawToken }).toString();
+    return enqueueEmail(tx, { dedupeKey: "verification:" + actor.id + ":" + token.id, template: "EMAIL_VERIFICATION", recipient: user.email, expiresAt, message: authEmail("verify", url.toString(), env().EMAIL_VERIFICATION_EXPIRATION_MINUTES) });
   });
-  if (!user) return;
-  const url = new URL("/confirmar-email", authAppUrl());
-  url.searchParams.set("next", internalReturnPath(next));
-  url.hash = new URLSearchParams({ token: rawToken }).toString();
-  try {
-    await adapter.send({ to: user.email, subject: "Confirme seu e-mail — Evento Brasil", text: `Confirme seu e-mail: ${url}\nO link expira em 1 hora. Se você não solicitou, ignore esta mensagem.`, html: `<p>Confirme seu e-mail para concluir suas compras no Evento Brasil.</p><p><a href="${escapeHtml(url.toString())}">Confirmar meu e-mail</a></p><p>O link expira em 1 hora. Se você não solicitou, ignore esta mensagem.</p>` });
-  } catch { throw new AppError("PROVIDER_ERROR", "Não foi possível enviar o e-mail. Solicite um novo envio em alguns instantes."); }
+  if (!delivery) return;
+  if (adapter || env().NODE_ENV !== "test") {
+    const result = await dispatchEmailOutbox(db, { ids: [delivery.id], adapter });
+    if (result.failed) throw new AppError("PROVIDER_ERROR", "Não foi possível enviar o e-mail. Solicite um novo envio em alguns instantes.");
+  }
 }
 
 /** Email proof never creates an authenticated session. */

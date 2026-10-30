@@ -1,6 +1,7 @@
 import "server-only";
 import type { OrderItem } from "@/generated/prisma/client";
 import type { Tx } from "../db";
+import { enqueueOrderEmailsTx } from "../email/events";
 import { randomCode, randomToken } from "../crypto";
 
 export const QR_PREFIX = "EB1";
@@ -34,6 +35,7 @@ function attendeeAt(item: OrderItem, index: number): { name?: string; email?: st
  * Deve rodar dentro da transação que confirmou o pagamento.
  */
 export async function issueTicketsTx(tx: Tx, order: IssuableOrder): Promise<number> {
+  await enqueueOrderEmailsTx(tx, order.id);
   const expected = order.items.reduce((s, i) => s + i.quantity, 0);
   for (let attempt = 0; attempt < 3; attempt++) {
     const existing = await tx.issuedTicket.findMany({ where: { orderId: order.id }, select: { orderItemId: true, sequence: true } });

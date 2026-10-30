@@ -1,4 +1,7 @@
 import "server-only";
+import { enqueueEmail } from "../email/outbox";
+import { transactionalEmail } from "../email/templates";
+import { env } from "../env";
 import { inviteSchema, organizerApplicationSchema, type OrganizerApplicationInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
 import { slugify } from "@/lib/utils";
@@ -293,6 +296,8 @@ export async function inviteMember(db: Db, actor: Actor, organizationId: string,
       entityId: invitation.id,
       metadata: { role: input.role, eventId: input.eventId ?? null },
     });
+    const organization = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } });
+    await enqueueEmail(tx, { dedupeKey: "invitation:" + invitation.id, template: "ORGANIZER_INVITATION", recipient: invitation.email, expiresAt: invitation.expiresAt, message: transactionalEmail("invitation", "Convite para " + organization.name, ["Você recebeu um convite para participar da equipe.", "Entre na conta do endereço destinatário para responder.", "Não compartilhe este link."], env().APP_URL + "/convite/" + token) });
     return { invitation, token };
   });
 }
@@ -372,6 +377,8 @@ export async function resendInvitation(db: Db, actor: Actor, organizationId: str
       entityId: inv.id,
       metadata: { email: inv.email, role: inv.role },
     });
+    await tx.emailOutbox.updateMany({ where: { recipient: inv.email, template: "ORGANIZER_INVITATION", status: "QUEUED", dedupeKey: { startsWith: "invitation:" + inv.id } }, data: { status: "CANCELLED", messageEncrypted: null } });
+    await enqueueEmail(tx, { dedupeKey: "invitation:" + inv.id + ":" + hashToken(token), template: "ORGANIZER_INVITATION", recipient: inv.email, expiresAt, message: transactionalEmail("invitation", "Convite para a equipe", ["Um novo convite foi emitido. O link anterior não pode mais ser utilizado."], env().APP_URL + "/convite/" + token) });
     return { invitation: { ...inv, expiresAt }, token };
   });
 }

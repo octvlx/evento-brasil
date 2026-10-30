@@ -16,7 +16,7 @@ import type { Db, Tx } from "../db";
 import { audit } from "../audit";
 import { assertEventPermission, type Actor } from "../auth/permissions";
 import { AppError, invalidState, notFound } from "../errors";
-import { notifyEventChangeInBackground } from "./notifications";
+import { notifyEventChange, notifyEventChangeInBackground } from "./notifications";
 
 /** Retrato do que é relevante, sem dados pessoais (o link online fica de fora: só compradores o recebem). */
 async function snapshot(tx: Tx, s: LocationSnapshot) {
@@ -83,6 +83,7 @@ export async function recordRelevantChange(
     entityId: change.id,
     metadata: { eventId: event.id, changedFields: fields, refundUntil: change.refundUntil!.toISOString() },
   });
+  await notifyEventChange(tx, change.id);
   return change;
 }
 
@@ -139,6 +140,7 @@ export async function extendEventChangeWindow(db: Db, actor: Actor, changeId: st
       entityId: extension.id,
       metadata: { eventId: event.id, extendsChangeId: rootId, from: current.toISOString(), to: raw.refundUntil.toISOString() },
     });
+    await notifyEventChange(tx, extension.id);
     return extension;
   });
   notifyEventChangeInBackground(db, extension.id);

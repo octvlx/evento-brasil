@@ -53,8 +53,8 @@ export async function registerAction(input: RegisterInput, next?: string): Promi
     const { token, expiresAt } = await createSession(db, user.id, userAgent);
     await setSessionCookie(token, expiresAt);
     // Account creation stays successful even if delivery fails; the confirmation page offers resend.
-    try { await requestEmailVerification(db, user, next); } catch { /* checkout remains blocked until confirmed */ }
-    return { redirectTo: safeNext(next, "/confirmar-email") };
+    try { await requestEmailVerification(db, user, next, undefined, { ip }); } catch { /* checkout remains blocked until confirmed */ }
+    return { redirectTo: "/confirmar-email?next=" + encodeURIComponent(safeNext(next)) };
   });
 }
 
@@ -82,7 +82,8 @@ export async function currentUserSummary() {
 
 export async function resendEmailConfirmationAction(next?: string) {
   const user = await requireUser("/confirmar-email");
-  return toActionResult(() => requestEmailVerification(db, user, internalReturnPath(next)));
+  const ip = await clientKey();
+  return toActionResult(() => requestEmailVerification(db, user, internalReturnPath(next), undefined, { ip }));
 }
 
 export async function confirmEmailAction(token: string) {

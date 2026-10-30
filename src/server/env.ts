@@ -11,6 +11,7 @@ const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DATABASE_URL: z.string().min(1),
   APP_URL: z.string().url().default("http://localhost:3000"),
+  APP_BASE_URL: z.string().url().optional(),
   AUTH_SECRET: z.string().min(16),
   DATA_ENCRYPTION_KEY: z.string().min(16),
   CRON_SECRET: z.string().min(8),
@@ -27,6 +28,10 @@ const schema = z.object({
   RESERVATION_MINUTES: int(15),
   EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
   EMAIL_API_KEY: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_REPLY_TO: z.union([z.literal(""), z.string().email()]).optional(),
+  EMAIL_VERIFICATION_EXPIRATION_MINUTES: int(30),
+  PASSWORD_RESET_EXPIRATION_MINUTES: int(30),
   EMAIL_FROM: z.string().default("Evento Brasil <nao-responda@example.com>"),
   STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
   OBJECT_STORAGE_ENDPOINT: z.string().optional(),
@@ -59,7 +64,13 @@ export function env(): Env {
     throw new Error(`Variáveis de ambiente inválidas: ${parsed.error.issues.map((i) => i.path.join(".")).join(", ")}`);
   }
   const e = parsed.data;
+  if (e.APP_BASE_URL) e.APP_URL = e.APP_BASE_URL;
+  if (e.EMAIL_PROVIDER === "resend" && !(e.RESEND_API_KEY || e.EMAIL_API_KEY)) throw new Error("RESEND_API_KEY não configurada.");
   if (e.NODE_ENV === "production") {
+    if (e.EMAIL_PROVIDER !== "resend") throw new Error("Configure um provedor real de e-mail em produção.");
+    const from = e.EMAIL_FROM.match(/<([^>]+)>/)?.[1] ?? e.EMAIL_FROM;
+    const sender = z.string().email().safeParse(from);
+    if (!sender.success || /@(resend\.dev|example\.(com|org)|localhost)$/i.test(from)) throw new Error("EMAIL_FROM exige remetente de domínio próprio verificado em produção.");
     if (new URL(e.APP_URL).protocol !== "https:") throw new Error("APP_URL deve usar HTTPS em produção.");
     const devOnly = (["AUTH_SECRET", "DATA_ENCRYPTION_KEY", "CRON_SECRET", "SIMULATED_WEBHOOK_SECRET"] as const).filter((k) =>
       e[k].startsWith("dev-only"),
