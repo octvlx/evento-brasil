@@ -41,6 +41,21 @@ async function scenario() {
 }
 
 describe("relatório de meia-entrada", () => {
+  it("reports daily monetary totals above Int32 without breaking CSV", async () => {
+    const owner = await makeUser();
+    const event = await makeEvent(await makeOrg(owner), {
+      capacity: 1000, halfPriceQuotaBps: 4000,
+      tickets: [{ name: "Meia", kind: "HALF_PRICE", priceCents: 10_000_000, quantityTotal: 400, maxPerOrder: 50 }],
+    });
+    for (let i = 0; i < 5; i++) {
+      await orderAndPay(await makeUser(), event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 50 }]);
+    }
+    const report = await halfPriceReport(db, owner, event.id);
+    expect(report.byDay).toHaveLength(1);
+    expect(report.byDay[0]).toMatchObject({ halfSold: 250, halfFaceCents: 2_500_000_000, totalSold: 250 });
+    expect(halfPriceReportToCsv(report)).toContain('"250";"25000000,00";"250"');
+  });
+
   it("bate com um cenário conhecido: vendidas, reservadas, reembolsadas, check-in e cota restante", async () => {
     const { owner, event, full, half } = await scenario();
     // A: 3 meias + 1 inteira pagas. B: 2 meias pagas e reembolsadas. C: 1 meia com check-in. D: 2 meias aguardando pagamento.

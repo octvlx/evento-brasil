@@ -15,10 +15,9 @@ import { formatBRL } from "@/lib/money";
 import { CANCEL_HELP_HREF } from "@/lib/help-links";
 import { ORDER_STATUS } from "@/lib/labels";
 import { cn } from "@/lib/utils";
+import { ordersPagination } from "@/features/orders/pagination";
 
 export const metadata: Metadata = { title: "Meus pedidos", robots: { index: false } };
-
-const PAGE_SIZE = 15;
 
 // Filtros por situação (agrupam os status do pedido).
 const FILTERS: { value: string; label: string; statuses?: OrderStatus[] }[] = [
@@ -29,7 +28,7 @@ const FILTERS: { value: string; label: string; statuses?: OrderStatus[] }[] = [
   { value: "cancelados", label: "Cancelados", statuses: ["CANCELLED", "EXPIRED", "PAYMENT_FAILED"] },
 ];
 
-type Search = { situacao?: string; pagina?: string };
+type Search = { situacao?: string; pagina?: string | string[] };
 
 export default function MyOrdersPage({ searchParams }: PageProps<"/meus-pedidos">) {
   return (
@@ -59,10 +58,10 @@ async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
   const user = await requireUser("/meus-pedidos");
   const filter = FILTERS.find((f) => f.value === (sp.situacao ?? "")) ?? FILTERS[0];
-  const page = Math.max(1, Number(sp.pagina) || 1);
   const where: Prisma.OrderWhereInput = { userId: user.id, ...(filter.statuses ? { status: { in: filter.statuses } } : {}) };
-  const [total, orders, cancellations] = await Promise.all([
-    db.order.count({ where }),
+  const total = await db.order.count({ where });
+  const { page, pageCount, skip, take } = ordersPagination(sp.pagina, total);
+  const [orders, cancellations] = await Promise.all([
     db.order.findMany({
       where,
       include: {
@@ -70,12 +69,11 @@ async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
         items: { select: { quantity: true } },
       },
       orderBy: { createdAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
+      skip,
+      take,
     }),
     listMyCancellationRequests(db, user),
   ]);
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="mt-6 space-y-5">

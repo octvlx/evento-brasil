@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { getPublicEvent, organizerIdentification } from "@/server/services/catalog";
 import { acceptTransfer, declineTransfer, listMyTransfers, requestTransfer } from "@/server/services/transfers";
-import { buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 

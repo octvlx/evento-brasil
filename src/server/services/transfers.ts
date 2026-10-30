@@ -229,7 +229,8 @@ async function pendingForRecipient(db: Db, recipient: Actor, ref: RecipientTrans
   assertActive(recipient);
   const transfer = await findForRecipient(db, ref);
   if (!transfer) throw notFound("Transferência não encontrada.");
-  const user = await db.user.findUniqueOrThrow({ where: { id: recipient.id }, select: { email: true, name: true } });
+  const user = await db.user.findUniqueOrThrow({ where: { id: recipient.id }, select: { email: true, name: true, emailVerifiedAt: true } });
+  if (!user.emailVerifiedAt) throw new AppError("FORBIDDEN", "Confirme seu e-mail antes de responder a uma transferência.");
   // O link sozinho não basta: precisa estar logado com o e-mail indicado pelo titular.
   if (user.email.toLowerCase() !== transfer.toEmail) throw new AppError("FORBIDDEN", "Esta transferência foi enviada para outro e-mail. Entre com a conta desse e-mail para responder.");
   if (transfer.fromUserId === recipient.id) throw new AppError("VALIDATION", "Você não pode aceitar uma transferência feita por você.");
@@ -358,7 +359,8 @@ export async function expireTicketTransfers(db: Db, at?: Date): Promise<number> 
 
 /** Transferências do titular (enviadas) e para o e-mail da conta (recebidas), para a UI da Fase 4. */
 export async function listMyTransfers(db: Db, actor: Actor) {
-  const user = await db.user.findUniqueOrThrow({ where: { id: actor.id }, select: { email: true } });
+  assertActive(actor);
+  const user = await db.user.findUniqueOrThrow({ where: { id: actor.id }, select: { email: true, emailVerifiedAt: true } });
   const select = {
     id: true,
     status: true,
@@ -373,7 +375,7 @@ export async function listMyTransfers(db: Db, actor: Actor) {
   } satisfies Prisma.TicketTransferSelect;
   const [sent, received] = await Promise.all([
     db.ticketTransfer.findMany({ where: { fromUserId: actor.id, initiatedBy: "HOLDER" }, select: select, orderBy: { createdAt: "desc" }, take: 100 }),
-    db.ticketTransfer.findMany({ where: { OR: [{ toUserId: actor.id }, { toEmail: user.email.toLowerCase(), status: "PENDING" }] }, select: select, orderBy: { createdAt: "desc" }, take: 100 }),
+    db.ticketTransfer.findMany({ where: { OR: [{ toUserId: actor.id }, ...(user.emailVerifiedAt ? [{ toEmail: user.email.toLowerCase(), status: "PENDING" as const }] : [])] }, select: select, orderBy: { createdAt: "desc" }, take: 100 }),
   ]);
   // Mantém a validade histórica, mas fornece o corte efetivo para a interface não
   // oferecer um convite cuja política atual já encerrou (antes mesmo do próximo cron).

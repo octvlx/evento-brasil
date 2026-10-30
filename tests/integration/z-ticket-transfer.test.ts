@@ -9,7 +9,7 @@ import { acceptTransfer, cancelTransfer, declineTransfer, expireTicketTransfers,
 import { ticketsHeldByAccount } from "@/server/services/orders";
 import { DEFAULT_TRANSFER_POLICY, transferCutoff, type TransferPolicy } from "@/lib/transfer-policy";
 import { hashToken } from "@/server/crypto";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
