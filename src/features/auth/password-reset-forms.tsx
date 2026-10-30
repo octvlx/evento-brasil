@@ -8,19 +8,26 @@ import { requestPasswordResetAction, resetPasswordAction } from "./password-rese
 
 export function ForgotPasswordForm() {
   const [pending, start] = useTransition();
+  const [error, setError] = useState("");
   return (
     <form className="space-y-4" aria-busy={pending} onSubmit={event => {
       event.preventDefault();
       const email = String(new FormData(event.currentTarget).get("email") ?? "");
       start(async () => {
-        await requestPasswordResetAction(email);
-        window.location.assign("/email-enviado");
+        setError("");
+        try {
+          await requestPasswordResetAction(email);
+          window.location.assign("/email-enviado");
+        } catch {
+          setError("Não foi possível enviar sua solicitação. Confira a conexão e tente novamente.");
+        }
       });
     }}>
       <div>
         <Label htmlFor="recovery-email">E-mail da sua conta</Label>
         <Input id="recovery-email" name="email" type="email" autoComplete="email" maxLength={200} required className="mt-1.5" disabled={pending} />
       </div>
+      {error && <div role="alert"><Alert variant="danger">{error}</Alert></div>}
       <Button className="w-full" size="lg" disabled={pending}>{pending ? "Solicitando…" : "Enviar link de recuperação"}</Button>
       <p className="text-sm text-muted-foreground">Se você usa apenas o Google, continue entrando pelo botão Google na página de login.</p>
     </form>
@@ -46,10 +53,14 @@ export function ResetPasswordForm() {
       if (password !== values.get("confirmation")) { setError("As senhas precisam ser iguais."); return; }
       start(async () => {
         setError("");
-        const result = await resetPasswordAction(token, password);
-        if (!result.ok) { setError(result.error); return; }
-        window.history.replaceState(null, "", window.location.pathname);
-        setSuccess(true);
+        try {
+          const result = await resetPasswordAction(token, password);
+          if (!result.ok) { setError(result.error); return; }
+          window.history.replaceState(null, "", window.location.pathname);
+          setSuccess(true);
+        } catch {
+          setError("Não foi possível redefinir sua senha. Confira a conexão e tente novamente.");
+        }
       });
     }}>
       {!token && <Alert variant="warning">Abra o link completo recebido por e-mail para redefinir sua senha.</Alert>}
