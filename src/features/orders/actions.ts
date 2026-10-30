@@ -9,7 +9,8 @@ import { env, isProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { getCurrentUser, requireAdmin, requireUser } from "@/server/auth/current";
 import { getPaymentAdapter, getSimulatedAdapter } from "@/server/payments";
-import { cancelPendingOrder, createOrder } from "@/server/services/orders";
+import { checkoutReadiness, createCheckoutDraft, prepareCheckoutReview } from "@/server/services/checkout-review";
+import { cancelPendingOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/server/services/payments";
 import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
@@ -40,9 +41,12 @@ export async function createOrderAction(input: CreateOrderInput, opts: { acceptT
   const client = await clientKey();
   return toActionResult(async () => {
     assertCanCreateOrder(user.id, client);
+    const { readiness } = await checkoutReadiness(db, user.id);
+    if (!readiness.email || !readiness.profile || !readiness.address) throw new AppError("VALIDATION", "Confirme seu e-mail e complete CPF, nascimento e endereço no checkout.");
     const pendingTerms = await checkoutTermsGate(db, user.id, opts.acceptTerms);
-    const adapter = getPaymentAdapter();
-    const order = await createOrder(db, user, { ...input, attribution }, { providerIsSimulated: adapter.isSimulated, paymentsAvailable: adapter.supportedMethods.length > 0 });
+    const { draftId } = await createCheckoutDraft(db, { ...input, attribution }, user);
+    const review = await prepareCheckoutReview(db, user, draftId);
+    const order = review.order!;
     await recordCheckoutAcceptance(user.id, pendingTerms, order.id, client);
     return { orderId: order.id };
   });

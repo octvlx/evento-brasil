@@ -257,6 +257,10 @@ export async function ticketsHeldByAccount(client: Db | Tx, userId: string, even
 const ticketsWord = (n: number) => `${n} ${n === 1 ? "ingresso" : "ingressos"}`;
 
 export interface CreateOrderOptions {
+  /** Internal checkout orchestration only: keeps free tickets pending until review. */
+  checkoutReviewRequired?: boolean;
+  /** Reuse the caller transaction to serialize draft/order creation atomically. */
+  transaction?: Tx;
   now?: Date;
   /** O provedor configurado é o simulado (marca o pedido como simulado). */
   providerIsSimulated: boolean;
@@ -269,7 +273,8 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
   const input = createOrderSchema.parse(raw);
   const now = opts.now ?? new Date();
 
-  const existing = await db.order.findUnique({ where: { userId_idempotencyKey: { userId: actor.id, idempotencyKey: input.idempotencyKey } } });
+  const client = opts.transaction ?? db;
+  const existing = await client.order.findUnique({ where: { userId_idempotencyKey: { userId: actor.id, idempotencyKey: input.idempotencyKey } } });
   if (existing) return existing;
 
   const merged = new Map<string, (typeof input.items)[number]>();
@@ -283,7 +288,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
   if (couponCode) rateLimit(`coupon:${actor.id}`, COUPON_ATTEMPTS_PER_WINDOW, COUPON_ATTEMPT_WINDOW_MS);
 
   try {
-    const created = await db.$transaction(async (tx) => {
+    const create = async (tx: Tx) => {
       await lockEvent(tx, input.eventId);
       const event = await tx.event.findUnique({ where: { id: input.eventId }, include: { organization: true } });
       if (!event || event.status !== "PUBLISHED") throw notFound("Evento indisponível.");
@@ -397,6 +402,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
           buyerEmail: input.buyerEmail,
           buyerPhone: input.buyerPhone ? onlyDigits(input.buyerPhone) : null,
           idempotencyKey: input.idempotencyKey,
+          checkoutReviewRequired: opts.checkoutReviewRequired ?? false,
           isSimulated: !isFree && opts.providerIsSimulated,
           expiresAt,
           items: {
@@ -426,7 +432,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       // Uso do cupom reservado; vira resgatado em finalizePaidOrderTx (inclusive se gratuito).
       if (coupon) await tx.coupon.update({ where: { id: coupon.id }, data: { timesReserved: { increment: 1 } } });
 
-      if (isFree) {
+      if (isFree && !opts.checkoutReviewRequired) {
         await tx.payment.create({
           data: { orderId: order.id, provider: "none", method: "FREE", status: "PAID", amountCents: 0, idempotencyKey: `free:${order.id}`, paidAt: now },
         });
@@ -436,7 +442,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       await audit(tx, {
         actorUserId: actor.id,
         organizationId: event.organizationId,
-        action: isFree ? "order.free_issued" : "order.created",
+        action: isFree && !opts.checkoutReviewRequired ? "order.free_issued" : "order.created",
         entityType: "Order",
         entityId: order.id,
         metadata: {
@@ -447,8 +453,9 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
         },
       });
       return tx.order.findUniqueOrThrow({ where: { id: order.id } });
-    }, TX_OPTIONS);
-    if (created.status === "PAID") notifyOrderPaid(db, created.id);
+    };
+    const created = opts.transaction ? await create(opts.transaction) : await db.$transaction(create, TX_OPTIONS);
+    if (created.status === "PAID" && !opts.transaction) notifyOrderPaid(db, created.id);
     return created;
   } catch (err) {
     // Corrida na chave de idempotência: devolve o pedido já criado.

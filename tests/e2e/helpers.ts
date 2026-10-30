@@ -61,3 +61,16 @@ export async function createCouponLink(eventSlug: string) {
   await client.end();
   return { couponCode, linkCode };
 }
+
+/** The new checkout requires an explicit authoritative review before payment. */
+export async function proceedThroughReview(page: Page) {
+  await page.waitForURL(/\/checkout\/revisao\//);
+  await expect(page.getByRole("heading", { name: "Revise sua compra", exact: true })).toBeVisible();
+  const prepare=page.getByRole("button", { name: "Revisar valores e ingressos", exact: true });
+  await expect(prepare.or(page.getByRole("button", { name: "Confirmar e ir para pagamento", exact: true }))).toBeVisible();
+  if(await prepare.isVisible()) await prepare.click();
+  const confirm=page.getByRole("button", { name: "Confirmar e ir para pagamento", exact: true });
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await page.waitForURL(url=>!url.pathname.startsWith("/checkout/revisao/"));
+}

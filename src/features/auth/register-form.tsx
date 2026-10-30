@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -11,7 +10,6 @@ import { registerSchema, type RegisterInput } from "@/features/schemas";
 import { registerAction } from "./actions";
 
 export function RegisterForm({ next }: { next?: string }) {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const form = useForm<RegisterInput>({ resolver: zodResolver(registerSchema), defaultValues: { name: "", email: "", password: "", phone: "" } });
@@ -21,8 +19,8 @@ export function RegisterForm({ next }: { next?: string }) {
     start(async () => {
       const res = await registerAction({ ...values, phone: values.phone || undefined }, next);
       if (res.ok) {
-        router.push(res.data.redirectTo);
-        router.refresh();
+        // A new authenticated document must not reuse the cached anonymous checkout redirect.
+        window.location.assign(res.data.redirectTo);
       } else setError(res.error);
     }),
   );

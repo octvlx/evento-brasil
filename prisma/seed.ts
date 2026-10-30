@@ -15,7 +15,7 @@ import { handlePaymentWebhook } from "@/server/services/payments";
 import { checkInTicket } from "@/server/services/checkin";
 import { requestCustomerRefund } from "@/server/services/refunds";
 import { qrPayload } from "@/server/services/tickets";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 
 if (process.env.NODE_ENV === "production") {
   console.error("Seed de demonstração não pode rodar em produção.");
@@ -117,7 +117,7 @@ async function main() {
   await wipe();
   const passwordHash = await hashPassword(DEMO_PASSWORD);
   const user = (email: string, name: string, extra: object = {}) =>
-    db.user.create({ data: { email, name, passwordHash, isDemoAccount: true, ...extra } });
+    db.user.create({ data: { email, name, passwordHash, isDemoAccount: true, emailVerifiedAt: new Date(), ...extra } });
 
   const admin = await user(DEMO_ADMIN_EMAIL, "Admin Demonstração", { platformRole: "ADMIN" });
   const producer = await user("produtora@demo.eventobrasil.test", "Paula Produtora (demo)", { phone: "11912345678" });
@@ -127,6 +127,15 @@ async function main() {
   const customer = await user("cliente@demo.eventobrasil.test", "Clara Cliente (demo)", { phone: "21998765432" });
   // Destinatária da transferência aceita.
   const friend = await user("amiga@demo.eventobrasil.test", "Ana Amiga (demo)");
+  // Identidades e endereços exclusivamente fictícios para os compradores demo.
+  for (const [buyer, cpf] of [[customer, "52998224725"], [friend, "11144477735"]] as const) {
+    await db.user.update({ where: { id: buyer.id }, data: {
+      cpfEncrypted: encryptPII(cpf),
+      cpfHash: createHmac("sha256", process.env.DATA_ENCRYPTION_KEY!).update(`buyer-cpf:${cpf}`).digest("hex"),
+      cpfLast2: cpf.slice(-2), birthDate: new Date("1995-04-15T00:00:00Z"),
+      address: { create: { postalCode: "01001000", street: "Praça da Sé", number: "100", district: "Sé", city: "São Paulo", state: "SP" } },
+    } });
+  }
 
   await db.commissionRule.create({
     data: { scope: "PLATFORM", percentBps: 700, bearer: "ORGANIZER", processingFeeBearer: "ORGANIZER", policyVersion: "platform:default:v1", createdById: admin.id },

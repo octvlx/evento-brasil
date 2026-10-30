@@ -1,3 +1,5 @@
+import { confirmCheckoutReview } from "@/server/services/checkout-review";
+import { makeBuyerReady } from "../support/buyer-ready";
 // Fase 3 (Decreto 13.108/2026): aceite de termos versionados (R10, L10a) e
 // exportação dos dados do titular (R9, L9b). As Server Actions e a rota de
 // exportação rodam de verdade; só o pedido HTTP (cookies, cabeçalhos, sessão) é simulado.
@@ -46,7 +48,7 @@ async function shop() {
 }
 
 const signup = (email: string) =>
-  registerUser(db, { name: "Comprador", email, password: "senha-forte-1", acceptTerms: true, acceptPrivacy: true }, { ip: "198.51.100.9", userAgent: "vitest-agent" });
+  registerUser(db, { name: "Comprador", email, password: "senha-forte-1", acceptTerms: true, acceptPrivacy: true }, { ip: "198.51.100.9", userAgent: "vitest-agent" }).then(makeBuyerReady);
 
 beforeEach(async () => {
   await resetDb();
@@ -88,7 +90,7 @@ describe("aceite de termos versionados (R10)", () => {
     await publishV1();
     const { event, paid } = await shop();
     // Conta antiga (antes dos termos): nunca aceitou nada.
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
     const input = () => orderInput(event.id, [{ ticketTypeId: paid.id, quantity: 1 }]);
 
     const refused = await createOrderAction(input());
@@ -112,7 +114,7 @@ describe("aceite de termos versionados (R10)", () => {
   it("pedido gratuito (emitido na hora) também passa pelo portão", async () => {
     await publishV1();
     const { event, free } = await shop();
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
     expect(await createOrderAction(orderInput(event.id, [{ ticketTypeId: free.id, quantity: 1 }]))).toMatchObject({ ok: false, code: "TERMS_REQUIRED" });
     expect(await db.issuedTicket.count({ where: { userId: currentUser.id } })).toBe(0);
   });
@@ -125,6 +127,8 @@ describe("aceite de termos versionados (R10)", () => {
     const reserved = await createOrderAction(orderInput(event.id, [{ ticketTypeId: paid.id, quantity: 1 }]));
     if (!reserved.ok) throw new Error(reserved.error);
 
+    const draft = await db.checkoutDraft.findUniqueOrThrow({ where: { orderId: reserved.data.orderId } });
+    await confirmCheckoutReview(db, user, draft.id, draft.reviewHash!);
     const v2 = await publish("BUYER", "v2");
     expect(await pendingTermsKinds(db, user.id)).toEqual(["BUYER"]);
     expect(await createOrderAction(orderInput(event.id, [{ ticketTypeId: paid.id, quantity: 1 }]))).toMatchObject({ ok: false, code: "TERMS_REQUIRED" });
@@ -134,7 +138,7 @@ describe("aceite de termos versionados (R10)", () => {
     expect(await db.payment.count({ where: { orderId: reserved.data.orderId } })).toBe(0);
 
     // Aceite no pedido de outra pessoa: recusado e nada gravado.
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
     await recordAcceptance(db, currentUser.id, ["BUYER", "PRIVACY"], { context: "SIGNUP" });
     await publish("PRIVACY", "v2");
     expect(await startPaymentAction(reserved.data.orderId, "PIX", undefined, true)).toMatchObject({ ok: false, code: "FORBIDDEN" });
@@ -239,7 +243,7 @@ describe("baixar meus dados (R9)", () => {
   });
 
   it("tem limite de exportações por conta", async () => {
-    currentUser = await makeUser();
+    currentUser = await makeBuyerReady(await makeUser());
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) statuses.push((await exportData()).status);
     expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);

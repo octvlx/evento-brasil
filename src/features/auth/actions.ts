@@ -5,6 +5,9 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { loginSchema, profileSchema, type RegisterInput } from "@/features/schemas";
 import { db } from "@/server/db";
+import { requestEmailVerification, confirmEmailVerification, internalReturnPath } from "@/server/services/email-verification";
+import { registerGoogleUser } from "@/server/services/google-registration";
+import { GOOGLE_PENDING_COOKIE } from "@/server/auth/google";
 import { isProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { failureLimiter, rateLimit } from "@/server/rate-limit";
@@ -49,7 +52,9 @@ export async function registerAction(input: RegisterInput, next?: string): Promi
     const user = await registerUser(db, input, { ip, userAgent });
     const { token, expiresAt } = await createSession(db, user.id, userAgent);
     await setSessionCookie(token, expiresAt);
-    return { redirectTo: safeNext(next) };
+    // Account creation stays successful even if delivery fails; the confirmation page offers resend.
+    try { await requestEmailVerification(db, user, next); } catch { /* checkout remains blocked until confirmed */ }
+    return { redirectTo: safeNext(next, "/confirmar-email") };
   });
 }
 
@@ -73,4 +78,26 @@ export async function updateProfileAction(_prev: ProfileState, formData: FormDat
 export async function currentUserSummary() {
   const u = await getCurrentUser();
   return u ? { name: u.name, email: u.email } : null;
+}
+
+export async function resendEmailConfirmationAction(next?: string) {
+  const user = await requireUser("/confirmar-email");
+  return toActionResult(() => requestEmailVerification(db, user, internalReturnPath(next)));
+}
+
+export async function confirmEmailAction(token: string) {
+  return toActionResult(() => confirmEmailVerification(db, token));
+}
+
+export async function googleSignupAction(acceptTerms: boolean, acceptPrivacy: boolean) {
+  return toActionResult(async () => {
+    const cookieJar = await cookies();
+    const pending = cookieJar.get(GOOGLE_PENDING_COOKIE)?.value;
+    const userAgent = (await headers()).get("user-agent");
+    const { user, next } = await registerGoogleUser(db, pending, acceptTerms, acceptPrivacy, { ip: await clientKey(), userAgent });
+    cookieJar.delete(GOOGLE_PENDING_COOKIE);
+    const session = await createSession(db, user.id, userAgent);
+    await setSessionCookie(session.token, session.expiresAt);
+    return { redirectTo: safeNext(next) };
+  });
 }

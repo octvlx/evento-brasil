@@ -1,3 +1,5 @@
+import { GoogleAuthLink } from "@/features/auth/verification-panels";
+import { googleConfigured } from "@/server/auth/google";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
@@ -29,8 +31,8 @@ export default function LoginPage({ searchParams }: PageProps<"/entrar">) {
 }
 
 async function LoginWithNext({ searchParams }: { searchParams: PageProps<"/entrar">["searchParams"] }) {
-  const { next } = await searchParams;
-  return <LoginForm next={typeof next === "string" ? next : undefined} />;
+  const { next, googleError } = await searchParams;
+  return <div className="space-y-4">{googleError && <p role="alert" className="text-sm text-destructive">{googleError === "existing" ? "Este e-mail já tem uma conta. Entre usando sua senha; não vinculamos contas automaticamente." : "Não foi possível entrar com Google. Tente novamente ou use e-mail e senha."}</p>}<GoogleAuthLink enabled={googleConfigured()} next={typeof next === "string" ? next : undefined} /><LoginForm next={typeof next === "string" ? next : undefined} /></div>;
 }
 
 async function RegisterLink({ searchParams }: { searchParams: PageProps<"/entrar">["searchParams"] }) {

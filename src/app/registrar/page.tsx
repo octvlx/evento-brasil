@@ -1,3 +1,5 @@
+import { GoogleAuthLink } from "@/features/auth/verification-panels";
+import { googleConfigured } from "@/server/auth/google";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
@@ -15,9 +17,7 @@ export default function RegisterPage({ searchParams }: PageProps<"/registrar">) 
       footer={
         <>
           Já tem conta?{" "}
-          <Link href="/entrar" className="font-semibold text-secondary hover:underline">
-            Entrar
-          </Link>
+          <Suspense fallback={<Link href="/entrar">Entrar</Link>}><LoginLink searchParams={searchParams} /></Suspense>
         </>
       }
     >
@@ -30,5 +30,10 @@ export default function RegisterPage({ searchParams }: PageProps<"/registrar">) 
 
 async function WithNext({ searchParams }: { searchParams: PageProps<"/registrar">["searchParams"] }) {
   const { next } = await searchParams;
-  return <RegisterForm next={typeof next === "string" ? next : undefined} />;
+  return <div className="space-y-4"><GoogleAuthLink enabled={googleConfigured()} next={typeof next === "string" ? next : undefined} /><RegisterForm next={typeof next === "string" ? next : undefined} /></div>;
+}
+
+async function LoginLink({ searchParams }: { searchParams: PageProps<"/registrar">["searchParams"] }) {
+  const { next } = await searchParams;
+  return <Link href={typeof next === "string" ? `/entrar?next=${encodeURIComponent(next)}` : "/entrar"} className="font-semibold text-secondary hover:underline">Entrar</Link>;
 }

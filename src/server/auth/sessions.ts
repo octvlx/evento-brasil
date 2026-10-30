@@ -16,7 +16,7 @@ export async function createSession(db: Db, userId: string, userAgent?: string |
 export async function resolveSession(db: Db, token: string) {
   const session = await db.session.findUnique({
     where: { tokenHash: hashToken(token) },
-    include: { user: { select: { id: true, email: true, name: true, phone: true, platformRole: true, status: true, isDemoAccount: true } } },
+    include: { user: { select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, platformRole: true, status: true, isDemoAccount: true } } },
   });
   if (!session) return null;
   if (session.expiresAt < new Date() || session.user.status !== "ACTIVE") {
