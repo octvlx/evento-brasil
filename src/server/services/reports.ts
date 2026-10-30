@@ -346,10 +346,10 @@ export async function halfPriceReport(db: Db, actor: Actor, eventId: string, now
   });
   const [ticketRows, dayRows] = await Promise.all([
     db.issuedTicket.groupBy({ by: ["status", "revocationReason"], where: { eventId, ticketType: { kind: "HALF_PRICE" } }, _count: true }),
-    db.$queryRaw<{ day: string; half: number; halfFaceCents: number; total: number }[]>`
+    db.$queryRaw<{ day: string; half: number; halfFaceCents: bigint; total: number }[]>`
       SELECT to_char((o."paidAt" AT TIME ZONE ${event.timezone})::date, 'YYYY-MM-DD') AS day,
              COALESCE(SUM(CASE WHEN i.kind = 'HALF_PRICE' THEN i.quantity END), 0)::int AS half,
-             COALESCE(SUM(CASE WHEN i.kind = 'HALF_PRICE' THEN i.quantity * i."unitPriceCents" END), 0)::int AS "halfFaceCents",
+             COALESCE(SUM(CASE WHEN i.kind = 'HALF_PRICE' THEN i.quantity::bigint * i."unitPriceCents" END), 0)::bigint AS "halfFaceCents",
              SUM(i.quantity)::int AS total
       FROM "Order" o
       JOIN "OrderItem" i ON i."orderId" = o.id
@@ -375,7 +375,7 @@ export async function halfPriceReport(db: Db, actor: Actor, eventId: string, now
     valid: count((r) => r.status === "VALID"),
     checkedIn: count((r) => r.status === "CHECKED_IN"),
     remaining: quota === null ? null : Math.max(0, quota - sold - reserved),
-    byDay: dayRows.map((r) => ({ day: r.day, halfSold: r.half, halfFaceCents: r.halfFaceCents, totalSold: r.total })),
+    byDay: dayRows.map((r) => ({ day: r.day, halfSold: r.half, halfFaceCents: Number(r.halfFaceCents), totalSold: r.total })),
   };
 }
 

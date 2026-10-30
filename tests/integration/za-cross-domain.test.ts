@@ -15,7 +15,7 @@ import { requestCustomerRefund } from "@/server/services/refunds";
 import { handlePaymentWebhook } from "@/server/services/payments";
 import { qrPayload } from "@/server/services/tickets";
 import { acceptTransfer, expireTicketTransfers, requestTransfer } from "@/server/services/transfers";
-import { adapter, buy, buyAndPay, db, makeCategory, makeCity, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, makeCategory, makeCity, makeEvent, makeOrg, makeVerifiedUser as makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 afterEach(async () => {

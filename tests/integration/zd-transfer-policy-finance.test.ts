@@ -6,7 +6,7 @@ import { checkFinancialInvariants } from "@/server/services/reconciliation";
 import { requestCustomerRefund } from "@/server/services/refunds";
 import { qrPayload } from "@/server/services/tickets";
 import { acceptTransfer, expireTicketTransfers, requestTransfer } from "@/server/services/transfers";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 afterEach(async () => { expect(await checkFinancialInvariants(db)).toEqual([]); });

@@ -136,3 +136,13 @@ test("evento mostra o organizador responsável (L10b), sem CPF", async ({ page }
   await expect(id).toHaveText(/^(Razão social|Responsável): .+/);
   await expect(id).not.toContainText(/\d{3}\.\d{3}\.\d{3}-\d{2}/);
 });
+
+
+test("order history handles malformed and oversized page parameters", async ({ page }) => {
+  await login(page, USERS.customer, "/meus-pedidos");
+  for (const query of ["pagina=1.5", "pagina=Infinity", "pagina=1e309", "pagina=2147483648", "pagina=1&pagina=2"]) {
+    await page.goto(`/meus-pedidos?${query}`);
+    await expect(page.getByRole("heading", { name: "Meus pedidos", exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Filtrar pedidos" })).toBeVisible();
+  }
+});

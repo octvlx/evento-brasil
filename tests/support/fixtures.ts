@@ -17,16 +17,21 @@ export async function resetDb() {
 }
 
 let n = 0;
-export async function makeUser(opts: { admin?: boolean; email?: string } = {}) {
+export async function makeUser(opts: { admin?: boolean; email?: string; verified?: boolean } = {}) {
   n++;
   return db.user.create({
     data: {
       email: opts.email ?? `user${n}-${randomUUID().slice(0, 6)}@test.local`,
       name: `Usuário ${n}`,
       passwordHash: "x",
+      emailVerifiedAt: opts.verified ? new Date() : null,
       platformRole: opts.admin ? "ADMIN" : "USER",
     },
   });
+}
+
+export function makeVerifiedUser(opts: Parameters<typeof makeUser>[0] = {}) {
+  return makeUser({ ...opts, verified: true });
 }
 
 export async function makeCity() {

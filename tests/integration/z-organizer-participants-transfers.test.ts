@@ -6,7 +6,7 @@ import { listEventChanges } from "@/server/services/event-changes";
 import { requestCustomerRefund } from "@/server/services/refunds";
 import { attendeesToCsv, listAttendees, listTransferHistory, organizerDashboard } from "@/server/services/reports";
 import { acceptTransfer, requestTransfer } from "@/server/services/transfers";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
