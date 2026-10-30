@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label } from "@/components/ui/primitives";
 import { requestPasswordResetAction, resetPasswordAction } from "./password-reset-actions";
 
 export function ForgotPasswordForm() {
+  const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState("");
   return (
@@ -17,7 +19,7 @@ export function ForgotPasswordForm() {
         setError("");
         try {
           await requestPasswordResetAction(email);
-          window.location.assign("/email-enviado");
+          router.push("/email-enviado");
         } catch {
           setError("Não foi possível enviar sua solicitação. Confira a conexão e tente novamente.");
         }

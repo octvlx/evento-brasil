@@ -43,6 +43,10 @@ export async function requestPasswordReset(db: Db, rawEmail: unknown, client: { 
     const expiresAt = new Date(now.getTime() + minutes * 60_000);
     const rawToken = randomToken(32);
     await tx.passwordResetToken.updateMany({ where: { userId: account.id, consumedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
+    await tx.emailOutbox.updateMany({
+      where: { template: "PASSWORD_RESET", recipient: user.email.toLowerCase(), status: "QUEUED" },
+      data: { status: "CANCELLED", messageEncrypted: null, payloadEncrypted: null },
+    });
     const token = await tx.passwordResetToken.create({ data: { userId: account.id, tokenHash: hashToken(rawToken), expiresAt, createdAt: now } });
     const url = new URL("/redefinir-senha", authAppUrl());
     url.hash = new URLSearchParams({ token: rawToken }).toString();
@@ -70,7 +74,7 @@ export async function resetPassword(db: Db, raw: unknown) {
   const passwordHash = await hashPassword(parsed.data.password);
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${token.userId} FOR UPDATE`;
-    const user = await tx.user.findUniqueOrThrow({ where: { id: token.userId }, select: { status: true, googleSubject: true } });
+    const user = await tx.user.findUniqueOrThrow({ where: { id: token.userId }, select: { email: true, status: true, googleSubject: true } });
     if (user.status !== "ACTIVE" || user.googleSubject) throw invalidLink();
     const now = new Date();
     const consumed = await tx.passwordResetToken.updateMany({ where: { id: token.id, consumedAt: null, expiresAt: { gt: now } }, data: { consumedAt: now } });
@@ -78,6 +82,10 @@ export async function resetPassword(db: Db, raw: unknown) {
     await tx.user.update({ where: { id: token.userId }, data: { passwordHash } });
     await tx.passwordResetToken.updateMany({ where: { userId: token.userId, consumedAt: null }, data: { expiresAt: now } });
     await tx.session.deleteMany({ where: { userId: token.userId } });
+    await tx.emailOutbox.updateMany({
+      where: { template: "PASSWORD_RESET", recipient: user.email.toLowerCase(), status: "QUEUED" },
+      data: { status: "CANCELLED", messageEncrypted: null, payloadEncrypted: null },
+    });
     await audit(tx, { actorUserId: token.userId, action: "user.password_reset", entityType: "User", entityId: token.userId });
     return { reset: true as const };
   });

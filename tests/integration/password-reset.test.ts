@@ -45,6 +45,7 @@ describe("password recovery", () => {
     expect(updated.emailVerifiedAt).toBeNull();
     expect(await resolveSession(db, session.token)).toBeNull();
     expect(await db.session.count({ where: { userId: user.id } })).toBe(0);
+    expect(await db.emailOutbox.findFirstOrThrow({ where: { template: "PASSWORD_RESET", recipient: user.email } })).toMatchObject({ status: "CANCELLED", messageEncrypted: null, payloadEncrypted: null });
     await expect(resetPassword(db, { token, password: "other-password-789" })).rejects.toMatchObject({ code: "VALIDATION" });
     expect(await db.auditLog.count({ where: { actorUserId: user.id, action: "user.password_reset" } })).toBe(1);
     expect(JSON.stringify(await db.auditLog.findMany())).not.toContain(token);
@@ -98,6 +99,8 @@ describe("password recovery", () => {
     // Advance only the cooldown dependency; hourly persistence remains exercised elsewhere.
     vi.spyOn(outbox, "consumeEmailRateLimit").mockResolvedValue(undefined);
     const second = await requestProof(user.email);
+    expect(await db.emailOutbox.count({ where: { template: "PASSWORD_RESET", recipient: user.email, status: "QUEUED" } })).toBe(1);
+    expect(await db.emailOutbox.count({ where: { template: "PASSWORD_RESET", recipient: user.email, status: "CANCELLED", messageEncrypted: null, payloadEncrypted: null } })).toBe(1);
     await expect(resetPassword(db, { token: first, password: "first-password-123" })).rejects.toMatchObject({ code: "VALIDATION" });
     await db.user.update({ where: { id: user.id }, data: { status: "SUSPENDED" } });
     await expect(resetPassword(db, { token: second, password: "second-password-123" })).rejects.toMatchObject({ code: "VALIDATION" });
