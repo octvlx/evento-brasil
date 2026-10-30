@@ -2,7 +2,7 @@
 
 ## Arquitetura e responsabilidade
 
-A aplicação usa Next.js16/React19, autenticação própria com scrypt e sessões PostgreSQL, Prisma7 e um serviço único de envio em `src/server/email/`.
+A aplicação usa Next.js 16/React 19, autenticação própria com scrypt e sessões PostgreSQL, Prisma 7 e um serviço único de envio em `src/server/email/`.
 
 - `index.ts`: contrato `EmailAdapter`, provedor console e SDK oficial Resend. A lógica de pedidos/autenticação não importa o SDK.
 - `templates.ts`: HTML com tabelas, estilos inline, identidade Evento Brasil, texto alternativo e conteúdo dinâmico escapado. Não há outro gerador de QR.
@@ -53,7 +53,7 @@ npm run dev
 3. Confirme explicitamente na página. Abrir a URL não consome o token por GET.
 4. Tente reutilizar o link: a operação deve ser recusada.
 5. Para recuperação, abra `/esqueci-minha-senha`, informe o endereço e veja a resposta genérica em `/email-enviado`.
-6. Abra o novo e-mail local e use `/redefinir-senha#token=...` para definir uma senha de8a200caracteres. A confirmação encerra as sessões existentes e não autentica automaticamente nem confirma o e-mail da conta.
+6. Abra o novo e-mail local e use `/redefinir-senha#token=...` para definir uma senha de8 a 200 caracteres. A confirmação encerra as sessões existentes e não autentica automaticamente nem confirma o e-mail da conta.
 7. Com pagamento simulado no ambiente local, aprove um pedido pelos controles existentes. Somente a confirmação autoritativa no backend produz as mensagens de compra/ingressos. Pedidos grátis seguem o gate existente de revisão/termos antes da emissão.
 
 Novas páginas públicas de autenticação permanecem disponíveis para pessoas não autenticadas ou com e-mail não confirmado. Compras e operações que exigem endereço verificado continuam protegidas no backend.
@@ -86,13 +86,37 @@ Nenhum teste automatizado dispara e-mail real. A entrega externa e a apresentaç
 4. Configure DMARC no domínio com política adequada ao ambiente. Comece pelo monitoramento quando necessário, acompanhe os relatórios e avance para políticas de rejeição somente após verificar alinhamento e todos os remetentes legítimos. Não crie um segundo registro SPF no mesmo nome: coordene o registro existente com o responsável pelo DNS.
 5. Configure `EMAIL_FROM` usando endereço do domínio verificado e `EMAIL_REPLY_TO` como uma caixa real de suporte. Reply-To não substitui a autenticação do domínio remetente.
 6. Configure `APP_BASE_URL`/`APP_URL` com a URL HTTPS de produção, credenciais reais restritas e execução periódica do processamento da fila.
-7. Valide remetente, destinatário autorizado, rastreamento do envio, anexos e fluxos de recuperação com dados controlados. Desative rastreamento de cliques de mensagens de autenticação quando aplicável e revise tratamento/retensão de dados com o responsável jurídico.
+7. Valide remetente, destinatário autorizado, rastreamento do envio, anexos e fluxos de recuperação com dados controlados. Desative rastreamento de cliques de mensagens de autenticação quando aplicável e revise tratamento/retenção de dados com o responsável jurídico.
 
 A aplicação rejeita console, remetente de testes/placeholder, falta de chave quando Resend está selecionado e URL HTTP em produção. O fato de o endereço ter formato válido não prova que o DNS está correto: o Resend faz a verificação operacional. Referências: [domínios verificados](https://resend.com/docs/dashboard/domains/introduction) e [DKIM/SPF/DMARC no painel](https://resend.com/docs/dashboard/domains/introduction).
 
+## Processar e acompanhar a fila
+
+Depois de configurar o ambiente do servidor, execute uma rodada limitada:
+
+```powershell
+npm run email:worker
+npm run email:status
+```
+
+Para manter um worker local ativo, em outro terminal:
+
+```powershell
+npm run email:worker -- --watch
+```
+
+O watch verifica a fila a cada 10 segundos e processa lotes limitados. Em produção, mantenha a execução do worker/cron supervisionada; o simples fato de o servidor web estar ativo não garante que uma fila sem worker será esvaziada. Depois de corrigir uma falha permanente, confira o registro e, quando elegível, solicite reprocessamento:
+
+```powershell
+npm run email:retry -- ID_DA_MENSAGEM
+npm run email:worker
+```
+
+O comando aceita somente FAILED, com conteúdo cifrado ainda disponível, mensagem não expirada e primeira tentativa dentro da janela segura de 23 horas. Não converte UNKNOWN em envio automático. O worker utiliza até 5 tentativas com espera crescente; leases PROCESSING duram 2 minutos. Nunca use reprocessamento para alterar pagamentos ou recriar ingressos.
+
 ## Tokens, sessões e Google
 
-- Verificação e recuperação usam valores aleatórios criptográficos de32bytes, hash HMAC no banco, expiração configurável de30minutos e consumo condicional na mesma transação da alteração de conta.
+- Verificação e recuperação usam valores aleatórios criptográficos de32 bytes, hash HMAC no banco, expiração configurável de30 minutos e consumo condicional na mesma transação da alteração de conta.
 - Links de autenticação usam o fragmento `#token=...`, para o token não integrar a URL da requisição HTTP/log normal do servidor. A página faz uma ação POST explícita; scanners de e-mail não devem consumir a prova por GET.
 - Reenvio invalida as provas anteriores quando aplicável. Mensagens de recuperação ainda enfileiradas são canceladas e seu conteúdo cifrado removido quando substituídas ou quando a senha é redefinida.
 - Contas com identidade Google confiável preservam `emailVerifiedAt`, não recebem confirmação desnecessária e não são vinculadas automaticamente por coincidência de e-mail. Recuperação de senha não cria senha em contas exclusivamente Google.
@@ -114,7 +138,7 @@ Estados:
 | `CANCELLED` | Expiração, substituição ou recurso já inelegível |
 | `UNKNOWN` | Situação ambígua que requer conferência humana antes de novo envio |
 
-Workers reaproveitam o mesmo ID de mensagem/chave idempotente nas retentativas; o corpo enviado é preservado entre tentativas. O Resend conserva suas chaves por24horas. O sistema evita retries cegos de entregas antigas ambíguas; não prometa exatamente-uma-entrega ilimitada através de falhas e reinícios. Confira o provedor antes de reenviar um `UNKNOWN` ou de criar uma mensagem substituta. Ver [idempotência oficial](https://resend.com/docs/dashboard/emails/idempotency-keys).
+Workers reaproveitam o mesmo ID de mensagem/chave idempotente nas retentativas; o corpo enviado é preservado entre tentativas. O Resend conserva suas chaves por 24 horas. O sistema evita retries cegos de entregas antigas ambíguas; não prometa exatamente-uma-entrega ilimitada através de falhas e reinícios. Confira o provedor antes de reenviar um `UNKNOWN` ou de criar uma mensagem substituta. Ver [idempotência oficial](https://resend.com/docs/dashboard/emails/idempotency-keys).
 
 Consulta operacional somente para administrador do banco em ambiente autorizado:
 
@@ -146,6 +170,8 @@ npm run test:unit
 npm run test:integration
 npm run build
 ```
+
+O build é uma verificação de produção: com a proteção de configuração ativa, o padrão local console não é uma configuração de produção válida. Use a configuração do ambiente de destino ao validar esse build. A CI pode usar valores isolados e mocks para compilar/testar, mas isso não comprova a verificação do domínio nem autoriza reutilizar credenciais fictícias em uma instalação real.
 
 A suíte de integração inicia PostgreSQL descartável quando `TEST_DATABASE_URL` não está definido. Se essa variável estiver definida, confira cuidadosamente o banco alvo: nunca utilize produção. A recuperação tem cobertura específica em `tests/integration/password-reset.test.ts`:
 
