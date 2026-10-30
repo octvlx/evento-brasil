@@ -296,7 +296,12 @@ async function recordRefundFailure(db: Db, refund: { id: string; orderId: string
   // Bloqueio por estorno acima do pago não é tentativa no provedor e nunca é reprocessado sozinho.
   const isAttempt = kind !== "OVER_REFUND_BLOCKED";
   const max = REFUND_RETRY_POLICY.maxAutomaticAttempts;
-  const { attempt, awaitingDecision } = await db.$transaction(async (tx) => {
+  const failure = await db.$transaction(async (tx) => {
+    const ref = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { eventId: true } });
+    await lockEvent(tx, ref.eventId);
+    await lockOrder(tx, refund.orderId);
+    const current = await tx.refund.findUniqueOrThrow({ where: { id: refund.id } });
+    if (current.status !== "PROCESSING" || current.processedAt) return null;
     const order = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { organizationId: true } });
     const previous = await tx.auditLog.count({ where: { entityType: "Refund", entityId: refund.id, action: ATTEMPT_FAILED } });
     const attempt = previous + (isAttempt ? 1 : 0);
@@ -310,6 +315,8 @@ async function recordRefundFailure(db: Db, refund: { id: string; orderId: string
     if (isAttempt && attempt === max) await audit(tx, { ...base, action: "refund.retry_exhausted", metadata: { orderId: refund.orderId, attempts: attempt } });
     return { attempt, awaitingDecision };
   }, TX_OPTIONS);
+  if (!failure) return;
+  const { attempt, awaitingDecision } = failure;
   financeLog("error", awaitingDecision ? "refund.awaiting_admin_decision" : "refund.attempt_failed", { orderId: refund.orderId, refundId: refund.id }, { kind, attempt, message });
 }
 

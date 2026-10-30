@@ -33,6 +33,14 @@ function verificationData(input: ReturnType<typeof organizerApplicationSchema.pa
 /** Limite de cadastros aguardando análise por usuário (evita spam na fila do admin). */
 export const MAX_PENDING_APPLICATIONS = 3;
 
+async function assertPendingCapacity(tx: Tx, userIds: string[]) {
+  for (const id of [...new Set(userIds)].sort()) {
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${id} FOR UPDATE`;
+    const pending = await tx.organizationMember.count({ where: { userId: id, role: "OWNER", organization: { status: "PENDING_REVIEW" } } });
+    if (pending >= MAX_PENDING_APPLICATIONS) throw new AppError("LIMIT_EXCEEDED", "O limite de cadastros aguardando análise foi atingido. Aguarde a resposta antes de enviar outro cadastro.");
+  }
+}
+
 /**
  * Cria uma NOVA organização e envia para análise. O usuário vira OWNER.
  * Serve tanto para o primeiro cadastro quanto para organizações adicionais.
@@ -41,6 +49,7 @@ export async function submitOrganizerApplication(db: Db, actor: Actor, raw: Orga
   assertActive(actor);
   const input = organizerApplicationSchema.parse(raw);
   return db.$transaction(async (tx) => {
+    await assertPendingCapacity(tx, [actor.id]);
     const pending = await tx.organizationMember.count({
       where: { userId: actor.id, role: "OWNER", organization: { status: "PENDING_REVIEW" } },
     });
@@ -98,6 +107,8 @@ export async function resubmitOrganizerApplication(db: Db, actor: Actor, organiz
   await assertOrgPermission(db, actor, organizationId, "org:manage");
   const input = organizerApplicationSchema.parse(raw);
   return db.$transaction(async (tx) => {
+    const owners = await tx.organizationMember.findMany({ where: { organizationId, role: "OWNER" }, select: { userId: true } });
+    await assertPendingCapacity(tx, owners.map(owner => owner.userId));
     const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId } });
     if (org.status !== "REJECTED" && org.status !== "DRAFT") throw invalidState("Esta organização não está aguardando reenvio.");
     const updated = await tx.organization.update({

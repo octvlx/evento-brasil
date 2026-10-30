@@ -142,10 +142,10 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
       take: 8,
       select: { id: true, publicCode: true, buyerName: true, totalCents: true, status: true, paidAt: true, isSimulated: true, event: { select: { title: true } } },
     }),
-    db.$queryRaw<{ eventId: string; gross: number; refunds: number }[]>`
+    db.$queryRaw<{ eventId: string; gross: bigint; refunds: bigint }[]>`
       SELECT o."eventId" AS "eventId",
-        COALESCE(SUM(CASE WHEN l.type = 'SALE' AND l.account = 'CUSTOMER_FUNDS' AND l.direction = 'DEBIT' THEN l."amountCents" END), 0)::int AS gross,
-        COALESCE(SUM(CASE WHEN l.type IN ('REFUND', 'CHARGEBACK') AND l.account = 'CUSTOMER_FUNDS' AND l.direction = 'CREDIT' THEN l."amountCents" END), 0)::int AS refunds
+        COALESCE(SUM(CASE WHEN l.type = 'SALE' AND l.account = 'CUSTOMER_FUNDS' AND l.direction = 'DEBIT' THEN l."amountCents" END), 0)::bigint AS gross,
+        COALESCE(SUM(CASE WHEN l.type IN ('REFUND', 'CHARGEBACK') AND l.account = 'CUSTOMER_FUNDS' AND l.direction = 'CREDIT' THEN l."amountCents" END), 0)::bigint AS refunds
       FROM "FinancialLedgerEntry" l
       JOIN "Order" o ON o.id = l."orderId"
       WHERE l."organizationId" = ${organizationId}
@@ -160,7 +160,7 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
   const soldRows = recentEvents.length
     ? await db.issuedTicket.groupBy({ by: ["eventId"], where: { eventId: { in: recentEvents.map((e) => e.id) }, status: { in: ["VALID", "CHECKED_IN"] } }, _count: true })
     : [];
-  const revenue = new Map(revenueRows.map((r) => [r.eventId, r]));
+  const revenue = new Map(revenueRows.map((r) => [r.eventId, { gross: Number(r.gross), refunds: Number(r.refunds) }]));
   const eventPerformance = recentEvents.map((e) => ({
     id: e.id,
     title: e.title,
@@ -204,9 +204,9 @@ export async function organizerFinancials(db: Db, actor: Actor, organizationId: 
 export async function dailySales(db: Db, actor: Actor, organizationId: string, days = 30) {
   await assertOrgPermission(db, actor, organizationId, "finance:read");
   const since = new Date(Date.now() - days * 86_400_000);
-  const rows = await db.$queryRaw<{ day: string; total: number; orders: number }[]>`
+  const rows = await db.$queryRaw<{ day: string; total: bigint; orders: number }[]>`
     SELECT to_char(("paidAt" AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD') AS day,
-           SUM("totalCents")::int AS total, COUNT(*)::int AS orders
+           SUM("totalCents")::bigint AS total, COUNT(*)::int AS orders
     FROM "Order"
     WHERE "organizationId" = ${organizationId} AND "paidAt" >= ${since}
       AND status IN ('PAID', 'REFUND_PENDING', 'REFUNDED', 'DISPUTED')
@@ -215,7 +215,7 @@ export async function dailySales(db: Db, actor: Actor, organizationId: string, d
   return Array.from({ length: days }, (_, i) => {
     const d = new Date(Date.now() - (days - 1 - i) * 86_400_000);
     const key = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(d);
-    return { day: key, totalCents: byDay.get(key)?.total ?? 0, orders: byDay.get(key)?.orders ?? 0 };
+    return { day: key, totalCents: Number(byDay.get(key)?.total ?? 0), orders: byDay.get(key)?.orders ?? 0 };
   });
 }
 
