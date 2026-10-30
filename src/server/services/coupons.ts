@@ -15,6 +15,7 @@ import { audit } from "../audit";
 import { assertEventPermission, assertOrgPermission, type Actor } from "../auth/permissions";
 import { AppError, invalidState, notFound } from "../errors";
 import { resolveCommissionRule } from "./commission";
+import { lockEvent, lockCoupons } from "./orders";
 
 const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
 
@@ -162,6 +163,10 @@ export async function updateCoupon(db: Db, actor: Actor, couponId: string, raw: 
   const input = couponInputSchema.parse(raw);
   try {
     return await db.$transaction(async (tx) => {
+      const ref = await loadCouponForManager(tx, actor, couponId);
+      if (!ref.eventId) throw invalidState("Cupons da organização inteira ainda não são editáveis por aqui.");
+      await lockEvent(tx, ref.eventId);
+      await lockCoupons(tx, [couponId]);
       const current = await loadCouponForManager(tx, actor, couponId);
       if (!current.eventId) throw invalidState("Cupons da organização inteira ainda não são editáveis por aqui.");
       const event = await loadEditableEvent(tx, current.eventId);

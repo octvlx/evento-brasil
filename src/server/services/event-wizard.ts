@@ -298,14 +298,12 @@ export async function saveEventWizardStep(db: Db, actor: Actor, eventId: string,
 /** Registra a etapa aberta por último (para retomar de onde parou). */
 export async function recordWizardVisit(db: Db, actor: Actor, eventId: string, step: WizardStep) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
-  const event = await db.event.findUnique({
-    where: { id: eventId },
-    select: { status: true },
-  });
-  if (!event) throw notFound();
-  if (event.status !== "DRAFT") return getWizardProgress(db, eventId);
-  return recordWizardProgress(db, actor, organizationId, eventId, {
-    lastStep: step,
+  return db.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
+    const event = await tx.event.findUnique({ where: { id: eventId }, select: { status: true } });
+    if (!event) throw notFound();
+    if (event.status !== "DRAFT") return getWizardProgress(tx, eventId);
+    return recordWizardProgress(tx, actor, organizationId, eventId, { lastStep: step });
   });
 }
 

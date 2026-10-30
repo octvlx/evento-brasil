@@ -1,7 +1,6 @@
 import "server-only";
 import { DATA_STEPS, isDataStep, type DataStep, type WizardStep } from "@/features/organizer/wizard-steps";
 import type { Db, Tx } from "../db";
-import { audit } from "../audit";
 import type { Actor } from "../auth/permissions";
 
 // Progresso do assistente de criação de evento (etapas concluídas e a última
@@ -81,13 +80,16 @@ export async function recordWizardProgress(client: Db | Tx, actor: Actor, organi
     lastStep,
   };
   if (current.tracked && completed === current.completed && lastStep === current.lastStep) return current;
-  await audit(client, {
+  // Transaction start timestamps can precede a lock wait; preserve append ordering.
+  const latest = await client.auditLog.findFirst({ where: { entityType: "Event", entityId: eventId, action: WIZARD_PROGRESS_ACTION }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { createdAt: true } });
+  await client.auditLog.create({ data: {
+    createdAt: new Date(Math.max(Date.now(), (latest?.createdAt.getTime() ?? 0) + 1)),
     actorUserId: actor.id,
     organizationId,
     action: WIZARD_PROGRESS_ACTION,
     entityType: "Event",
     entityId: eventId,
     metadata: { completed: next.completed, lastStep: next.lastStep },
-  });
+  } });
   return next;
 }
