@@ -37,6 +37,9 @@ jobs:
       DATABASE_URL: postgresql://evento_test:evento_test_pw@localhost:5432/evento_test
       TEST_DATABASE_URL: postgresql://evento_test:evento_test_pw@localhost:5432/evento_test
       APP_URL: https://evento.example
+      EMAIL_PROVIDER: resend
+      RESEND_API_KEY: re_ci_only_not_a_real_key
+      EMAIL_FROM: Evento Brasil <notificacoes@evento.example>
       AUTH_SECRET: ci-only-auth-secret-0123456789
       DATA_ENCRYPTION_KEY: Y2ktb25seS1rZXktMDEyMzQ1Njc4OWFiY2RlZjAxMjM=
       CRON_SECRET: ci-only-cron-secret
@@ -75,4 +78,7 @@ jobs:
         run: npx prisma migrate deploy
 
       - name: Build de produção
+        env:
+          # Build sem chamadas externas; preserva a proibição do simulador em produção.
+          PAYMENT_PROVIDER: mercadopago
         run: npm run build

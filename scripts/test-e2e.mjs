@@ -40,6 +40,7 @@ try {
     NODE_ENV: "development",
     DATABASE_URL: `postgresql://evento_e2e:${password}@127.0.0.1:${dbPort}/evento_e2e`,
     APP_URL: `http://localhost:${appPort}`,
+    APP_BASE_URL: `http://localhost:${appPort}`,
     E2E_BASE_URL: `http://localhost:${appPort}`,
     E2E_ISOLATED: "1",
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import="${pathToFileURL(path.join(root, "tests/support/checkout-fetch-mock.mjs")).href}"`,

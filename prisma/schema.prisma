@@ -46,6 +46,7 @@ model User {
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
   address                 UserAddress?
+  passwordResetTokens     PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
   checkoutDrafts          CheckoutDraft[]
   sessions                Session[]
@@ -1307,4 +1308,54 @@ model AuditLog {
   @@index([organizationId, createdAt])
   @@index([actorUserId, createdAt])
   @@index([createdAt])
+}
+
+model PasswordResetToken {
+ id String @id @default(cuid())
+ userId String
+ tokenHash String @unique
+ expiresAt DateTime @db.Timestamptz(3)
+ consumedAt DateTime? @db.Timestamptz(3)
+ createdAt DateTime @default(now()) @db.Timestamptz(3)
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ @@index([userId,createdAt])
+ @@index([expiresAt])
+}
+
+enum EmailDeliveryStatus {
+ QUEUED
+ PROCESSING
+ SENT
+ FAILED
+ CANCELLED
+ UNKNOWN
+}
+model EmailOutbox {
+ id String @id @default(cuid())
+ dedupeKey String @unique
+ template String
+ recipient String
+ payloadEncrypted String?
+ messageEncrypted String?
+ status EmailDeliveryStatus @default(QUEUED)
+ provider String?
+ providerMessageId String?
+ attemptCount Int @default(0)
+ firstAttemptAt DateTime? @db.Timestamptz(3)
+ nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+ lockedUntil DateTime? @db.Timestamptz(3)
+ leaseToken String?
+ expiresAt DateTime? @db.Timestamptz(3)
+ sentAt DateTime? @db.Timestamptz(3)
+ failedAt DateTime? @db.Timestamptz(3)
+ errorCode String?
+ createdAt DateTime @default(now()) @db.Timestamptz(3)
+ updatedAt DateTime @updatedAt @db.Timestamptz(3)
+ @@index([status,nextAttemptAt])
+ @@index([lockedUntil])
+}
+model EmailRateLimit {
+ key String @id
+ count Int @default(0)
+ windowStartedAt DateTime @db.Timestamptz(3)
 }

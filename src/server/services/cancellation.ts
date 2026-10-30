@@ -1,4 +1,5 @@
 import "server-only";
+import { enqueueCancelledEventEmailsTx } from "../email/events";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { assertEventPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
@@ -40,6 +41,7 @@ export async function cancelEvent(
     const transfersClosed = await closePendingTransfersTx(tx, { eventId }, "Evento cancelado", now);
 
     const paid = await tx.order.findMany({ where: { eventId, status: "PAID" }, include: { payments: { where: { status: "PAID" } } } });
+    await enqueueCancelledEventEmailsTx(tx, eventId);
     const refundIds: string[] = [];
     for (const o of paid) {
       const key = `refund:${o.id}:event_cancelled`;
