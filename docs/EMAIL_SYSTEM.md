@@ -7,7 +7,7 @@ A aplicação usa Next.js 16/React 19, autenticação própria com scrypt e sess
 - `index.ts`: contrato `EmailAdapter`, provedor console e SDK oficial Resend. A lógica de pedidos/autenticação não importa o SDK.
 - `templates.ts`: HTML com tabelas, estilos inline, identidade Evento Brasil, texto alternativo e conteúdo dinâmico escapado. Não há outro gerador de QR.
 - `outbox.ts`: gravação cifrada, deduplicação, reserva de trabalho com lease, tentativas e estados de entrega persistidos.
-- `events.ts`: eventos de compra, ingressos, cancelamento e reembolso conectados aos serviços financeiros existentes.
+- `events.ts`: eventos de compra, ingressos, cancelamento e reembolso conectados aos serviços financeiros existentes. Convites/aceites de transferência, convites de equipe e alterações de evento também persistem a intenção de envio nas transações de seus serviços.
 - `services/email-verification.ts` e `services/password-reset.ts`: provas de e-mail de uso único; os tokens não são armazenados em claro nas tabelas de autenticação.
 
 `EmailOutbox` é a fonte operacional: reiniciar o servidor não perde uma mensagem que já foi confirmada no banco. A intenção de comunicação é gravada na mesma transação da operação de domínio. Uma falha no provedor ocorre depois do commit financeiro e não transforma o estado do pagamento.
@@ -74,7 +74,7 @@ APP_BASE_URL=http://localhost:3000
 
 `EMAIL_API_KEY` permanece aceito como nome legado; prefira `RESEND_API_KEY` em novas configurações. Reinicie o servidor após mudar o ambiente.
 
-O remetente `resend.dev` é de testes: ele não autoriza envio irrestrito. A documentação do provedor restringe o destinatário ao e-mail autorizado da própria conta sem domínio verificado. Uma resposta403 é registrada como `RECIPIENT_OR_DOMAIN_UNAUTHORIZED`; confira a conta/destinatário ou verifique um domínio. Não tente contornar a restrição. Ver [restrição do domínio de testes](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain).
+O remetente `resend.dev` é de testes: ele não autoriza envio irrestrito. A documentação do provedor restringe o destinatário ao e-mail autorizado da própria conta sem domínio verificado. Uma resposta 403 é registrada como `RECIPIENT_OR_DOMAIN_UNAUTHORIZED`; confira a conta/destinatário ou verifique um domínio. Não tente contornar a restrição. Ver [restrição do domínio de testes](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain).
 
 Nenhum teste automatizado dispara e-mail real. A entrega externa e a apresentação em caixas reais Gmail/Outlook precisam de validação controlada com uma conta autorizada antes do lançamento; os testes locais não comprovam entregabilidade.
 
@@ -116,7 +116,7 @@ O comando aceita somente FAILED, com conteúdo cifrado ainda disponível, mensag
 
 ## Tokens, sessões e Google
 
-- Verificação e recuperação usam valores aleatórios criptográficos de32 bytes, hash HMAC no banco, expiração configurável de30 minutos e consumo condicional na mesma transação da alteração de conta.
+- Verificação e recuperação usam valores aleatórios criptográficos de 32 bytes, hash HMAC no banco, expiração configurável de 30 minutos e consumo condicional na mesma transação da alteração de conta.
 - Links de autenticação usam o fragmento `#token=...`, para o token não integrar a URL da requisição HTTP/log normal do servidor. A página faz uma ação POST explícita; scanners de e-mail não devem consumir a prova por GET.
 - Reenvio invalida as provas anteriores quando aplicável. Mensagens de recuperação ainda enfileiradas são canceladas e seu conteúdo cifrado removido quando substituídas ou quando a senha é redefinida.
 - Contas com identidade Google confiável preservam `emailVerifiedAt`, não recebem confirmação desnecessária e não são vinculadas automaticamente por coincidência de e-mail. Recuperação de senha não cria senha em contas exclusivamente Google.
@@ -138,7 +138,7 @@ Estados:
 | `CANCELLED` | Expiração, substituição ou recurso já inelegível |
 | `UNKNOWN` | Situação ambígua que requer conferência humana antes de novo envio |
 
-Workers reaproveitam o mesmo ID de mensagem/chave idempotente nas retentativas; o corpo enviado é preservado entre tentativas. O Resend conserva suas chaves por 24 horas. O sistema evita retries cegos de entregas antigas ambíguas; não prometa exatamente-uma-entrega ilimitada através de falhas e reinícios. Confira o provedor antes de reenviar um `UNKNOWN` ou de criar uma mensagem substituta. Ver [idempotência oficial](https://resend.com/docs/dashboard/emails/idempotency-keys).
+O transporte Resend tem timeout de 10 segundos, inferior ao lease de 2 minutos. Workers reaproveitam o mesmo ID de mensagem/chave idempotente nas retentativas; o corpo enviado é preservado entre tentativas. O Resend conserva suas chaves por 24 horas. O sistema evita retries cegos de entregas antigas ambíguas; não prometa exatamente-uma-entrega ilimitada através de falhas e reinícios. Confira o provedor antes de reenviar um `UNKNOWN` ou de criar uma mensagem substituta. Ver [idempotência oficial](https://resend.com/docs/dashboard/emails/idempotency-keys).
 
 Consulta operacional somente para administrador do banco em ambiente autorizado:
 

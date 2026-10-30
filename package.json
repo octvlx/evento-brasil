@@ -21,7 +21,10 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
     "test:e2e:isolated": "node scripts/test-e2e.mjs",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "email:worker": "tsx --conditions=react-server scripts/email-worker.ts",
+    "email:status": "tsx --conditions=react-server scripts/email-status.ts",
+    "email:retry": "tsx --conditions=react-server scripts/email-retry.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

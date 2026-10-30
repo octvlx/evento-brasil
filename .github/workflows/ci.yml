@@ -78,4 +78,7 @@ jobs:
         run: npx prisma migrate deploy
 
       - name: Build de produção
+        env:
+          # Build sem chamadas externas; preserva a proibição do simulador em produção.
+          PAYMENT_PROVIDER: mercadopago
         run: npm run build
