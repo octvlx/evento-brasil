@@ -39,7 +39,8 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
   const termsPending = (await pendingTermsKinds(db, user.id)).length > 0;
   const confirmingPayment = order.payments.some((p) => p.status === "PENDING" && (!p.providerPaymentId && !p.checkoutUrl || (p.method === "PIX" && !p.checkoutUrl && !p.pixCopyPaste && !p.pixQrCodeBase64)));
   const pix = step === "pix" ? order.payments.find((p) => p.status === "PENDING" && p.method === "PIX") : undefined;
-  const pendingCheckoutUrl = step === "pix" ? order.payments.find((p) => p.status === "PENDING")?.checkoutUrl ?? null : null;
+  const pendingCheckoutUrl = step === "pix" || step === "redirect" ? order.payments.find((p) => p.status === "PENDING")?.checkoutUrl ?? null : null;
+  const cardAvailable = getPaymentAdapter().supportedMethods.includes("CREDIT_CARD");
   // Para PIX real o provedor envia o QR; no simulado geramos o QR do texto "SIMULADO".
   const qrDataUrl = pix?.pixQrCodeBase64
     ? `data:image/png;base64,${pix.pixQrCodeBase64}`
@@ -73,6 +74,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
           pendingPix={pix ? { copyPaste: pix.pixCopyPaste, qrDataUrl } : null}
           pendingCheckoutUrl={pendingCheckoutUrl}
           cardProcessing={step === "card-processing"}
+          cardAvailable={cardAvailable}
           termsPending={termsPending}
         />}
       </div>

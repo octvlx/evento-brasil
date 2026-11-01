@@ -51,6 +51,8 @@ export async function startPayment(
       // PIX ainda sendo criado por outra requisição (duplo clique): espera o id do
       // provedor fora da transação. Se a criação ficou incerta, não reaproveita.
       if (samePix && !pending.failureReason) return { kind: "await", paymentId: pending.id } as const;
+      // Cartão pelo Checkout Pro: a tentativa pendente já tem página de pagamento; reaproveita.
+      if (pending.method === method && pending.provider === adapter.id && pending.checkoutUrl) return { kind: "reuse", payment: pending } as const;
       throw invalidState(
         pending.method === "PIX"
           ? "Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva."

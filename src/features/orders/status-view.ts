@@ -3,13 +3,15 @@
 
 type Tone = "info" | "success" | "warning" | "danger";
 
-export type CheckoutStep = "choose" | "pix" | "card-processing";
+export type CheckoutStep = "choose" | "pix" | "redirect" | "card-processing";
 
 /** O que o checkout mostra a partir das tentativas de pagamento (no máximo uma ativa por pedido). */
-export function checkoutStep(payments: { status: string; method: string }[]): CheckoutStep {
+export function checkoutStep(payments: { status: string; method: string; checkoutUrl?: string | null }[]): CheckoutStep {
   const active = payments.find((p) => p.status === "PENDING");
   if (!active) return "choose";
-  return active.method === "PIX" ? "pix" : "card-processing";
+  if (active.method === "PIX") return "pix";
+  // Cartão pelo Checkout Pro: o pagamento continua na página do Mercado Pago.
+  return active.checkoutUrl ? "redirect" : "card-processing";
 }
 
 export interface RefundView {

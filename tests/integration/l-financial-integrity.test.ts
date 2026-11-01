@@ -59,6 +59,33 @@ describe("tentativas de pagamento concorrentes", () => {
     }
   });
 
+  it("cartão por checkout externo: nova chamada reaproveita a mesma página, sem segunda cobrança", async () => {
+    const { event, tt } = await setup();
+    const customer = await makeUser();
+    const order = await buy(customer, event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
+    const spy = vi.spyOn(adapter, "createPayment").mockResolvedValue({
+      providerPaymentId: null,
+      providerPreferenceId: "pref-card",
+      status: "PENDING",
+      rawStatus: "preference_created",
+      checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-card",
+      expiresAt: order.expiresAt,
+    });
+    try {
+      const first = await startPayment(db, adapter, customer, order.id, "CREDIT_CARD");
+      const again = await startPayment(db, adapter, customer, order.id, "CREDIT_CARD");
+      expect(again.id).toBe(first.id);
+      expect(again.checkoutUrl).toBe(first.checkoutUrl);
+      expect(spy).toHaveBeenCalledTimes(1);
+      // Trocar para PIX com o cartão pendente continua recusado (uma tentativa ativa por pedido).
+      await expect(startPayment(db, adapter, customer, order.id, "PIX")).rejects.toMatchObject({ code: "INVALID_STATE" });
+      expect(await db.payment.count({ where: { orderId: order.id } })).toBe(1);
+      await db.order.update({ where: { id: order.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("recusa nas verificações prévias (ex.: conta sem PIX) encerra a tentativa e libera nova tentativa", async () => {
     const { event, tt } = await setup();
     const customer = await makeUser();

@@ -7,6 +7,8 @@ describe("etapa do checkout", () => {
     expect(checkoutStep([{ status: "FAILED", method: "CREDIT_CARD" }])).toBe("choose");
     expect(checkoutStep([{ status: "PENDING", method: "PIX" }])).toBe("pix");
     expect(checkoutStep([{ status: "PENDING", method: "CREDIT_CARD" }, { status: "FAILED", method: "PIX" }])).toBe("card-processing");
+    // Cartão pelo Checkout Pro: continua na página do Mercado Pago.
+    expect(checkoutStep([{ status: "PENDING", method: "CREDIT_CARD", checkoutUrl: "https://sandbox.mercadopago.com.br/x" }])).toBe("redirect");
   });
 });
 
