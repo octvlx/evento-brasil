@@ -9,7 +9,7 @@ import {
 } from "@/features/organizer/settings-forms";
 import { db } from "@/server/db";
 import { getPaymentAdapter } from "@/server/payments";
-import { sellerPixAvailable } from "@/server/payments/mercadopago";
+import { sellerCheckoutReadiness } from "@/server/payments/mercadopago";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
 
@@ -23,11 +23,17 @@ export default function SettingsPage({ searchParams }: { searchParams: Promise<{
   );
 }
 
-/** O checkout só aceita PIX: avisa quando a conta conectada não pode recebê-lo. */
+/** O checkout aceita PIX (e cartão de teste no sandbox): avisa quando a conta conectada não pode receber. */
 async function PixAvailability({ organizationId }: { organizationId: string }) {
-  const pix = await sellerPixAvailable(db, organizationId);
-  if (pix === true) return <p className="text-sm text-success">PIX disponível na conta Mercado Pago conectada.</p>;
-  if (pix === false)
+  const readiness = await sellerCheckoutReadiness(db, organizationId);
+  if (readiness?.pix) return <p className="text-sm text-success">PIX disponível na conta Mercado Pago conectada.</p>;
+  if (readiness?.testCards)
+    return (
+      <Alert variant="warning" data-testid="mp-sandbox-cards">
+        Conta de teste do Mercado Pago (sandbox) sem PIX: o checkout aceita cartão de crédito de teste, à vista. Use os cartões de teste do Mercado Pago. Com contas reais, o checkout aceita só PIX.
+      </Alert>
+    );
+  if (readiness)
     return (
       <Alert variant="danger" data-testid="mp-pix-unavailable">
         A conta Mercado Pago conectada não oferece PIX, e o checkout só aceita PIX: os compradores não conseguirão pagar. Cadastre uma chave PIX nessa conta no Mercado Pago (ou conecte outra conta) e

@@ -7,10 +7,11 @@ const oauth = vi.hoisted(() => ({
   getForUser: vi.fn(async () => "seller-access-token"),
 }));
 
+const envOverrides = vi.hoisted(() => ({}) as { NODE_ENV?: string });
 vi.mock("@/server/env", () => ({
   env: () => ({
     APP_URL: "https://events.example",
-    NODE_ENV: "development",
+    NODE_ENV: envOverrides.NODE_ENV ?? "development",
     MERCADO_PAGO_CLIENT_ID: "client-id",
     MERCADO_PAGO_CLIENT_SECRET: "client-secret",
     MERCADO_PAGO_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
@@ -47,6 +48,7 @@ function paymentResponse(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  delete envOverrides.NODE_ENV;
   oauth.getForOrganization.mockResolvedValue("seller-access-token");
   oauth.getForUser.mockResolvedValue("seller-access-token");
   vi.stubGlobal("fetch", vi.fn());
@@ -111,16 +113,60 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     marketplace: { organizationId: "org", sellerAccountId: null, applicationFeeCents: 0 },
   });
 
-  it("refuses before any charge, definitively, when the seller does not have PIX available", async () => {
+  it("refuses before any charge, definitively, when a real seller does not have PIX available", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.mocked(fetch).mockResolvedValueOnce(Response.json([{ id: "visa" }]));
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([{ id: "visa", payment_type_id: "credit_card" }]))
+      .mockResolvedValueOnce(Response.json({ id: 1, tags: ["normal"] }));
     const error = await adapter().createPayment(pixInput()).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(PaymentNotStartedError);
     expect(error).toMatchObject({ code: "PROVIDER_ERROR", reason: "PIX_UNAVAILABLE", message: expect.stringContaining("não pode receber por PIX") });
-    // Só a consulta de métodos; nenhuma preferência foi criada.
-    expect(fetch).toHaveBeenCalledTimes(1);
+    // Consulta de métodos e da conta; nenhuma preferência foi criada.
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(["/v1/payment_methods", "/users/me"]);
     // Diagnóstico em uma linha de texto (o log do Next mostrava objetos como "{}").
-    expect(warning).toHaveBeenCalledWith('[mercadopago] {"phase":"pix_method_unavailable","methods":1}');
+    expect(warning).toHaveBeenCalledWith('[mercadopago] {"phase":"pix_method_unavailable","methods":1,"sandbox":0}');
+  });
+
+  it("sandbox: a test seller without PIX gets a card-only, single-installment checkout", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([
+        { id: "visa", payment_type_id: "credit_card" },
+        { id: "master", payment_type_id: "credit_card" },
+        { id: "bolbradesco", payment_type_id: "ticket" },
+        { id: "account_money", payment_type_id: "account_money" },
+        { id: "debvisa", payment_type_id: "debit_card" },
+      ]))
+      .mockResolvedValueOnce(Response.json({ id: 1, tags: ["test_user", "normal"] }))
+      .mockResolvedValueOnce(Response.json({
+        id: "pref-sandbox",
+        init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=x",
+        sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=x",
+      }));
+    const result = await adapter().createPayment(pixInput());
+    expect(result).toMatchObject({ providerPreferenceId: "pref-sandbox", checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=x" });
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[2][1]?.body));
+    expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }, { id: "account_money" }, { id: "debvisa" }]);
+    expect(body.payment_methods.installments).toBe(1);
+  });
+
+  it("a seller with PIX keeps the PIX-only checkout without checking for a test account", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([{ id: "pix", payment_type_id: "bank_transfer" }, { id: "visa", payment_type_id: "credit_card" }]))
+      .mockResolvedValueOnce(Response.json({ id: "pref", init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=y" }));
+    await adapter().createPayment(pixInput());
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body));
+    expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "visa" }]);
+    expect(body.payment_methods.installments).toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("production never relaxes to cards, even for a test seller", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    envOverrides.NODE_ENV = "production";
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json([{ id: "visa", payment_type_id: "credit_card" }]));
+    await expect(adapter().createPayment(pixInput())).rejects.toMatchObject({ reason: "PIX_UNAVAILABLE" });
+    // Nem consulta a conta: em produção a exceção de sandbox não existe.
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("refuses before any charge when the seller account is not usable or the method check fails", async () => {
