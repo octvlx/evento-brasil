@@ -1,11 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: [
-    "argued-wrapped-honors-qty.trycloudflare.com",
-    "radar-county-immunology-dimensions.trycloudflare.com",
-    "polar-difficulties-venue-exploring.trycloudflare.com",
-  ],
+  // Túneis rápidos da Cloudflare mudam de nome a cada execução: o coringa cobre todos.
+  // Só o hostname é comparado (sem esquema nem porta); localhost já é permitido por padrão.
+  allowedDevOrigins: ["*.trycloudflare.com"],
   // Authorization codes/state must not appear in Next's default dev request logs.
   logging: { incomingRequests: { ignore: [/\/api\/mercadopago\/callback(?:[?]|$)/] } },
   // A suíte isolada não compartilha cache nem lock com o dev do usuário.
