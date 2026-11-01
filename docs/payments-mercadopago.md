@@ -196,6 +196,14 @@ Falhas na criação da preferência continuam "incertas" até a reconciliação.
 Em `/organizador/configuracoes`, a tela avisa quando a conta conectada não
 oferece PIX: cadastre uma chave PIX na conta Mercado Pago ou conecte outra.
 
+**Exceção de sandbox:** se a conta conectada não tem PIX, é um **usuário de
+teste** do Mercado Pago (`/users/me` com a tag `test_user`) e `NODE_ENV` não é
+`production`, o checkout aceita **cartão de crédito à vista** (demais métodos
+excluídos, `installments: 1`), para concluir compras de teste com os cartões de
+teste do Mercado Pago. Vendedor com PIX continua só PIX, sem consultar a conta;
+em produção a exceção não existe. O pagamento local continua registrado como
+`PIX` (método escolhido no site); o status vem sempre da consulta ao provedor.
+
 ## Passos de habilitação
 
 1. Aplicar as migrações, incluindo `providerPreferenceId`, em banco de
