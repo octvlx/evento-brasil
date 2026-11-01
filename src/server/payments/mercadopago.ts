@@ -42,6 +42,7 @@ type SellerMethod = z.infer<typeof methodsSchema>[number];
  * teste do Mercado Pago, sem PIX, e NODE_ENV não é production): cartão de crédito,
  * porque contas de teste normalmente não têm chave PIX e o sandbox aprova
  * pagamentos com os cartões de teste do Mercado Pago.
+ * O saldo em conta (`account_money`) não pode ser excluído e sempre aparece.
  */
 export function allowedCheckoutMethods(methods: SellerMethod[], sandbox: boolean) {
   return methods.filter((method) => method.id === "pix" || (sandbox && method.payment_type_id === "credit_card"));
@@ -293,8 +294,10 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       external_reference: input.paymentId,
       marketplace_fee: amount(input.marketplace.applicationFeeCents),
       payment_methods: {
+        // O Mercado Pago recusa a preferência (400 "account_money cannot be excluded")
+        // se o saldo em conta for excluído: ele fica sempre disponível no checkout.
         excluded_payment_methods: methods.data
-          .filter((method) => !allowed.includes(method))
+          .filter((method) => !allowed.includes(method) && method.id !== "account_money")
           .map(({ id }) => ({ id })),
         // Cartão de teste só à vista: o valor pago fica igual ao total do pedido.
         ...(sandbox ? { installments: 1 } : {}),

@@ -145,13 +145,18 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     const result = await adapter().createPayment(pixInput());
     expect(result).toMatchObject({ providerPreferenceId: "pref-sandbox", checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=x" });
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[2][1]?.body));
-    expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }, { id: "account_money" }, { id: "debvisa" }]);
+    // account_money nunca é excluído: o Mercado Pago recusa a preferência (400).
+    expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }, { id: "debvisa" }]);
     expect(body.payment_methods.installments).toBe(1);
   });
 
   it("a seller with PIX keeps the PIX-only checkout without checking for a test account", async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(Response.json([{ id: "pix", payment_type_id: "bank_transfer" }, { id: "visa", payment_type_id: "credit_card" }]))
+      .mockResolvedValueOnce(Response.json([
+        { id: "pix", payment_type_id: "bank_transfer" },
+        { id: "visa", payment_type_id: "credit_card" },
+        { id: "account_money", payment_type_id: "account_money" },
+      ]))
       .mockResolvedValueOnce(Response.json({ id: "pref", init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=y" }));
     await adapter().createPayment(pixInput());
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body));
