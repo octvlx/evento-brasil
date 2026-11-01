@@ -175,27 +175,31 @@ com `prisma db push` nesse banco descartável. Executa testes de callback único
 permissões e renovação concorrente com HTTP simulado; não chama Mercado Pago.
 Não usar esse resultado como validação das migrações nem de sandbox do provedor.
 
-### Bloqueio preexistente de migrações
+### Histórico de migrações (resolvido no #75)
 
-`20261031_mercadopago_oauth/migration.sql` também cria MercadoPagoOAuthState;
-`20261031_mercadopago_oauth_state/migration.sql` tenta criar a mesma tabela.
-Em banco novo, o replay falha. No banco local, a migração de account está
-finalizada, mas seu checksum diverge do arquivo atual. Para state há uma tentativa
-revertida com checksum diferente e uma aplicação finalizada com checksum correto.
-A tentativa revertida por si só não indica corrupção; a divergência da migração
-de account finalizada e a criação duplicada são os problemas a resolver. `prisma migrate status` sozinho informa
-atualizado e não detecta a integridade desse histórico.
+As migrações duplicadas da fase de desenvolvimento foram substituídas por
+`20261031210000_mercadopago_oauth` (contas e state) e
+`20261031220000_mercadopago_checkout_preferences`; o replay em banco vazio
+funciona. Bancos locais que aplicaram os nomes antigos (`20261031_…`) já têm as
+tabelas idênticas: basta `npx prisma migrate resolve --applied
+20261031210000_mercadopago_oauth` antes de `npm run db:deploy`.
 
-Os arquivos locais e o histórico aplicado foram preservados. Não editar migrações
-já aplicadas, marcar como resolvidas ou resetar o banco para esconder a falha.
-Antes de integrar/publicar, o responsável pelo banco deve recuperar as versões
-originais aplicadas e alinhar um histórico que reproduza em banco vazio, com
-migração corretiva quando necessária. Esse bloqueio independe dos testes OAuth.
+### Conta do vendedor sem PIX
+
+O checkout só aceita PIX. Antes de criar a preferência, o adaptador consulta
+`/v1/payment_methods` da conta conectada; sem `pix`, a tentativa é recusada
+**antes de qualquer cobrança** (`PaymentNotStartedError`, motivo
+`PIX_UNAVAILABLE`), o pagamento local vira `FAILED` e o comprador vê que o
+organizador ainda não recebe por PIX. O mesmo vale para conta não conectada ou
+revogada (`ACCOUNT_NOT_CONNECTED`) e falha nessa consulta (`PRECHECK_FAILED`).
+Falhas na criação da preferência continuam "incertas" até a reconciliação.
+Em `/organizador/configuracoes`, a tela avisa quando a conta conectada não
+oferece PIX: cadastre uma chave PIX na conta Mercado Pago ou conecte outra.
 
 ## Passos de habilitação
 
-1. Resolver o histórico de migrações descrito acima e aplicar as migrações
-   pendentes, incluindo `providerPreferenceId`, em banco de desenvolvimento e homologação.
+1. Aplicar as migrações, incluindo `providerPreferenceId`, em banco de
+   desenvolvimento e homologação.
 2. No painel do Mercado Pago, criar/usar uma aplicação **Pagamentos online**,
    **Checkout Pro**, API **Preferences**, modelo **Marketplace / Split 1:1**.
    Ativar PKCE S256 e cadastrar o Redirect URL exatamente igual ao callback.

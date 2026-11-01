@@ -1,5 +1,24 @@
 // Contrato neutro de provedor de pagamentos. Nenhum status vindo do cliente
 // ou do corpo do webhook é confiável: o sistema sempre consulta `getPayment`.
+import { AppError } from "../errors";
+
+export type PaymentNotStartedReason = "PIX_UNAVAILABLE" | "ACCOUNT_NOT_CONNECTED" | "PRECHECK_FAILED";
+
+/**
+ * Recusa ANTES de qualquer pedido de cobrança ao provedor (verificações prévias).
+ * Como nenhuma cobrança pode ter sido criada, a tentativa pode ser encerrada como
+ * FAILED e outra tentativa é permitida — ao contrário de falhas durante a criação,
+ * que continuam incertas até a reconciliação.
+ */
+export class PaymentNotStartedError extends AppError {
+  constructor(
+    public readonly reason: PaymentNotStartedReason,
+    message: string,
+  ) {
+    super("PROVIDER_ERROR", message);
+    this.name = "PaymentNotStartedError";
+  }
+}
 
 export type ProviderMethod = "PIX" | "CREDIT_CARD";
 

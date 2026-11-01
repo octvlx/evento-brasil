@@ -9,6 +9,7 @@ import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { adminRefundOrder, confirmRefundTx, OverRefundError, processRefund, requestCustomerRefund } from "@/server/services/refunds";
 import { qrPayload } from "@/server/services/tickets";
+import { PaymentNotStartedError } from "@/server/payments/types";
 import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, orderInput, resetDb, ticketType } from "../support/fixtures";
 
 beforeEach(resetDb);
@@ -56,6 +57,29 @@ describe("tentativas de pagamento concorrentes", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("recusa nas verificações prévias (ex.: conta sem PIX) encerra a tentativa e libera nova tentativa", async () => {
+    const { event, tt } = await setup();
+    const customer = await makeUser();
+    const order = await buy(customer, event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
+    const spy = vi
+      .spyOn(adapter, "createPayment")
+      .mockRejectedValueOnce(new PaymentNotStartedError("PIX_UNAVAILABLE", "O organizador deste evento ainda não pode receber por PIX."));
+    try {
+      await expect(startPayment(db, adapter, customer, order.id, "PIX")).rejects.toMatchObject({ code: "PROVIDER_ERROR", reason: "PIX_UNAVAILABLE" });
+      const failed = await db.payment.findFirstOrThrow({ where: { orderId: order.id } });
+      // Não fica "incerta": nenhuma cobrança pode existir no provedor.
+      expect(failed).toMatchObject({ status: "FAILED", failureReason: "PIX_UNAVAILABLE" });
+      expect(await db.auditLog.count({ where: { action: "payment.not_started", entityId: failed.id } })).toBe(1);
+      expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PENDING_PAYMENT");
+    } finally {
+      spy.mockRestore();
+    }
+    // Resolvido o problema do organizador, o comprador tenta de novo no mesmo pedido.
+    const retry = await startPayment(db, adapter, customer, order.id, "PIX");
+    expect(retry.providerPaymentId).toBeTruthy();
+    expect(await db.payment.count({ where: { orderId: order.id } })).toBe(2);
   });
 
   it("PIX em criação que fica incerto: quem esperava é recusado, sem segunda cobrança", async () => {

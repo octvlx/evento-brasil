@@ -9,14 +9,15 @@ import {
   getMercadoPagoAccessToken,
   getMercadoPagoAccessTokenForUser,
 } from "./mercadopago-oauth";
-import type {
-  CreatePaymentInput,
-  PaymentProviderAdapter,
-  ProviderPaymentSnapshot,
-  ProviderPaymentStatus,
-  RefundResult,
-  WebhookRequest,
-  WebhookVerification,
+import {
+  PaymentNotStartedError,
+  type CreatePaymentInput,
+  type PaymentProviderAdapter,
+  type ProviderPaymentSnapshot,
+  type ProviderPaymentStatus,
+  type RefundResult,
+  type WebhookRequest,
+  type WebhookVerification,
 } from "./types";
 
 const API = "https://api.mercadopago.com";
@@ -26,11 +27,25 @@ function providerDiagnostic(
   phase: string,
   details: Record<string, string | number | undefined>,
 ) {
-  console.warn("[mercadopago]", { phase, ...details });
+  // Uma linha de texto: o log de desenvolvimento do Next serializa objetos como "{}".
+  console.warn(`[mercadopago] ${JSON.stringify({ phase, ...details })}`);
 }
 function safeDiagnosticCode(value: string | number | undefined) {
   const text = value === undefined ? undefined : String(value);
   return text && /^[A-Za-z0-9_.-]{1,80}$/.test(text) ? text : undefined;
+}
+/**
+ * Para a tela do organizador: a conta Mercado Pago conectada oferece PIX?
+ * Só leitura. null = não foi possível verificar agora (sem conta, rede, resposta inválida).
+ */
+export async function sellerPixAvailable(db: Db, organizationId: string): Promise<boolean | null> {
+  try {
+    const token = await getMercadoPagoAccessToken(db, organizationId);
+    const methods = z.array(z.object({ id: z.string() })).safeParse(await requestJson("/v1/payment_methods", token));
+    return methods.success ? methods.data.some((method) => method.id === "pix") : null;
+  } catch {
+    return null;
+  }
 }
 const amount = (cents: number) => Number((cents / 100).toFixed(2));
 const cents = (value: number) => Math.round(value * 100);
@@ -199,18 +214,34 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       throw providerError();
     }
 
-    const accessToken = await getMercadoPagoAccessToken(
-      this.db,
-      input.marketplace.organizationId,
-    );
-    const methods = z.array(z.object({ id: z.string() })).safeParse(
-      await requestJson("/v1/payment_methods", accessToken),
-    );
-    if (!methods.success || !methods.data.some((method) => method.id === "pix")) {
-      providerDiagnostic("pix_method_unavailable", {
-        responseValid: methods.success ? 1 : 0,
-      });
-      throw providerError();
+    // Verificações prévias: nada aqui pode criar cobrança, então uma recusa é definitiva.
+    let accessToken: string;
+    try {
+      accessToken = await getMercadoPagoAccessToken(this.db, input.marketplace.organizationId);
+    } catch {
+      providerDiagnostic("seller_account_unavailable", {});
+      throw new PaymentNotStartedError(
+        "ACCOUNT_NOT_CONNECTED",
+        "O organizador deste evento ainda não está com a conta de recebimento ativa. Tente novamente mais tarde ou fale com o organizador.",
+      );
+    }
+    let rawMethods: unknown;
+    try {
+      rawMethods = await requestJson("/v1/payment_methods", accessToken);
+    } catch {
+      throw new PaymentNotStartedError("PRECHECK_FAILED", "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.");
+    }
+    const methods = z.array(z.object({ id: z.string() })).safeParse(rawMethods);
+    if (!methods.success) {
+      providerDiagnostic("invalid_payment_methods_response", {});
+      throw new PaymentNotStartedError("PRECHECK_FAILED", "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.");
+    }
+    if (!methods.data.some((method) => method.id === "pix")) {
+      providerDiagnostic("pix_method_unavailable", { methods: methods.data.length });
+      throw new PaymentNotStartedError(
+        "PIX_UNAVAILABLE",
+        "O organizador deste evento ainda não pode receber por PIX. Tente novamente mais tarde ou fale com o organizador.",
+      );
     }
 
     const appUrl = new URL(env().APP_URL);

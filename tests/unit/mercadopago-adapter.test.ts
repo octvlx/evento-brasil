@@ -22,6 +22,7 @@ vi.mock("@/server/payments/mercadopago-oauth", () => ({
 }));
 
 import { MercadoPagoAdapter } from "@/server/payments/mercadopago";
+import { PaymentNotStartedError } from "@/server/payments/types";
 
 const db = {
   payment: { findUnique: vi.fn(), findFirst: vi.fn() },
@@ -98,20 +99,49 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(body.notification_url).toBe("https://events.example/api/webhooks/mercadopago");
   });
 
-  it("fails closed when the seller does not have PIX available", async () => {
+  const pixInput = () => ({
+    paymentId: "payment",
+    orderId: "order",
+    amountCents: 1000,
+    method: "PIX" as const,
+    description: "Event",
+    payer: { email: "buyer@example.com", name: "Buyer" },
+    expiresAt: new Date(Date.now() + 60_000),
+    idempotencyKey: "key",
+    marketplace: { organizationId: "org", sellerAccountId: null, applicationFeeCents: 0 },
+  });
+
+  it("refuses before any charge, definitively, when the seller does not have PIX available", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.mocked(fetch).mockResolvedValueOnce(Response.json([{ id: "visa" }]));
-    await expect(adapter().createPayment({
-      paymentId: "payment",
-      orderId: "order",
-      amountCents: 1000,
-      method: "PIX",
-      description: "Event",
-      payer: { email: "buyer@example.com", name: "Buyer" },
-      expiresAt: new Date(Date.now() + 60_000),
-      idempotencyKey: "key",
-      marketplace: { organizationId: "org", sellerAccountId: null, applicationFeeCents: 0 },
-    })).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    const error = await adapter().createPayment(pixInput()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PaymentNotStartedError);
+    expect(error).toMatchObject({ code: "PROVIDER_ERROR", reason: "PIX_UNAVAILABLE", message: expect.stringContaining("não pode receber por PIX") });
+    // Só a consulta de métodos; nenhuma preferência foi criada.
     expect(fetch).toHaveBeenCalledTimes(1);
+    // Diagnóstico em uma linha de texto (o log do Next mostrava objetos como "{}").
+    expect(warning).toHaveBeenCalledWith('[mercadopago] {"phase":"pix_method_unavailable","methods":1}');
+  });
+
+  it("refuses before any charge when the seller account is not usable or the method check fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    oauth.getForOrganization.mockRejectedValueOnce(new Error("revoked"));
+    await expect(adapter().createPayment(pixInput())).rejects.toMatchObject({ reason: "ACCOUNT_NOT_CONNECTED" });
+    expect(fetch).not.toHaveBeenCalled();
+
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ error: "unauthorized" }, { status: 401 }));
+    await expect(adapter().createPayment(pixInput())).rejects.toMatchObject({ reason: "PRECHECK_FAILED" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a failed preference creation as an uncertain provider error", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([{ id: "pix" }]))
+      .mockResolvedValueOnce(Response.json({ error: "internal" }, { status: 500 }));
+    const error = await adapter().createPayment(pixInput()).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(error).not.toBeInstanceOf(PaymentNotStartedError);
   });
 
   it("logs safe provider diagnostics without response messages or tokens", async () => {

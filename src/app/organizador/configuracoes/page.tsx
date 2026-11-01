@@ -9,6 +9,7 @@ import {
 } from "@/features/organizer/settings-forms";
 import { db } from "@/server/db";
 import { getPaymentAdapter } from "@/server/payments";
+import { sellerPixAvailable } from "@/server/payments/mercadopago";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
 
@@ -20,6 +21,20 @@ export default function SettingsPage({ searchParams }: { searchParams: Promise<{
       <Content searchParams={searchParams} />
     </Suspense>
   );
+}
+
+/** O checkout só aceita PIX: avisa quando a conta conectada não pode recebê-lo. */
+async function PixAvailability({ organizationId }: { organizationId: string }) {
+  const pix = await sellerPixAvailable(db, organizationId);
+  if (pix === true) return <p className="text-sm text-success">PIX disponível na conta Mercado Pago conectada.</p>;
+  if (pix === false)
+    return (
+      <Alert variant="danger" data-testid="mp-pix-unavailable">
+        A conta Mercado Pago conectada não oferece PIX, e o checkout só aceita PIX: os compradores não conseguirão pagar. Cadastre uma chave PIX nessa conta no Mercado Pago (ou conecte outra conta) e
+        recarregue esta página.
+      </Alert>
+    );
+  return <p className="text-sm text-muted-foreground">Não foi possível verificar o PIX na conta Mercado Pago agora.</p>;
 }
 
 async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }> }) {
@@ -65,6 +80,11 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
           )}
           {adapter.id !== "mercadopago" && org.status === "APPROVED" && org.paymentAccountStatus === "NOT_CONNECTED" && <ConnectPaymentButton simulated={adapter.isSimulated} />}
           <p className="text-sm">Mercado Pago OAuth: {org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt ? "Autorizado" : "Não conectado ou requer nova autorização"}. Esta autorização não habilita cobranças reais.</p>
+          {org.status === "APPROVED" && org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt && (
+            <Suspense fallback={<p className="text-sm text-muted-foreground">Verificando PIX na conta Mercado Pago…</p>}>
+              <PixAvailability organizationId={org.id} />
+            </Suspense>
+          )}
           {org.status === "APPROVED" && (
             <form action="/api/mercadopago/connect" method="post">
               <button className="underline" type="submit">{org.mercadoPagoAccount ? "Autorizar novamente Mercado Pago" : "Conectar Mercado Pago"}</button>

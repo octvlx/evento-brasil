@@ -7,7 +7,7 @@ import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
-import type { PaymentProviderAdapter, ProviderPaymentSnapshot, WebhookRequest } from "../payments/types";
+import { PaymentNotStartedError, type PaymentProviderAdapter, type ProviderPaymentSnapshot, type WebhookRequest } from "../payments/types";
 import { assertCheckoutReviewed } from "./checkout-review";
 import { financeLog } from "./finance-log";
 import { postProcessingFee, postReversal, postSale } from "./ledger";
@@ -94,6 +94,13 @@ export async function startPayment(
       simulatedCardOutcome: opts.simulatedCardOutcome,
     });
   } catch (err) {
+    // Recusa nas verificações prévias: nenhuma cobrança pode existir no provedor.
+    // Encerra a tentativa como falha (libera nova tentativa) com mensagem clara.
+    if (err instanceof PaymentNotStartedError) {
+      await db.payment.updateMany({ where: { id: payment.id, status: "PENDING" }, data: { status: "FAILED", failureReason: err.reason } });
+      await audit(db, { actorUserId: actor.id, organizationId: order.organizationId, action: "payment.not_started", entityType: "Payment", entityId: payment.id, metadata: { method, reason: err.reason } });
+      throw err;
+    }
     // Uma falha de transporte não prova que o provedor deixou de cobrar.
     // Mantém a tentativa bloqueando novas cobranças até a reconciliação resolver a referência.
     await db.payment.updateMany({ where: { id: payment.id, status: "PENDING" }, data: { failureReason: "PROVIDER_CREATE_UNCERTAIN" } });
