@@ -132,6 +132,8 @@ describe("Mercado Pago Checkout Pro adapter", () => {
       .mockResolvedValueOnce(Response.json([
         { id: "visa", payment_type_id: "credit_card" },
         { id: "master", payment_type_id: "credit_card" },
+        // Mesma bandeira como pré-pago (formato real da API): não pode bloquear o crédito.
+        { id: "master", payment_type_id: "prepaid_card" },
         { id: "bolbradesco", payment_type_id: "ticket" },
         { id: "account_money", payment_type_id: "account_money" },
         { id: "debvisa", payment_type_id: "debit_card" },
@@ -146,7 +148,9 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(result).toMatchObject({ providerPreferenceId: "pref-sandbox", checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=x" });
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[2][1]?.body));
     // account_money nunca é excluído: o Mercado Pago recusa a preferência (400).
+    // master continua permitido (crédito); o pré-pago sai pelo tipo. account_money nunca é excluído.
     expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }, { id: "debvisa" }]);
+    expect(body.payment_methods.excluded_payment_types).toEqual([{ id: "prepaid_card" }, { id: "ticket" }, { id: "debit_card" }]);
     expect(body.payment_methods.installments).toBe(1);
   });
 
@@ -161,6 +165,7 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     await adapter().createPayment(pixInput());
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body));
     expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "visa" }]);
+    expect(body.payment_methods.excluded_payment_types).toEqual([{ id: "credit_card" }]);
     expect(body.payment_methods.installments).toBeUndefined();
     expect(fetch).toHaveBeenCalledTimes(2);
   });

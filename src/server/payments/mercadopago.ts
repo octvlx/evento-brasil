@@ -48,6 +48,30 @@ export function allowedCheckoutMethods(methods: SellerMethod[], sandbox: boolean
   return methods.filter((method) => method.id === "pix" || (sandbox && method.payment_type_id === "credit_card"));
 }
 
+/**
+ * Exclusões da preferência para que só os métodos permitidos apareçam.
+ * - A mesma bandeira aparece com tipos diferentes (ex.: `master` crédito e `master`
+ *   pré-pago): excluir o id `master` bloquearia o crédito também. Por isso a bandeira
+ *   só é excluída quando nenhuma variante dela é permitida, e o tipo indesejado
+ *   (pré-pago, débito, boleto…) é excluído por `excluded_payment_types`.
+ * - O Mercado Pago recusa a preferência (400 "account_money cannot be excluded")
+ *   se o saldo em conta for excluído: ele fica sempre disponível.
+ */
+export function checkoutExclusions(methods: SellerMethod[], allowed: SellerMethod[]) {
+  const allowedIds = new Set(allowed.map((method) => method.id));
+  const allowedTypes = new Set(allowed.map((method) => method.payment_type_id));
+  const ids = new Set(methods.map((method) => method.id).filter((id) => !allowedIds.has(id) && id !== "account_money"));
+  const types = new Set(
+    methods
+      .map((method) => method.payment_type_id)
+      .filter((type): type is string => !!type && !allowedTypes.has(type) && type !== "account_money"),
+  );
+  return {
+    excluded_payment_methods: [...ids].map((id) => ({ id })),
+    excluded_payment_types: [...types].map((id) => ({ id })),
+  };
+}
+
 /** Vendedor conectado é usuário de teste do Mercado Pago? Na dúvida, não (regras de produção). */
 async function isTestSeller(accessToken: string) {
   try {
@@ -294,11 +318,7 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       external_reference: input.paymentId,
       marketplace_fee: amount(input.marketplace.applicationFeeCents),
       payment_methods: {
-        // O Mercado Pago recusa a preferência (400 "account_money cannot be excluded")
-        // se o saldo em conta for excluído: ele fica sempre disponível no checkout.
-        excluded_payment_methods: methods.data
-          .filter((method) => !allowed.includes(method) && method.id !== "account_money")
-          .map(({ id }) => ({ id })),
+        ...checkoutExclusions(methods.data, allowed),
         // Cartão de teste só à vista: o valor pago fica igual ao total do pedido.
         ...(sandbox ? { installments: 1 } : {}),
       },
