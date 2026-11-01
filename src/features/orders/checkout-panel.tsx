@@ -20,6 +20,8 @@ interface Props {
   cardProcessing: boolean;
   /** Há versão vigente dos termos não aceita pelo comprador (R10). */
   termsPending: boolean;
+  /** O provedor aceita cartão de crédito (Mercado Pago: Checkout Pro). */
+  cardAvailable: boolean;
 }
 
 function mercadoPagoCheckoutUrl(value: string) {
@@ -40,7 +42,8 @@ function useCountdown(target: string, initialNow: number) {
   return Math.max(0, left);
 }
 
-export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pendingPix, pendingCheckoutUrl, cardProcessing, termsPending }: Props) {
+export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pendingPix, pendingCheckoutUrl, cardProcessing, termsPending, cardAvailable }: Props) {
+  const cardEnabled = isSimulated || cardAvailable;
   const router = useRouter();
   const [method, setMethod] = useState<"PIX" | "CREDIT_CARD">("PIX");
   const [cardOutcome, setCardOutcome] = useState<"approve" | "decline">("approve");
@@ -161,7 +164,12 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
             {(
               [
                 ["PIX", isSimulated ? "PIX" : "PIX pelo Mercado Pago", isSimulated ? "Aprovação em segundos" : "Checkout seguro", QrCode],
-                ["CREDIT_CARD", isSimulated ? "Cartão de crédito (simulado)" : "Cartão de crédito", isSimulated ? "Ambiente de teste" : "Em breve", CreditCard],
+                [
+                  "CREDIT_CARD",
+                  isSimulated ? "Cartão de crédito (simulado)" : "Cartão pelo Mercado Pago",
+                  isSimulated ? "Ambiente de teste" : cardEnabled ? "Crédito à vista" : "Indisponível",
+                  CreditCard,
+                ],
               ] as const
             ).map(([value, label, hint, Icon]) => (
               <label
@@ -169,10 +177,10 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
                 className={cn(
                   "flex cursor-pointer items-center gap-3 rounded-2xl border p-4 transition",
                   method === value ? "border-secondary bg-secondary/5 ring-2 ring-secondary/30" : "border-border",
-                  value === "CREDIT_CARD" && !isSimulated && "pointer-events-none opacity-50",
+                  value === "CREDIT_CARD" && !cardEnabled && "pointer-events-none opacity-50",
                 )}
               >
-                <input type="radio" name="method" value={value} checked={method === value} onChange={() => setMethod(value)} className="sr-only" disabled={value === "CREDIT_CARD" && !isSimulated} />
+                <input type="radio" name="method" value={value} checked={method === value} onChange={() => setMethod(value)} className="sr-only" disabled={value === "CREDIT_CARD" && !cardEnabled} />
                 <Icon className="size-5 text-secondary" aria-hidden />
                 <span>
                   <span className="block font-semibold">{label}</span>
@@ -195,7 +203,7 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
           )}
           {termsRequired && <TermsReaccept checked={acceptTerms} onChange={setAcceptTerms} />}
           <Button size="lg" variant="accent" className="w-full" onClick={pay} disabled={pending || expired || (termsRequired && !acceptTerms)}>
-            {pending ? "Processando…" : method === "PIX" ? isSimulated ? "Gerar PIX" : "Continuar para Mercado Pago" : "Pagar com cartão"}
+            {pending ? "Processando…" : !isSimulated ? "Continuar para Mercado Pago" : method === "PIX" ? "Gerar PIX" : "Pagar com cartão"}
           </Button>
         </div>
       )}

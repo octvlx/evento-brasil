@@ -23,24 +23,24 @@ export default function SettingsPage({ searchParams }: { searchParams: Promise<{
   );
 }
 
-/** O checkout aceita PIX (e cartão de teste no sandbox): avisa quando a conta conectada não pode receber. */
+/** O checkout aceita PIX e cartão de crédito: mostra o que a conta conectada consegue receber. */
 async function PixAvailability({ organizationId }: { organizationId: string }) {
   const readiness = await sellerCheckoutReadiness(db, organizationId);
-  if (readiness?.pix) return <p className="text-sm text-success">PIX disponível na conta Mercado Pago conectada.</p>;
-  if (readiness?.testCards)
+  if (!readiness) return <p className="text-sm text-muted-foreground">Não foi possível verificar as formas de pagamento da conta Mercado Pago agora.</p>;
+  if (!readiness.pix && !readiness.card)
     return (
-      <Alert variant="warning" data-testid="mp-sandbox-cards">
-        Conta de teste do Mercado Pago (sandbox) sem PIX: o checkout aceita cartão de crédito de teste, à vista. Use os cartões de teste do Mercado Pago. Com contas reais, o checkout aceita só PIX.
+      <Alert variant="danger" data-testid="mp-no-methods">
+        A conta Mercado Pago conectada não oferece PIX nem cartão de crédito: os compradores não conseguirão pagar. Confira a conta no Mercado Pago (ou conecte outra) e recarregue esta página.
       </Alert>
     );
-  if (readiness)
-    return (
-      <Alert variant="danger" data-testid="mp-pix-unavailable">
-        A conta Mercado Pago conectada não oferece PIX, e o checkout só aceita PIX: os compradores não conseguirão pagar. Cadastre uma chave PIX nessa conta no Mercado Pago (ou conecte outra conta) e
-        recarregue esta página.
-      </Alert>
-    );
-  return <p className="text-sm text-muted-foreground">Não foi possível verificar o PIX na conta Mercado Pago agora.</p>;
+  return (
+    <div className="space-y-1 text-sm" data-testid="mp-methods">
+      <p className={readiness.pix ? "text-success" : "text-warning"}>
+        PIX: {readiness.pix ? "disponível" : "indisponível — cadastre uma chave PIX na conta Mercado Pago para recebê-lo"}
+      </p>
+      <p className={readiness.card ? "text-success" : "text-warning"}>Cartão de crédito: {readiness.card ? "disponível" : "indisponível nesta conta"}</p>
+    </div>
+  );
 }
 
 async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }> }) {
@@ -75,7 +75,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
             </Alert>
           ) : adapter.id === "mercadopago" && adapter.supportedMethods.length > 0 ? (
             <Alert variant="warning">
-              Checkout Pro está configurado para PIX. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
+              Checkout Pro está configurado para PIX e cartão de crédito à vista. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
             </Alert>
           ) : adapter.id === "mercadopago" ? (
             <Alert variant="warning">

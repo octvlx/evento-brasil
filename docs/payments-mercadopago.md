@@ -6,7 +6,7 @@ elegibilidade comercial, split, webhooks ou reembolsos em produção.
 
 O adaptador anuncia zero métodos se faltarem credenciais OAuth, chave de
 criptografia ou segredo de assinatura dos webhooks. Quando configurado, oferece
-somente PIX pelo Checkout Pro; o comprador é redirecionado à página hospedada
+PIX e cartão de crédito à vista pelo Checkout Pro; o comprador é redirecionado à página hospedada
 do Mercado Pago. O provedor permanece selecionado explicitamente por
 `PAYMENT_PROVIDER`; o padrão continua sendo `simulated`.
 
@@ -186,7 +186,7 @@ tabelas idênticas: basta `npx prisma migrate resolve --applied
 
 ### Conta do vendedor sem PIX
 
-O checkout só aceita PIX. Antes de criar a preferência, o adaptador consulta
+O comprador escolhe PIX ou cartão no site. Antes de criar a preferência, o adaptador consulta
 `/v1/payment_methods` da conta conectada; sem `pix`, a tentativa é recusada
 **antes de qualquer cobrança** (`PaymentNotStartedError`, motivo
 `PIX_UNAVAILABLE`), o pagamento local vira `FAILED` e o comprador vê que o
@@ -196,13 +196,21 @@ Falhas na criação da preferência continuam "incertas" até a reconciliação.
 Em `/organizador/configuracoes`, a tela avisa quando a conta conectada não
 oferece PIX: cadastre uma chave PIX na conta Mercado Pago ou conecte outra.
 
-**Exceção de sandbox:** se a conta conectada não tem PIX, é um **usuário de
-teste** do Mercado Pago (`/users/me` com a tag `test_user`) e `NODE_ENV` não é
-`production`, o checkout aceita **cartão de crédito à vista** (demais métodos
-excluídos, `installments: 1`), para concluir compras de teste com os cartões de
-teste do Mercado Pago. Vendedor com PIX continua só PIX, sem consultar a conta;
-em produção a exceção não existe. O pagamento local continua registrado como
-`PIX` (método escolhido no site); o status vem sempre da consulta ao provedor.
+**Cartão de crédito:** com o método `CREDIT_CARD`, a preferência aceita só
+cartões de **crédito** à vista (`installments: 1`, para o valor pago ser o total
+do pedido); débito, pré-pago e boleto saem por `excluded_payment_types` e PIX
+por `excluded_payment_methods`. Sem cartão de crédito na conta, a tentativa é
+recusada antes de qualquer cobrança (`CARD_UNAVAILABLE`). Com PIX, a
+preferência aceita só PIX. Em ambos, o saldo em conta (`account_money`) não
+pode ser excluído e sempre aparece. Uma tentativa pendente com página do
+Mercado Pago é reaproveitada se o comprador clicar de novo no mesmo método;
+trocar de método exige a tentativa anterior terminar ou expirar.
+
+**Sandbox:** o Mercado Pago só aceita pagamentos de teste quando aplicação,
+vendedor e comprador são **usuários de teste**. Criar a aplicação numa conta
+real e conectar um vendedor de teste faz o checkout falhar ao enviar o cartão,
+sem criar pagamento. Contas de teste normalmente não têm chave PIX: no sandbox,
+use o cartão; o PIX ponta a ponta é validado com uma compra real de valor mínimo.
 
 ## Passos de habilitação
 

@@ -2,7 +2,7 @@
 // ou do corpo do webhook é confiável: o sistema sempre consulta `getPayment`.
 import { AppError } from "../errors";
 
-export type PaymentNotStartedReason = "PIX_UNAVAILABLE" | "ACCOUNT_NOT_CONNECTED" | "PRECHECK_FAILED";
+export type PaymentNotStartedReason = "PIX_UNAVAILABLE" | "CARD_UNAVAILABLE" | "ACCOUNT_NOT_CONNECTED" | "PRECHECK_FAILED";
 
 /**
  * Recusa ANTES de qualquer pedido de cobrança ao provedor (verificações prévias).

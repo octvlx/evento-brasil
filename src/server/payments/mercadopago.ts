@@ -38,14 +38,12 @@ const methodsSchema = z.array(z.object({ id: z.string(), payment_type_id: z.stri
 type SellerMethod = z.infer<typeof methodsSchema>[number];
 
 /**
- * Métodos aceitos no checkout: só PIX. Exceção de sandbox (vendedor é usuário de
- * teste do Mercado Pago, sem PIX, e NODE_ENV não é production): cartão de crédito,
- * porque contas de teste normalmente não têm chave PIX e o sandbox aprova
- * pagamentos com os cartões de teste do Mercado Pago.
+ * Métodos do Mercado Pago aceitos para o método escolhido no site: PIX → só PIX;
+ * cartão → só cartões de crédito (débito e pré-pago ficam de fora).
  * O saldo em conta (`account_money`) não pode ser excluído e sempre aparece.
  */
-export function allowedCheckoutMethods(methods: SellerMethod[], sandbox: boolean) {
-  return methods.filter((method) => method.id === "pix" || (sandbox && method.payment_type_id === "credit_card"));
+export function allowedCheckoutMethods(methods: SellerMethod[], method: "PIX" | "CREDIT_CARD") {
+  return methods.filter((m) => (method === "PIX" ? m.id === "pix" : m.payment_type_id === "credit_card"));
 }
 
 /**
@@ -72,31 +70,19 @@ export function checkoutExclusions(methods: SellerMethod[], allowed: SellerMetho
   };
 }
 
-/** Vendedor conectado é usuário de teste do Mercado Pago? Na dúvida, não (regras de produção). */
-async function isTestSeller(accessToken: string) {
-  try {
-    const me = z.object({ tags: z.array(z.string()).optional() }).safeParse(await requestJson("/users/me", accessToken));
-    return me.success && !!me.data.tags?.includes("test_user");
-  } catch {
-    return false;
-  }
-}
-
-const sandboxAllowed = () => env().NODE_ENV !== "production";
-
 /**
- * Para a tela do organizador: a conta conectada consegue receber pelo checkout?
+ * Para a tela do organizador: o que a conta conectada consegue receber pelo checkout?
  * Só leitura. null = não foi possível verificar agora (sem conta, rede, resposta inválida).
  */
-export async function sellerCheckoutReadiness(db: Db, organizationId: string): Promise<{ pix: boolean; testCards: boolean } | null> {
+export async function sellerCheckoutReadiness(db: Db, organizationId: string): Promise<{ pix: boolean; card: boolean } | null> {
   try {
     const token = await getMercadoPagoAccessToken(db, organizationId);
     const methods = methodsSchema.safeParse(await requestJson("/v1/payment_methods", token));
     if (!methods.success) return null;
-    const pix = methods.data.some((method) => method.id === "pix");
-    const sandbox = !pix && sandboxAllowed() && (await isTestSeller(token));
-    const testCards = sandbox && allowedCheckoutMethods(methods.data, true).some((method) => method.id !== "pix");
-    return { pix, testCards };
+    return {
+      pix: allowedCheckoutMethods(methods.data, "PIX").length > 0,
+      card: allowedCheckoutMethods(methods.data, "CREDIT_CARD").length > 0,
+    };
   } catch {
     return null;
   }
@@ -239,7 +225,7 @@ function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
 export class MercadoPagoAdapter implements PaymentProviderAdapter {
   readonly id = "mercadopago";
   readonly isSimulated = false;
-  readonly supportedMethods: readonly ("PIX")[];
+  readonly supportedMethods: readonly ("PIX" | "CREDIT_CARD")[];
 
   constructor(
     private readonly db: Db,
@@ -253,14 +239,13 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       e.MERCADO_PAGO_CLIENT_SECRET &&
       validKey &&
       webhookSecret
-        ? ["PIX"]
+        ? ["PIX", "CREDIT_CARD"]
         : [];
   }
 
   async createPayment(input: CreatePaymentInput) {
     if (
-      input.method !== "PIX" ||
-      this.supportedMethods.length === 0 ||
+      !this.supportedMethods.includes(input.method) ||
       !input.marketplace.organizationId ||
       input.amountCents <= 0 ||
       input.expiresAt <= new Date()
@@ -290,17 +275,13 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       providerDiagnostic("invalid_payment_methods_response", {});
       throw new PaymentNotStartedError("PRECHECK_FAILED", "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.");
     }
-    // Com PIX, segue só PIX (igual à produção); sem PIX, só um vendedor de teste em
-    // ambiente não produtivo pode usar cartão de teste.
-    const hasPix = methods.data.some((method) => method.id === "pix");
-    const sandbox = !hasPix && sandboxAllowed() && (await isTestSeller(accessToken));
-    const allowed = allowedCheckoutMethods(methods.data, sandbox);
+    const card = input.method === "CREDIT_CARD";
+    const allowed = allowedCheckoutMethods(methods.data, input.method);
     if (allowed.length === 0) {
-      providerDiagnostic("pix_method_unavailable", { methods: methods.data.length, sandbox: sandbox ? 1 : 0 });
-      throw new PaymentNotStartedError(
-        "PIX_UNAVAILABLE",
-        "O organizador deste evento ainda não pode receber por PIX. Tente novamente mais tarde ou fale com o organizador.",
-      );
+      providerDiagnostic(card ? "card_method_unavailable" : "pix_method_unavailable", { methods: methods.data.length });
+      throw card
+        ? new PaymentNotStartedError("CARD_UNAVAILABLE", "O organizador deste evento ainda não pode receber por cartão. Tente pagar com PIX ou fale com o organizador.")
+        : new PaymentNotStartedError("PIX_UNAVAILABLE", "O organizador deste evento ainda não pode receber por PIX. Tente novamente mais tarde ou fale com o organizador.");
     }
 
     const appUrl = new URL(env().APP_URL);
@@ -319,8 +300,8 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       marketplace_fee: amount(input.marketplace.applicationFeeCents),
       payment_methods: {
         ...checkoutExclusions(methods.data, allowed),
-        // Cartão de teste só à vista: o valor pago fica igual ao total do pedido.
-        ...(sandbox ? { installments: 1 } : {}),
+        // Cartão só à vista: parcelado com juros mudaria o valor pago em relação ao pedido.
+        ...(card ? { installments: 1 } : {}),
       },
       notification_url: new URL("/api/webhooks/mercadopago", appUrl).href,
       back_urls: {
