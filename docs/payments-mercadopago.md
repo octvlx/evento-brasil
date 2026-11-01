@@ -212,6 +212,15 @@ real e conectar um vendedor de teste faz o checkout falhar ao enviar o cartão,
 sem criar pagamento. Contas de teste normalmente não têm chave PIX: no sandbox,
 use o cartão; o PIX ponta a ponta é validado com uma compra real de valor mínimo.
 
+**Credenciais de sandbox via OAuth:** a documentação de OAuth do Mercado Pago
+manda enviar `test_token=true` na troca do código para obter credenciais de
+sandbox do vendedor. Com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true` (fora de
+produção), a conexão em `/organizador/configuracoes` faz isso; depois de mudar a
+variável, autorize o vendedor novamente. Em produção a aplicação não inicia com
+essa variável ligada. A compra de teste é feita logado como o **comprador de
+teste** da aplicação, numa janela anônima. Pagamentos com credenciais de teste
+não enviam webhooks: use "Simular" no painel ou a reconciliação.
+
 ## Passos de habilitação
 
 1. Aplicar as migrações, incluindo `providerPreferenceId`, em banco de

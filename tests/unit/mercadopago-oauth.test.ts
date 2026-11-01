@@ -57,6 +57,21 @@ describe("Mercado Pago OAuth security", () => {
     await expect(mp.finishConnection(db, actor, flow.cookie, state, "code")).rejects.toThrow();
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it.each([
+    [undefined, "false"],
+    ["true", "true"],
+  ])("sends test_token=%s→%s in the code exchange (sandbox credentials only when enabled)", async (flag, expected) => {
+    if (flag) vi.stubEnv("MERCADO_PAGO_OAUTH_TEST_TOKEN", flag);
+    vi.resetModules();
+    mp = await import("@/server/payments/mercadopago-oauth");
+    const { db } = fakeDb(); const flow = await mp.beginConnection(db, actor, "org");
+    const state = new URL(flow.url).searchParams.get("state")!;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(tokens)));
+    await expect(mp.finishConnection(db, actor, flow.cookie, state, "code")).resolves.toBe("connected");
+    const body = vi.mocked(fetch).mock.calls[0][1]!.body as URLSearchParams;
+    expect(body.get("grant_type")).toBe("authorization_code");
+    expect(body.get("test_token")).toBe(expected);
+  });
   it("consumes denied consent without calling the provider", async () => {
     const { db, mock } = fakeDb(); const flow = await mp.beginConnection(db, actor, "org");
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
