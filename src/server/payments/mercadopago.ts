@@ -34,15 +34,44 @@ function safeDiagnosticCode(value: string | number | undefined) {
   const text = value === undefined ? undefined : String(value);
   return text && /^[A-Za-z0-9_.-]{1,80}$/.test(text) ? text : undefined;
 }
+const methodsSchema = z.array(z.object({ id: z.string(), payment_type_id: z.string().optional() }));
+type SellerMethod = z.infer<typeof methodsSchema>[number];
+
 /**
- * Para a tela do organizador: a conta Mercado Pago conectada oferece PIX?
+ * Métodos aceitos no checkout: só PIX. Exceção de sandbox (vendedor é usuário de
+ * teste do Mercado Pago, sem PIX, e NODE_ENV não é production): cartão de crédito,
+ * porque contas de teste normalmente não têm chave PIX e o sandbox aprova
+ * pagamentos com os cartões de teste do Mercado Pago.
+ */
+export function allowedCheckoutMethods(methods: SellerMethod[], sandbox: boolean) {
+  return methods.filter((method) => method.id === "pix" || (sandbox && method.payment_type_id === "credit_card"));
+}
+
+/** Vendedor conectado é usuário de teste do Mercado Pago? Na dúvida, não (regras de produção). */
+async function isTestSeller(accessToken: string) {
+  try {
+    const me = z.object({ tags: z.array(z.string()).optional() }).safeParse(await requestJson("/users/me", accessToken));
+    return me.success && !!me.data.tags?.includes("test_user");
+  } catch {
+    return false;
+  }
+}
+
+const sandboxAllowed = () => env().NODE_ENV !== "production";
+
+/**
+ * Para a tela do organizador: a conta conectada consegue receber pelo checkout?
  * Só leitura. null = não foi possível verificar agora (sem conta, rede, resposta inválida).
  */
-export async function sellerPixAvailable(db: Db, organizationId: string): Promise<boolean | null> {
+export async function sellerCheckoutReadiness(db: Db, organizationId: string): Promise<{ pix: boolean; testCards: boolean } | null> {
   try {
     const token = await getMercadoPagoAccessToken(db, organizationId);
-    const methods = z.array(z.object({ id: z.string() })).safeParse(await requestJson("/v1/payment_methods", token));
-    return methods.success ? methods.data.some((method) => method.id === "pix") : null;
+    const methods = methodsSchema.safeParse(await requestJson("/v1/payment_methods", token));
+    if (!methods.success) return null;
+    const pix = methods.data.some((method) => method.id === "pix");
+    const sandbox = !pix && sandboxAllowed() && (await isTestSeller(token));
+    const testCards = sandbox && allowedCheckoutMethods(methods.data, true).some((method) => method.id !== "pix");
+    return { pix, testCards };
   } catch {
     return null;
   }
@@ -231,13 +260,18 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
     } catch {
       throw new PaymentNotStartedError("PRECHECK_FAILED", "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.");
     }
-    const methods = z.array(z.object({ id: z.string() })).safeParse(rawMethods);
+    const methods = methodsSchema.safeParse(rawMethods);
     if (!methods.success) {
       providerDiagnostic("invalid_payment_methods_response", {});
       throw new PaymentNotStartedError("PRECHECK_FAILED", "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.");
     }
-    if (!methods.data.some((method) => method.id === "pix")) {
-      providerDiagnostic("pix_method_unavailable", { methods: methods.data.length });
+    // Com PIX, segue só PIX (igual à produção); sem PIX, só um vendedor de teste em
+    // ambiente não produtivo pode usar cartão de teste.
+    const hasPix = methods.data.some((method) => method.id === "pix");
+    const sandbox = !hasPix && sandboxAllowed() && (await isTestSeller(accessToken));
+    const allowed = allowedCheckoutMethods(methods.data, sandbox);
+    if (allowed.length === 0) {
+      providerDiagnostic("pix_method_unavailable", { methods: methods.data.length, sandbox: sandbox ? 1 : 0 });
       throw new PaymentNotStartedError(
         "PIX_UNAVAILABLE",
         "O organizador deste evento ainda não pode receber por PIX. Tente novamente mais tarde ou fale com o organizador.",
@@ -260,8 +294,10 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       marketplace_fee: amount(input.marketplace.applicationFeeCents),
       payment_methods: {
         excluded_payment_methods: methods.data
-          .filter((method) => method.id !== "pix")
+          .filter((method) => !allowed.includes(method))
           .map(({ id }) => ({ id })),
+        // Cartão de teste só à vista: o valor pago fica igual ao total do pedido.
+        ...(sandbox ? { installments: 1 } : {}),
       },
       notification_url: new URL("/api/webhooks/mercadopago", appUrl).href,
       back_urls: {
