@@ -77,7 +77,14 @@ export async function startPaymentAction(orderId: string, method: "PIX" | "CREDI
   });
   if (!result.ok) return result;
   refresh();
-  return { ok: true as const, data: { paymentId: result.data.id, status: result.data.status } };
+  return {
+    ok: true as const,
+    data: {
+      paymentId: result.data.id,
+      status: result.data.status,
+      checkoutUrl: result.data.checkoutUrl,
+    },
+  };
 }
 
 /** Ferramenta do simulador de pagamentos (somente ambiente de desenvolvimento). */

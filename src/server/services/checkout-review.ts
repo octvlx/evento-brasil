@@ -109,7 +109,7 @@ async function prepareTx(tx: Tx, actor: Actor, current: CheckoutDraft) {
     if (previous) draft = await tx.checkoutDraft.update({ where: { id: draft.id }, data: { revision: { increment: 1 } } });
     const selection = createOrderSchema.parse(draft.selection);
     const adapter = getPaymentAdapter();
-    const order = await createOrder(tx as unknown as Db, actor, { ...selection, buyerName: ready.buyer.name, buyerEmail: ready.buyer.email, buyerPhone: ready.buyer.phone ?? undefined, idempotencyKey: revisionKey(draft) }, { transaction: tx, checkoutReviewRequired: true, providerIsSimulated: adapter.isSimulated, paymentsAvailable: adapter.supportedMethods.length > 0 });
+    const order = await createOrder(tx as unknown as Db, actor, { ...selection, buyerName: ready.buyer.name, buyerEmail: ready.buyer.email, buyerPhone: ready.buyer.phone ?? undefined, idempotencyKey: revisionKey(draft) }, { transaction: tx, checkoutReviewRequired: true, providerIsSimulated: adapter.isSimulated, providerId: adapter.id, paymentsAvailable: adapter.supportedMethods.length > 0 });
     draft = await tx.checkoutDraft.update({ where: { id: draft.id }, data: { orderId: order.id, pricingHash: fingerprint, confirmedAt: null, reviewHash: null } });
   }
   // Always snapshot currently saved personal/address data; no CPF plaintext is exposed here.

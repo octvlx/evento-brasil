@@ -47,7 +47,7 @@ export async function startPayment(
       // PIX pendente é reaproveitado (mesmo QR). Qualquer outra combinação aguardaria
       // uma tentativa em andamento — recusada para não gerar cobrança dupla.
       const samePix = pending.method === "PIX" && method === "PIX" && pending.provider === adapter.id;
-      if (samePix && pending.providerPaymentId) return { kind: "reuse", payment: pending } as const;
+      if (samePix && (pending.providerPaymentId || pending.checkoutUrl)) return { kind: "reuse", payment: pending } as const;
       // PIX ainda sendo criado por outra requisição (duplo clique): espera o id do
       // provedor fora da transação. Se a criação ficou incerta, não reaproveita.
       if (samePix && !pending.failureReason) return { kind: "await", paymentId: pending.id } as const;
@@ -80,12 +80,17 @@ export async function startPayment(
     created = await adapter.createPayment({
       paymentId: payment.id,
       amountCents: order.totalCents,
+      orderId: order.id,
       method,
       description: `${order.event.title} — pedido ${order.publicCode}`,
       payer: { email: order.buyerEmail, name: order.buyerName },
       expiresAt: order.expiresAt,
       idempotencyKey: payment.idempotencyKey,
-      marketplace: { sellerAccountId: order.organization.paymentAccountExternalId, applicationFeeCents: order.commissionCents },
+      marketplace: {
+        organizationId: order.organizationId,
+        sellerAccountId: order.organization.paymentAccountExternalId,
+        applicationFeeCents: order.commissionCents,
+      },
       simulatedCardOutcome: opts.simulatedCardOutcome,
     });
   } catch (err) {
@@ -99,6 +104,7 @@ export async function startPayment(
     where: { id: payment.id },
     data: {
       providerPaymentId: created.providerPaymentId,
+      providerPreferenceId: created.providerPreferenceId,
       providerRawStatus: created.rawStatus,
       pixCopyPaste: created.pixCopyPaste,
       pixQrCodeBase64: created.pixQrCodeBase64,
@@ -108,7 +114,7 @@ export async function startPayment(
   });
   await audit(db, { actorUserId: actor.id, organizationId: order.organizationId, action: "payment.started", entityType: "Payment", entityId: payment.id, metadata: { method } });
   // Resultado síncrono (ex.: cartão) é revalidado na consulta autoritativa.
-  if (created.status !== "PENDING") await syncPaymentFromProvider(db, adapter, created.providerPaymentId);
+  if (created.status !== "PENDING" && created.providerPaymentId) await syncPaymentFromProvider(db, adapter, created.providerPaymentId);
   return db.payment.findUniqueOrThrow({ where: { id: updated.id } });
 }
 
@@ -124,7 +130,7 @@ async function awaitPixInFlight(db: Db, paymentId: string) {
   const deadline = Date.now() + PIX_IN_FLIGHT_WAIT_MS;
   for (;;) {
     const p = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    if (p.providerPaymentId && p.status !== "FAILED" && p.status !== "CANCELLED" && p.status !== "EXPIRED") return p;
+    if ((p.providerPaymentId || p.checkoutUrl) && p.status !== "FAILED" && p.status !== "CANCELLED" && p.status !== "EXPIRED") return p;
     if (p.failureReason || p.status !== "PENDING" || Date.now() >= deadline) {
       throw invalidState("Já existe um PIX gerado para este pedido. Conclua o pagamento ou aguarde a expiração da reserva.");
     }
@@ -133,8 +139,22 @@ async function awaitPixInFlight(db: Db, paymentId: string) {
 }
 
 /** Consulta o provedor e aplica o status retornado. */
-export async function syncPaymentFromProvider(db: Db, adapter: PaymentProviderAdapter, providerPaymentId: string) {
-  const snapshot = await adapter.getPayment(providerPaymentId);
+export async function syncPaymentFromProvider(
+  db: Db,
+  adapter: PaymentProviderAdapter,
+  providerPaymentId: string,
+  providerAccountId?: string,
+) {
+  const payment = providerAccountId
+    ? null
+    : await db.payment.findFirst({
+        where: { provider: adapter.id, providerPaymentId },
+        select: { order: { select: { organizationId: true } } },
+      });
+  const snapshot = await adapter.getPayment(providerPaymentId, {
+    organizationId: payment?.order.organizationId,
+    providerAccountId,
+  });
   return applyPaymentSnapshot(db, adapter, snapshot);
 }
 
@@ -156,8 +176,17 @@ export type ApplyOutcome =
 
 /** Aplica um snapshot autoritativo do provedor. Idempotente e seguro contra concorrência. */
 export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapter, snapshot: ProviderPaymentSnapshot): Promise<ApplyOutcome> {
-  const ref = await db.payment.findUnique({
+  const linked = await db.payment.findUnique({
     where: { provider_providerPaymentId: { provider: adapter.id, providerPaymentId: snapshot.providerPaymentId } },
+    select: { id: true, orderId: true, order: { select: { eventId: true } } },
+  });
+  const ref = linked ?? await db.payment.findFirst({
+    where: {
+      id: snapshot.externalReference,
+      provider: adapter.id,
+      status: "PENDING",
+      providerPaymentId: null,
+    },
     select: { id: true, orderId: true, order: { select: { eventId: true } } },
   });
   if (!ref) return "unknown_payment";
@@ -167,6 +196,14 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     await lockEvent(tx, ref.order.eventId);
     await lockOrder(tx, ref.orderId);
     const payment = await tx.payment.findUniqueOrThrow({ where: { id: ref.id } });
+    if (payment.providerPaymentId && payment.providerPaymentId !== snapshot.providerPaymentId) return "duplicate_payment";
+    if (!payment.providerPaymentId && payment.status !== "PENDING") return "no_change";
+    if (!payment.providerPaymentId) {
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { providerPaymentId: snapshot.providerPaymentId },
+      });
+    }
     const order = await tx.order.findUniqueOrThrow({ where: { id: ref.orderId }, include: { items: true, commissionRule: true } });
     const now = new Date();
 
@@ -348,7 +385,7 @@ export async function handlePaymentWebhook(db: Db, adapter: PaymentProviderAdapt
     return { status: 200, body: "ignored" };
   }
   try {
-    const outcome = await syncPaymentFromProvider(db, adapter, verification.providerPaymentId);
+    const outcome = await syncPaymentFromProvider(db, adapter, verification.providerPaymentId, verification.providerAccountId);
     await db.paymentWebhookEvent.update({ where: { id: record.id }, data: { processedAt: new Date(), processingResult: outcome, error: null } });
     return { status: 200, body: outcome };
   } catch (err) {

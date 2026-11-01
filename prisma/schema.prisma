@@ -181,24 +181,41 @@ model Organization {
   createdAt                DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt                DateTime             @updatedAt @db.Timestamptz(3)
 
-  city             City?                    @relation(fields: [cityId], references: [id])
-  members          OrganizationMember[]
-  invitations      OrganizationInvitation[]
-  verifications    OrganizerVerification[]
-  events           Event[]
-  venues           Venue[]
-  orders           Order[]
-  commissionRules  CommissionRule[]
-  ledgerEntries    FinancialLedgerEntry[]
-  settlements      OrganizerSettlement[]
-  auditLogs        AuditLog[]
-  coupons          Coupon[]
-  trackingLinks    TrackingLink[]
-  eventChanges     EventChange[]
-  cancellations    CancellationRequest[]
-  termsAcceptances TermsAcceptance[]
+  city               City?                    @relation(fields: [cityId], references: [id])
+  members            OrganizationMember[]
+  invitations        OrganizationInvitation[]
+  verifications      OrganizerVerification[]
+  events             Event[]
+  venues             Venue[]
+  orders             Order[]
+  commissionRules    CommissionRule[]
+  ledgerEntries      FinancialLedgerEntry[]
+  settlements        OrganizerSettlement[]
+  mercadoPagoAccount MercadoPagoAccount?
+  auditLogs          AuditLog[]
+  coupons            Coupon[]
+  trackingLinks      TrackingLink[]
+  eventChanges       EventChange[]
+  cancellations      CancellationRequest[]
+  termsAcceptances   TermsAcceptance[]
 
   @@index([status])
+}
+
+model MercadoPagoAccount {
+  id                    String    @id @default(cuid())
+  organizationId        String    @unique
+  mercadoPagoUserId     String
+  accessTokenEncrypted  String    @db.Text
+  refreshTokenEncrypted String    @db.Text
+  tokenExpiresAt        DateTime  @db.Timestamptz(3)
+  connectedAt           DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+  revokedAt             DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([mercadoPagoUserId])
 }
 
 enum OrgRole {
@@ -737,6 +754,7 @@ model Payment {
   orderId            String
   provider           String
   providerPaymentId  String?
+  providerPreferenceId String?
   method             PaymentMethod
   status             PaymentStatus @default(PENDING)
   amountCents        Int
@@ -1311,51 +1329,68 @@ model AuditLog {
 }
 
 model PasswordResetToken {
- id String @id @default(cuid())
- userId String
- tokenHash String @unique
- expiresAt DateTime @db.Timestamptz(3)
- consumedAt DateTime? @db.Timestamptz(3)
- createdAt DateTime @default(now()) @db.Timestamptz(3)
- user User @relation(fields:[userId],references:[id],onDelete:Cascade)
- @@index([userId,createdAt])
- @@index([expiresAt])
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime  @db.Timestamptz(3)
+  consumedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 enum EmailDeliveryStatus {
- QUEUED
- PROCESSING
- SENT
- FAILED
- CANCELLED
- UNKNOWN
+  QUEUED
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+  UNKNOWN
 }
+
 model EmailOutbox {
- id String @id @default(cuid())
- dedupeKey String @unique
- template String
- recipient String
- payloadEncrypted String?
- messageEncrypted String?
- status EmailDeliveryStatus @default(QUEUED)
- provider String?
- providerMessageId String?
- attemptCount Int @default(0)
- firstAttemptAt DateTime? @db.Timestamptz(3)
- nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
- lockedUntil DateTime? @db.Timestamptz(3)
- leaseToken String?
- expiresAt DateTime? @db.Timestamptz(3)
- sentAt DateTime? @db.Timestamptz(3)
- failedAt DateTime? @db.Timestamptz(3)
- errorCode String?
- createdAt DateTime @default(now()) @db.Timestamptz(3)
- updatedAt DateTime @updatedAt @db.Timestamptz(3)
- @@index([status,nextAttemptAt])
- @@index([lockedUntil])
+  id                String              @id @default(cuid())
+  dedupeKey         String              @unique
+  template          String
+  recipient         String
+  payloadEncrypted  String?
+  messageEncrypted  String?
+  status            EmailDeliveryStatus @default(QUEUED)
+  provider          String?
+  providerMessageId String?
+  attemptCount      Int                 @default(0)
+  firstAttemptAt    DateTime?           @db.Timestamptz(3)
+  nextAttemptAt     DateTime            @default(now()) @db.Timestamptz(3)
+  lockedUntil       DateTime?           @db.Timestamptz(3)
+  leaseToken        String?
+  expiresAt         DateTime?           @db.Timestamptz(3)
+  sentAt            DateTime?           @db.Timestamptz(3)
+  failedAt          DateTime?           @db.Timestamptz(3)
+  errorCode         String?
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @db.Timestamptz(3)
+
+  @@index([status, nextAttemptAt])
+  @@index([lockedUntil])
 }
+
 model EmailRateLimit {
- key String @id
- count Int @default(0)
- windowStartedAt DateTime @db.Timestamptz(3)
+  key             String   @id
+  count           Int      @default(0)
+  windowStartedAt DateTime @db.Timestamptz(3)
+}
+
+model MercadoPagoOAuthState {
+  id             String    @id @default(cuid())
+  organizationId String
+  actorUserId    String
+  stateHash      String    @unique
+  expiresAt      DateTime  @db.Timestamptz(3)
+  consumedAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId])
+  @@index([expiresAt])
 }

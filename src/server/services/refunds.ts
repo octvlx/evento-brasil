@@ -235,7 +235,10 @@ export async function adminRefundOrder(db: Db, adapter: PaymentProviderAdapter, 
 
 /** Solicita o estorno ao provedor. Confirma imediatamente se o provedor responder sucesso. */
 export async function processRefund(db: Db, adapter: PaymentProviderAdapter, refundId: string) {
-  const refund = await db.refund.findUnique({ where: { id: refundId }, include: { payment: true } });
+  const refund = await db.refund.findUnique({
+    where: { id: refundId },
+    include: { payment: true, order: { select: { organizationId: true } } },
+  });
   if (!refund || !["REQUESTED", "FAILED"].includes(refund.status)) return refund;
   const claimed = await db.refund.updateMany({ where: { id: refundId, status: { in: ["REQUESTED", "FAILED"] } }, data: { status: "PROCESSING" } });
   if (!claimed.count) return refund;
@@ -258,6 +261,7 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
       providerPaymentId: refund.payment.providerPaymentId,
       amountCents: refund.amountCents,
       idempotencyKey: refund.idempotencyKey,
+      organizationId: refund.order.organizationId,
     });
     await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });
     if (result.status === "SUCCEEDED") await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
@@ -489,7 +493,9 @@ export async function adminRestoreAfterFailedRefund(
   if (p?.providerPaymentId && p.method !== "FREE" && refund.amountCents > 0) {
     let snapshot;
     try {
-      snapshot = await adapter.getPayment(p.providerPaymentId);
+      snapshot = await adapter.getPayment(p.providerPaymentId, {
+        organizationId: refund.order.organizationId,
+      });
     } catch (err) {
       financeLog("error", "refund.restore_provider_check_failed", { orderId: refund.orderId, refundId, paymentId: p.id }, { message: String(err).slice(0, 300) });
       throw new AppError("PROVIDER_ERROR", "Não foi possível confirmar com o provedor que o estorno não ocorreu. Tente novamente.");
@@ -551,7 +557,10 @@ export async function adminRestoreAfterFailedRefund(
  * nunca estorna duas vezes. Usado pela reconciliação.
  */
 export async function resumeRefund(db: Db, adapter: PaymentProviderAdapter, refundId: string) {
-  const refund = await db.refund.findUnique({ where: { id: refundId }, include: { payment: true } });
+  const refund = await db.refund.findUnique({
+    where: { id: refundId },
+    include: { payment: true, order: { select: { organizationId: true } } },
+  });
   if (!refund) return null;
   if (refund.status === "REQUESTED") return (await processRefund(db, adapter, refundId))?.status ?? null;
   if (refund.status !== "PROCESSING") return refund.status;
@@ -565,6 +574,7 @@ export async function resumeRefund(db: Db, adapter: PaymentProviderAdapter, refu
       providerPaymentId: refund.payment.providerPaymentId,
       amountCents: refund.amountCents,
       idempotencyKey: refund.idempotencyKey,
+      organizationId: refund.order.organizationId,
     });
   } catch (err) {
     // Entra na política de retentativas limitadas em vez de ficar preso em PROCESSING.

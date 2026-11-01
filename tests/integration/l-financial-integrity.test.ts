@@ -224,14 +224,16 @@ describe("reconciliação", () => {
     });
     const created = await adapter.createPayment({
       paymentId: orphan.id,
+      orderId: order.id,
       amountCents: order.totalCents,
       method: "PIX",
       description: "teste",
       payer: { email: "a@b.c", name: "A" },
       expiresAt: order.expiresAt,
       idempotencyKey: key,
-      marketplace: { sellerAccountId: null, applicationFeeCents: 0 },
+      marketplace: { organizationId: order.organizationId, sellerAccountId: null, applicationFeeCents: 0 },
     });
+    if (!created.providerPaymentId) throw new Error("Simulated payment must return a provider ID");
     await adapter.simulate(created.providerPaymentId, "approve");
 
     const other = await buy(await makeUser(), event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);

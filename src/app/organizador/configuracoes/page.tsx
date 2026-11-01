@@ -14,20 +14,22 @@ import { ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Configurações", robots: { index: false } };
 
-export default function SettingsPage() {
+export default function SettingsPage({ searchParams }: { searchParams: Promise<{ mp?: string }> }) {
   return (
     <Suspense fallback={<Skeleton className="h-[700px]" />}>
-      <Content />
+      <Content searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function Content() {
+async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }> }) {
+  const { mp } = await searchParams;
   const { org: activeOrg, can } = await requireOrganizer("/organizador/configuracoes");
   if (!can("org:manage")) redirect("/organizador");
   const org = await db.organization.findUniqueOrThrow({
     where: { id: activeOrg.id },
     include: {
+      mercadoPagoAccount: { select: { mercadoPagoUserId: true, revokedAt: true, tokenExpiresAt: true } },
       verifications: { orderBy: { createdAt: "desc" }, take: 1 },
     },
   });
@@ -38,6 +40,9 @@ async function Content() {
     <>
       <PageTitle title="Configurações" subtitle={`${org.name} · ${ORG_STATUS[org.status].label}`} />
       <div className="space-y-6">
+        {mp === "connected" && <Alert variant="success">Conta Mercado Pago autorizada. Pagamentos continuam no provedor configurado.</Alert>}
+        {mp === "denied" && <Alert variant="warning">Autorização cancelada. Você pode tentar novamente.</Alert>}
+        {mp === "error" && <Alert variant="danger">Não foi possível concluir a conexão. Confira a configuração ou inicie uma nova autorização.</Alert>}
         <Card className="space-y-3 p-6">
           <h2 className="font-display text-lg font-bold">Conta de recebimento</h2>
           <p className="text-sm">
@@ -45,12 +50,26 @@ async function Content() {
           </p>
           {adapter.isSimulated ? (
             <Alert variant="warning">
-              Ambiente de desenvolvimento: pagamentos usam o provedor simulado. A conexão real (OAuth do Mercado Pago com split de marketplace) será habilitada após verificação dos contratos de API.
+              Ambiente de desenvolvimento: pagamentos usam o provedor simulado. A conexão OAuth abaixo autoriza a conta do organizador; cobranças e repasses reais continuam desabilitados.
+            </Alert>
+          ) : adapter.id === "mercadopago" && adapter.supportedMethods.length > 0 ? (
+            <Alert variant="warning">
+              Checkout Pro está configurado para PIX. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
+            </Alert>
+          ) : adapter.id === "mercadopago" ? (
+            <Alert variant="warning">
+              Checkout Pro indisponível: confira credenciais OAuth, chave de criptografia e segredo de assinatura dos webhooks.
             </Alert>
           ) : (
-            <Alert>A conexão com o provedor real ainda não está disponível nesta versão.</Alert>
+            <Alert>O provedor de pagamentos está indisponível nesta configuração.</Alert>
           )}
-          {org.status === "APPROVED" && org.paymentAccountStatus === "NOT_CONNECTED" && <ConnectPaymentButton simulated={adapter.isSimulated} />}
+          {adapter.id !== "mercadopago" && org.status === "APPROVED" && org.paymentAccountStatus === "NOT_CONNECTED" && <ConnectPaymentButton simulated={adapter.isSimulated} />}
+          <p className="text-sm">Mercado Pago OAuth: {org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt ? "Autorizado" : "Não conectado ou requer nova autorização"}. Esta autorização não habilita cobranças reais.</p>
+          {org.status === "APPROVED" && (
+            <form action="/api/mercadopago/connect" method="post">
+              <button className="underline" type="submit">{org.mercadoPagoAccount ? "Autorizar novamente Mercado Pago" : "Conectar Mercado Pago"}</button>
+            </form>
+          )}
           {v && (
             <p className="text-xs text-muted-foreground">
               Documento cadastrado: {v.documentType} final {v.documentLast4} · {v.legalName}

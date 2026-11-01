@@ -264,6 +264,7 @@ export interface CreateOrderOptions {
   now?: Date;
   /** O provedor configurado é o simulado (marca o pedido como simulado). */
   providerIsSimulated: boolean;
+  providerId?: string;
   /** False quando o adaptador ainda não oferece nenhum método de pagamento. */
   paymentsAvailable?: boolean;
 }
@@ -290,7 +291,14 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
   try {
     const create = async (tx: Tx) => {
       await lockEvent(tx, input.eventId);
-      const event = await tx.event.findUnique({ where: { id: input.eventId }, include: { organization: true } });
+      const event = await tx.event.findUnique({
+        where: { id: input.eventId },
+        include: {
+          organization: {
+            include: { mercadoPagoAccount: { select: { revokedAt: true } } },
+          },
+        },
+      });
       if (!event || event.status !== "PUBLISHED") throw notFound("Evento indisponível.");
       if (event.organization.status !== "APPROVED") throw new AppError("SALES_CLOSED", "Vendas indisponíveis para este organizador.");
       if (now < event.salesStartAt) throw new AppError("SALES_CLOSED", "As vendas ainda não começaram.");
@@ -376,9 +384,17 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       const isFree = fees.totalCents === 0;
       if (!isFree && opts.paymentsAvailable === false)
         throw new AppError("SALES_CLOSED", "A compra de ingressos pagos está temporariamente indisponível.");
-      if (!isFree && !["CONNECTED", "SIMULATED"].includes(event.organization.paymentAccountStatus))
+      const mercadoPagoConnected =
+        event.organization.mercadoPagoAccount?.revokedAt === null;
+      if (!isFree && opts.providerId === "mercadopago" && !mercadoPagoConnected)
+        throw new AppError("SALES_CLOSED", "O organizador precisa conectar o Mercado Pago antes de vender ingressos pagos.");
+      if (
+        !isFree &&
+        opts.providerId !== "mercadopago" &&
+        !["CONNECTED", "SIMULATED"].includes(event.organization.paymentAccountStatus)
+      )
         throw new AppError("SALES_CLOSED", "O organizador ainda não está habilitado para vender ingressos pagos.");
-      if (!isFree && event.organization.paymentAccountStatus === "SIMULATED" && !opts.providerIsSimulated)
+      if (!isFree && opts.providerId !== "mercadopago" && event.organization.paymentAccountStatus === "SIMULATED" && !opts.providerIsSimulated)
         throw new AppError("SALES_CLOSED", "Conta de recebimento do organizador não está conectada ao provedor real.");
 
       const expiresAt = new Date(now.getTime() + env().RESERVATION_MINUTES * 60_000);

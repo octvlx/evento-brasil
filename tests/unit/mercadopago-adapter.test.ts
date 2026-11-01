@@ -1,0 +1,198 @@
+import { createHmac } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Db } from "@/server/db";
+
+const oauth = vi.hoisted(() => ({
+  getForOrganization: vi.fn(async () => "seller-access-token"),
+  getForUser: vi.fn(async () => "seller-access-token"),
+}));
+
+vi.mock("@/server/env", () => ({
+  env: () => ({
+    APP_URL: "https://events.example",
+    NODE_ENV: "development",
+    MERCADO_PAGO_CLIENT_ID: "client-id",
+    MERCADO_PAGO_CLIENT_SECRET: "client-secret",
+    MERCADO_PAGO_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+  }),
+}));
+vi.mock("@/server/payments/mercadopago-oauth", () => ({
+  getMercadoPagoAccessToken: oauth.getForOrganization,
+  getMercadoPagoAccessTokenForUser: oauth.getForUser,
+}));
+
+import { MercadoPagoAdapter } from "@/server/payments/mercadopago";
+
+const db = {
+  payment: { findUnique: vi.fn(), findFirst: vi.fn() },
+} as unknown as Db;
+
+function adapter(secret = "webhook-secret") {
+  return new MercadoPagoAdapter(db, secret);
+}
+
+function paymentResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 987,
+    external_reference: "local-payment",
+    status: "approved",
+    status_detail: "accredited",
+    currency_id: "BRL",
+    transaction_amount: 50,
+    fee_details: [{ amount: 2.5 }],
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  oauth.getForOrganization.mockResolvedValue("seller-access-token");
+  oauth.getForUser.mockResolvedValue("seller-access-token");
+  vi.stubGlobal("fetch", vi.fn());
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("Mercado Pago Checkout Pro adapter", () => {
+  it("creates an idempotent PIX-only marketplace preference and returns sandbox checkout URL", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([{ id: "pix" }, { id: "visa" }]))
+      .mockResolvedValueOnce(Response.json({
+        id: "preference-123",
+        init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=live",
+        sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=test",
+      }));
+
+    const result = await adapter().createPayment({
+      paymentId: "local-payment",
+      orderId: "local-order",
+      amountCents: 5000,
+      method: "PIX",
+      description: "Evento",
+      payer: { email: "buyer@example.com", name: "Buyer" },
+      expiresAt: new Date(Date.now() + 15 * 60_000),
+      idempotencyKey: "stable-key",
+      marketplace: {
+        organizationId: "org-1",
+        sellerAccountId: null,
+        applicationFeeCents: 500,
+      },
+    });
+
+    expect(result).toMatchObject({
+      providerPaymentId: null,
+      providerPreferenceId: "preference-123",
+      checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=test",
+      status: "PENDING",
+    });
+    const [url, init] = vi.mocked(fetch).mock.calls[1];
+    expect(String(url)).toBe("https://api.mercadopago.com/checkout/preferences");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer seller-access-token");
+    expect(new Headers(init?.headers).get("X-Idempotency-Key")).toBe("stable-key");
+    const body = JSON.parse(String(init?.body));
+    expect(body.external_reference).toBe("local-payment");
+    expect(body.marketplace_fee).toBe(5);
+    expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "visa" }]);
+    expect(body.notification_url).toBe("https://events.example/api/webhooks/mercadopago");
+  });
+
+  it("fails closed when the seller does not have PIX available", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json([{ id: "visa" }]));
+    await expect(adapter().createPayment({
+      paymentId: "payment",
+      orderId: "order",
+      amountCents: 1000,
+      method: "PIX",
+      description: "Event",
+      payer: { email: "buyer@example.com", name: "Buyer" },
+      expiresAt: new Date(Date.now() + 60_000),
+      idempotencyKey: "key",
+      marketplace: { organizationId: "org", sellerAccountId: null, applicationFeeCents: 0 },
+    })).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs safe provider diagnostics without response messages or tokens", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([{ id: "pix" }]))
+      .mockResolvedValueOnce(Response.json(
+        { error: "bad_request", message: "private token do-not-log", cause: [{ code: 4021, description: "do-not-log" }] },
+        { status: 400, headers: { "x-request-id": "request-safe-id" } },
+      ));
+
+    await expect(adapter().createPayment({
+      paymentId: "local-payment",
+      orderId: "local-order",
+      amountCents: 5000,
+      method: "PIX",
+      description: "Event",
+      payer: { email: "buyer@example.com", name: "Buyer" },
+      expiresAt: new Date(Date.now() + 60_000),
+      idempotencyKey: "stable-key",
+      marketplace: { organizationId: "org-1", sellerAccountId: null, applicationFeeCents: 0 },
+    })).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+
+    const diagnostic = JSON.stringify(warning.mock.calls);
+    expect(diagnostic).toContain("bad_request");
+    expect(diagnostic).toContain("4021");
+    expect(diagnostic).not.toContain("private token");
+    expect(diagnostic).not.toContain("do-not-log");
+  });
+
+  it("maps an authoritative payment response and uses the seller account from a verified webhook", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
+      point_of_interaction: {
+        transaction_data: {
+          qr_code: "pix-copy-paste",
+          qr_code_base64: "cXItY29kZQ==",
+          date_of_expiration: "2026-10-31T22:00:00.000Z",
+        },
+      },
+    })));
+    const snapshot = await adapter().getPayment("987", { providerAccountId: "12345" });
+    expect(oauth.getForUser).toHaveBeenCalledWith(db, "12345");
+    expect(snapshot).toMatchObject({
+      providerPaymentId: "987",
+      externalReference: "local-payment",
+      status: "PAID",
+      amountCents: 5000,
+      processingFeeCents: 250,
+      pixCopyPaste: "pix-copy-paste",
+      pixQrCodeBase64: "cXItY29kZQ==",
+    });
+  });
+
+  it("verifies the signed webhook manifest and binds the seller account ID", async () => {
+    const requestId = "request-123";
+    const timestamp = "1720000000000";
+    const manifest = `id:987;request-id:${requestId};ts:${timestamp};`;
+    const signature = createHmac("sha256", "webhook-secret").update(manifest).digest("hex");
+    const verification = await adapter().verifyWebhook({
+      headers: new Headers({
+        "x-request-id": requestId,
+        "x-signature": `ts=${timestamp},v1=${signature}`,
+      }),
+      rawBody: JSON.stringify({
+        id: 77,
+        type: "payment",
+        action: "payment.updated",
+        user_id: 12345,
+        data: { id: "987" },
+      }),
+      url: new URL("https://events.example/api/webhooks/mercadopago?data.id=987"),
+    });
+    expect(verification).toMatchObject({
+      valid: true,
+      providerPaymentId: "987",
+      providerAccountId: "12345",
+      externalEventId: "77",
+    });
+  });
+
+  it("does not enable payments without a webhook signing secret", () => {
+    expect(adapter("").supportedMethods).toEqual([]);
+  });
+});
