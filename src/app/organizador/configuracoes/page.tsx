@@ -10,6 +10,7 @@ import {
 import { db } from "@/server/db";
 import { getPaymentAdapter } from "@/server/payments";
 import { sellerCheckoutReadiness } from "@/server/payments/mercadopago";
+import { sandboxTokens } from "@/server/payments/mercadopago-oauth";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
 
@@ -95,6 +96,11 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
             <form action="/api/mercadopago/connect" method="post">
               <button className="underline" type="submit">{org.mercadoPagoAccount ? "Autorizar novamente Mercado Pago" : "Conectar Mercado Pago"}</button>
             </form>
+          )}
+          {org.status === "APPROVED" && sandboxTokens() && (
+            <p className="text-xs text-warning" data-testid="mp-oauth-sandbox">
+              Modo sandbox: a autorização pede ao Mercado Pago credenciais de teste do vendedor. Depois de mudar essa configuração, autorize novamente.
+            </p>
           )}
           {v && (
             <p className="text-xs text-muted-foreground">

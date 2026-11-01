@@ -28,6 +28,8 @@ const schema = z.object({
   MERCADO_PAGO_CLIENT_ID: z.string().optional(),
   MERCADO_PAGO_CLIENT_SECRET: z.string().optional(),
   MERCADO_PAGO_WEBHOOK_SECRET: z.union([z.literal(""), z.string().min(8)]).optional(),
+  // OAuth em modo sandbox: pede credenciais de teste do vendedor (test_token=true). Proibido em produção.
+  MERCADO_PAGO_OAUTH_TEST_TOKEN: bool,
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   SETTLEMENT_ENABLED: bool,
@@ -83,6 +85,8 @@ export function env(): Env {
   if (e.EMAIL_PROVIDER === "resend" && !(e.RESEND_API_KEY || e.EMAIL_API_KEY))
     throw new Error("RESEND_API_KEY não configurada.");
   if (e.NODE_ENV === "production") {
+    if (e.MERCADO_PAGO_OAUTH_TEST_TOKEN)
+      throw new Error("MERCADO_PAGO_OAUTH_TEST_TOKEN é só para sandbox e não pode ser usado em produção.");
     if (e.EMAIL_PROVIDER !== "resend")
       throw new Error("Configure um provedor real de e-mail em produção.");
     const from = e.EMAIL_FROM.match(/<([^>]+)>/)?.[1] ?? e.EMAIL_FROM;

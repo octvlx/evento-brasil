@@ -52,6 +52,8 @@ export async function beginConnection(db: Db, actor: Actor, organizationId: stri
   url.search = new URLSearchParams({ client_id: cfg.clientId, response_type: "code", platform_id: "mp", redirect_uri: cfg.redirectUri, state, code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" }).toString();
   return { url: url.href, cookie: seal(JSON.stringify({ state, verifier, actorId: actor.id, organizationId, redirectUri: cfg.redirectUri, expires })) };
 }
+/** Credenciais de sandbox na conexão OAuth: só com MERCADO_PAGO_OAUTH_TEST_TOKEN e nunca em produção. */
+export const sandboxTokens = () => env().MERCADO_PAGO_OAUTH_TEST_TOKEN && env().NODE_ENV !== "production";
 async function requestTokens(fields: Record<string, string>) {
   const cfg = oauthConfig();
   let response: Response;
@@ -84,7 +86,8 @@ export async function finishConnection(db: Db, actor: Actor, cookie: string, sta
   if (!code || code.length > 2048) throw failure();
   await db.$transaction(async tx => {
     await lock(tx, flow.organizationId);
-    const tokens = await requestTokens({ grant_type: "authorization_code", code, redirect_uri: flow.redirectUri, state, code_verifier: flow.verifier });
+    // test_token=true: o Mercado Pago devolve credenciais de sandbox do vendedor (documentação de OAuth).
+    const tokens = await requestTokens({ grant_type: "authorization_code", code, redirect_uri: flow.redirectUri, state, code_verifier: flow.verifier, test_token: sandboxTokens() ? "true" : "false" });
     await authorize(tx, actor, flow.organizationId);
     const data = stored(tokens);
     await tx.mercadoPagoAccount.upsert({ where: { organizationId: flow.organizationId }, create: { organizationId: flow.organizationId, ...data }, update: { ...data, connectedAt: new Date() } });
