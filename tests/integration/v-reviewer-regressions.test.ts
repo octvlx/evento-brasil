@@ -125,7 +125,7 @@ describe("regressões da revisão independente", () => {
 
   it("adaptador indisponível não anuncia métodos nem reserva pedido pago; gratuito continua funcionando", async () => {
     const { event, buyer, items } = await setup();
-    const disabled = new MercadoPagoAdapter(undefined);
+    const disabled = new MercadoPagoAdapter(db, undefined);
     expect(disabled.supportedMethods).toEqual([]);
     await expect(startPayment(db, disabled, buyer, "unused-order", "PIX")).rejects.toMatchObject({ code: "VALIDATION" });
     await expect(createOrder(db, buyer, orderInput(event.id, items), { providerIsSimulated: false, paymentsAvailable: false })).rejects.toMatchObject({ code: "SALES_CLOSED" });

@@ -23,10 +23,11 @@ const schema = z.object({
     .min(8)
     .default("dev-only-simulated-webhook-secret"),
   ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION: bool,
+  MERCADO_PAGO_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   MERCADO_PAGO_ACCESS_TOKEN: z.string().optional(),
   MERCADO_PAGO_CLIENT_ID: z.string().optional(),
   MERCADO_PAGO_CLIENT_SECRET: z.string().optional(),
-  MERCADO_PAGO_WEBHOOK_SECRET: z.string().optional(),
+  MERCADO_PAGO_WEBHOOK_SECRET: z.union([z.literal(""), z.string().min(8)]).optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   SETTLEMENT_ENABLED: bool,

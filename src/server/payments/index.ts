@@ -13,7 +13,7 @@ export function getPaymentAdapter(): PaymentProviderAdapter {
   const e = env();
   adapter =
     e.PAYMENT_PROVIDER === "mercadopago"
-      ? new MercadoPagoAdapter(e.MERCADO_PAGO_WEBHOOK_SECRET)
+      ? new MercadoPagoAdapter(db, e.MERCADO_PAGO_WEBHOOK_SECRET)
       : new SimulatedPaymentAdapter(db, e.SIMULATED_WEBHOOK_SECRET);
   return adapter;
 }

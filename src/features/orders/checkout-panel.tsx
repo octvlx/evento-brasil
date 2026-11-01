@@ -15,10 +15,20 @@ interface Props {
   initialNow: number;
   isSimulated: boolean;
   pendingPix: { copyPaste: string | null; qrDataUrl: string | null } | null;
+  pendingCheckoutUrl: string | null;
   /** Há uma tentativa com cartão pendente no provedor: não oferecer nova tentativa. */
   cardProcessing: boolean;
   /** Há versão vigente dos termos não aceita pelo comprador (R10). */
   termsPending: boolean;
+}
+
+function mercadoPagoCheckoutUrl(value: string) {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    !["www.mercadopago.com.br", "mercadopago.com.br", "sandbox.mercadopago.com.br"].includes(url.hostname)
+  ) throw new Error("Invalid Mercado Pago URL");
+  return url.href;
 }
 
 function useCountdown(target: string, initialNow: number) {
@@ -30,7 +40,7 @@ function useCountdown(target: string, initialNow: number) {
   return Math.max(0, left);
 }
 
-export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pendingPix, cardProcessing, termsPending }: Props) {
+export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pendingPix, pendingCheckoutUrl, cardProcessing, termsPending }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<"PIX" | "CREDIT_CARD">("PIX");
   const [cardOutcome, setCardOutcome] = useState<"approve" | "decline">("approve");
@@ -54,6 +64,14 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
         // O pedido mudou de estado (pago, expirado ou tentativa em andamento): a página
         // recarregada mostra o estado real ou leva ao pedido.
         if (res.code === "INVALID_STATE") router.refresh();
+        return;
+      }
+      if (res.data.checkoutUrl) {
+        try {
+          window.location.assign(mercadoPagoCheckoutUrl(res.data.checkoutUrl));
+        } catch {
+          setError("Não foi possível abrir o checkout do Mercado Pago. Atualize a página e tente novamente.");
+        }
         return;
       }
       if (method === "CREDIT_CARD") {
@@ -86,6 +104,25 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
           <p className="text-sm text-muted-foreground">
             Estamos aguardando a resposta da operadora do cartão. Não tente pagar de novo: assim que houver confirmação, seus ingressos são emitidos e você recebe um e-mail.
           </p>
+          <Button variant="outline" className="w-full" onClick={() => router.push(`/pedido/${orderId}`)}>
+            Acompanhar pedido
+          </Button>
+        </div>
+      ) : pendingCheckoutUrl ? (
+        <div className="space-y-4 rounded-2xl border border-border p-5">
+          <h2 className="font-display text-lg font-bold">Pagamento pendente no Mercado Pago</h2>
+          <p className="text-sm text-muted-foreground">
+            Continue o pagamento na página segura do Mercado Pago. A confirmação dos ingressos será feita pelo provedor.
+          </p>
+          <Button className="w-full" onClick={() => {
+            try {
+              window.location.assign(mercadoPagoCheckoutUrl(pendingCheckoutUrl));
+            } catch {
+              setError("Não foi possível abrir o checkout do Mercado Pago. Atualize a página e tente novamente.");
+            }
+          }}>
+            Continuar no Mercado Pago
+          </Button>
           <Button variant="outline" className="w-full" onClick={() => router.push(`/pedido/${orderId}`)}>
             Acompanhar pedido
           </Button>
@@ -123,7 +160,7 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
             <legend className="mb-2 text-sm font-semibold">Forma de pagamento</legend>
             {(
               [
-                ["PIX", "PIX", "Aprovação em segundos", QrCode],
+                ["PIX", isSimulated ? "PIX" : "PIX pelo Mercado Pago", isSimulated ? "Aprovação em segundos" : "Checkout seguro", QrCode],
                 ["CREDIT_CARD", isSimulated ? "Cartão de crédito (simulado)" : "Cartão de crédito", isSimulated ? "Ambiente de teste" : "Em breve", CreditCard],
               ] as const
             ).map(([value, label, hint, Icon]) => (
@@ -158,7 +195,7 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
           )}
           {termsRequired && <TermsReaccept checked={acceptTerms} onChange={setAcceptTerms} />}
           <Button size="lg" variant="accent" className="w-full" onClick={pay} disabled={pending || expired || (termsRequired && !acceptTerms)}>
-            {pending ? "Processando…" : method === "PIX" ? "Gerar PIX" : "Pagar com cartão"}
+            {pending ? "Processando…" : method === "PIX" ? isSimulated ? "Gerar PIX" : "Continuar para Mercado Pago" : "Pagar com cartão"}
           </Button>
         </div>
       )}

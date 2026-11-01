@@ -8,6 +8,7 @@ export type ProviderPaymentStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | 
 export interface CreatePaymentInput {
   /** Nosso Payment.id — enviado como referência externa. */
   paymentId: string;
+  orderId: string;
   amountCents: number;
   method: ProviderMethod;
   description: string;
@@ -16,6 +17,7 @@ export interface CreatePaymentInput {
   expiresAt: Date;
   idempotencyKey: string;
   marketplace: {
+    organizationId: string;
     /** Conta do organizador no provedor (OAuth). Nulo no simulado. */
     sellerAccountId: string | null;
     /** Comissão a reter via split nativo, quando suportado pelo método. */
@@ -26,7 +28,9 @@ export interface CreatePaymentInput {
 }
 
 export interface CreatedPayment {
-  providerPaymentId: string;
+  /** Checkout Pro creates a preference before the buyer creates a payment. */
+  providerPaymentId: string | null;
+  providerPreferenceId?: string;
   status: ProviderPaymentStatus;
   rawStatus: string;
   pixCopyPaste?: string;
@@ -61,15 +65,22 @@ export interface WebhookRequest {
 
 export type WebhookVerification =
   | { valid: false; reason: string }
-  | { valid: true; externalEventId: string; eventType: string; providerPaymentId: string | null; payload: unknown };
+  | {
+      valid: true;
+      externalEventId: string;
+      eventType: string;
+      providerPaymentId: string | null;
+      providerAccountId?: string;
+      payload: unknown;
+    };
 
 export interface PaymentProviderAdapter {
   readonly id: string;
   readonly isSimulated: boolean;
   readonly supportedMethods: readonly ProviderMethod[];
   createPayment(input: CreatePaymentInput): Promise<CreatedPayment>;
-  getPayment(providerPaymentId: string): Promise<ProviderPaymentSnapshot>;
-  refundPayment(input: { providerPaymentId: string; amountCents: number; idempotencyKey: string }): Promise<RefundResult>;
+  getPayment(providerPaymentId: string, context?: { organizationId?: string; providerAccountId?: string }): Promise<ProviderPaymentSnapshot>;
+  refundPayment(input: { providerPaymentId: string; amountCents: number; idempotencyKey: string; organizationId?: string }): Promise<RefundResult>;
   verifyWebhook(req: WebhookRequest): Promise<WebhookVerification>;
   /**
    * Opcional: localiza no provedor um pagamento pela nossa chave de idempotência

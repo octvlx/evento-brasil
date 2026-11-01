@@ -1,64 +1,432 @@
-// Mercado Pago — ESQUELETO DESABILITADO.
-//
-// Nenhuma chamada de API foi implementada porque os contratos (OAuth de
-// marketplace, split com application_fee, PIX no fluxo de marketplace,
-// reembolsos, formato de notificações e liquidação) ainda não foram
-// verificados na documentação oficial vigente nem com a conta comercial.
-// Ver docs/payments-mercadopago.md para a lista de verificação.
-//
-// A única parte esboçada é a verificação de assinatura de webhook, baseada no
-// esquema público "x-signature" (ts/v1 + manifesto id/request-id/ts com
-// HMAC-SHA256). Também precisa ser confirmada antes de habilitar.
 import "server-only";
 import { createHmac } from "node:crypto";
-import { AppError } from "../errors";
+import { z } from "zod";
+import type { Db } from "../db";
 import { safeEqual } from "../crypto";
-import type { PaymentProviderAdapter, WebhookRequest, WebhookVerification } from "./types";
+import { env } from "../env";
+import { AppError } from "../errors";
+import {
+  getMercadoPagoAccessToken,
+  getMercadoPagoAccessTokenForUser,
+} from "./mercadopago-oauth";
+import type {
+  CreatePaymentInput,
+  PaymentProviderAdapter,
+  ProviderPaymentSnapshot,
+  ProviderPaymentStatus,
+  RefundResult,
+  WebhookRequest,
+  WebhookVerification,
+} from "./types";
 
-const notEnabled = () =>
-  new AppError("PROVIDER_ERROR", "Integração com Mercado Pago ainda não habilitada: contratos de API pendentes de verificação.");
+const API = "https://api.mercadopago.com";
+const providerError = () =>
+  new AppError("PROVIDER_ERROR", "Não foi possível concluir a operação com o Mercado Pago.");
+function providerDiagnostic(
+  phase: string,
+  details: Record<string, string | number | undefined>,
+) {
+  console.warn("[mercadopago]", { phase, ...details });
+}
+function safeDiagnosticCode(value: string | number | undefined) {
+  const text = value === undefined ? undefined : String(value);
+  return text && /^[A-Za-z0-9_.-]{1,80}$/.test(text) ? text : undefined;
+}
+const amount = (cents: number) => Number((cents / 100).toFixed(2));
+const cents = (value: number) => Math.round(value * 100);
+function providerDate(value: string | undefined) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) throw providerError();
+  return date;
+}
+
+const preferenceSchema = z.object({
+  id: z.union([z.string(), z.number()]).transform(String),
+  init_point: z.string().url(),
+  sandbox_init_point: z.string().url().optional(),
+  expiration_date_to: z.string().optional(),
+});
+
+const paymentSchema = z.object({
+  id: z.union([z.string(), z.number()]).transform(String),
+  external_reference: z.string().min(1),
+  status: z.string().min(1),
+  status_detail: z.string().optional(),
+  currency_id: z.literal("BRL"),
+  transaction_amount: z.number().nonnegative(),
+  date_of_expiration: z.string().optional(),
+  fee_details: z.array(z.object({ amount: z.number().nonnegative() })).optional(),
+  point_of_interaction: z.object({
+    transaction_data: z.object({
+      qr_code: z.string().optional(),
+      qr_code_base64: z.string().optional(),
+      date_of_expiration: z.string().optional(),
+    }).optional(),
+  }).optional(),
+});
+const webhookPayloadSchema = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  type: z.string().optional(),
+  action: z.string().optional(),
+  user_id: z.union([z.string(), z.number()]).optional(),
+  data: z.object({ id: z.union([z.string(), z.number()]).optional() }).optional(),
+});
+
+async function requestJson(
+  path: string,
+  accessToken: string,
+  init: RequestInit = {},
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(new URL(path, API), {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+      signal: AbortSignal.timeout(15000),
+      cache: "no-store",
+      redirect: "error",
+    });
+  } catch (error) {
+    providerDiagnostic("request_failed", {
+      path,
+      errorName: error instanceof Error ? error.name : "unknown",
+    });
+    throw providerError();
+  }
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsedError = z.object({
+      error: z.string().optional(),
+      cause: z.array(z.object({ code: z.union([z.string(), z.number()]).optional() })).optional(),
+    }).safeParse(body);
+    providerDiagnostic("request_rejected", {
+      path,
+      status: response.status,
+      requestId: response.headers.get("x-request-id") ?? undefined,
+      errorCode: parsedError.success
+        ? safeDiagnosticCode(parsedError.data.error)
+        : undefined,
+      causeCodes: parsedError.success
+        ? parsedError.data.cause
+            ?.map((cause) => safeDiagnosticCode(cause.code) ?? "unknown")
+            .join(",")
+        : undefined,
+    });
+    throw providerError();
+  }
+  return body;
+}
+
+function mapStatus(status: string, detail: string | undefined): ProviderPaymentStatus {
+  switch (status) {
+    case "approved":
+      return "PAID";
+    case "pending":
+    case "in_process":
+    case "authorized":
+      return "PENDING";
+    case "in_mediation":
+      return "DISPUTED";
+    case "rejected":
+      return "FAILED";
+    case "cancelled":
+      return detail === "expired" ? "EXPIRED" : "CANCELLED";
+    case "refunded":
+      return "REFUNDED";
+    case "charged_back":
+      return "CHARGED_BACK";
+    default:
+      throw providerError();
+  }
+}
+
+function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
+  const parsed = paymentSchema.safeParse(raw);
+  if (!parsed.success) throw providerError();
+  const payment = parsed.data;
+  const fees = payment.fee_details;
+  const expiration = payment.point_of_interaction?.transaction_data?.date_of_expiration ?? payment.date_of_expiration;
+  return {
+    providerPaymentId: payment.id,
+    externalReference: payment.external_reference,
+    status: mapStatus(payment.status, payment.status_detail),
+    rawStatus: payment.status_detail
+      ? `${payment.status}:${payment.status_detail}`
+      : payment.status,
+    amountCents: cents(payment.transaction_amount),
+    processingFeeCents: fees ? fees.reduce((total, fee) => total + cents(fee.amount), 0) : null,
+    pixCopyPaste: payment.point_of_interaction?.transaction_data?.qr_code,
+    pixQrCodeBase64: payment.point_of_interaction?.transaction_data?.qr_code_base64,
+    expiresAt: providerDate(expiration),
+  };
+}
 
 export class MercadoPagoAdapter implements PaymentProviderAdapter {
   readonly id = "mercadopago";
   readonly isSimulated = false;
-  readonly supportedMethods = [] as const;
+  readonly supportedMethods: readonly ("PIX")[];
 
-  constructor(private readonly webhookSecret: string | undefined) {}
-
-  async createPayment(): Promise<never> {
-    throw notEnabled();
+  constructor(
+    private readonly db: Db,
+    private readonly webhookSecret: string | undefined,
+  ) {
+    const e = env();
+    const key = e.MERCADO_PAGO_TOKEN_ENCRYPTION_KEY;
+    const validKey = !!key && Buffer.from(key, "base64").length === 32;
+    this.supportedMethods =
+      e.MERCADO_PAGO_CLIENT_ID &&
+      e.MERCADO_PAGO_CLIENT_SECRET &&
+      validKey &&
+      webhookSecret
+        ? ["PIX"]
+        : [];
   }
 
-  async getPayment(): Promise<never> {
-    throw notEnabled();
+  async createPayment(input: CreatePaymentInput) {
+    if (
+      input.method !== "PIX" ||
+      this.supportedMethods.length === 0 ||
+      !input.marketplace.organizationId ||
+      input.amountCents <= 0 ||
+      input.expiresAt <= new Date()
+    ) {
+      throw providerError();
+    }
+
+    const accessToken = await getMercadoPagoAccessToken(
+      this.db,
+      input.marketplace.organizationId,
+    );
+    const methods = z.array(z.object({ id: z.string() })).safeParse(
+      await requestJson("/v1/payment_methods", accessToken),
+    );
+    if (!methods.success || !methods.data.some((method) => method.id === "pix")) {
+      providerDiagnostic("pix_method_unavailable", {
+        responseValid: methods.success ? 1 : 0,
+      });
+      throw providerError();
+    }
+
+    const appUrl = new URL(env().APP_URL);
+    const returnUrl = new URL(`/pedido/${encodeURIComponent(input.orderId)}`, appUrl).href;
+    const now = new Date();
+    const body = {
+      items: [{
+        id: input.paymentId,
+        title: input.description.slice(0, 256),
+        quantity: 1,
+        currency_id: "BRL",
+        unit_price: amount(input.amountCents),
+      }],
+      payer: { email: input.payer.email },
+      external_reference: input.paymentId,
+      marketplace_fee: amount(input.marketplace.applicationFeeCents),
+      payment_methods: {
+        excluded_payment_methods: methods.data
+          .filter((method) => method.id !== "pix")
+          .map(({ id }) => ({ id })),
+      },
+      notification_url: new URL("/api/webhooks/mercadopago", appUrl).href,
+      back_urls: {
+        success: returnUrl,
+        pending: returnUrl,
+        failure: returnUrl,
+      },
+      auto_return: "approved",
+      expires: true,
+      expiration_date_from: now.toISOString(),
+      expiration_date_to: input.expiresAt.toISOString(),
+    };
+    const raw = await requestJson("/checkout/preferences", accessToken, {
+      method: "POST",
+      headers: { "X-Idempotency-Key": input.idempotencyKey },
+      body: JSON.stringify(body),
+    });
+    const parsed = preferenceSchema.safeParse(raw);
+    if (!parsed.success) {
+      providerDiagnostic("invalid_preference_response", {
+        fields: parsed.error.issues.map((issue) => issue.path.join(".")).join(","),
+      });
+      throw providerError();
+    }
+    for (const checkoutUrl of [parsed.data.init_point, parsed.data.sandbox_init_point].filter(Boolean)) {
+      const host = new URL(checkoutUrl!).hostname;
+      if (!["www.mercadopago.com.br", "mercadopago.com.br", "sandbox.mercadopago.com.br"].includes(host)) {
+        throw providerError();
+      }
+    }
+    const e = env();
+    const checkoutUrl =
+      e.NODE_ENV === "production"
+        ? parsed.data.init_point
+        : parsed.data.sandbox_init_point ?? parsed.data.init_point;
+    return {
+      providerPaymentId: null,
+      providerPreferenceId: parsed.data.id,
+      status: "PENDING" as const,
+      rawStatus: "preference_created",
+      checkoutUrl,
+      expiresAt: providerDate(parsed.data.expiration_date_to) ?? input.expiresAt,
+    };
   }
 
-  async refundPayment(): Promise<never> {
-    throw notEnabled();
+  async getPayment(
+    providerPaymentId: string,
+    context: { organizationId?: string; providerAccountId?: string } = {},
+  ) {
+    const accessToken = context.providerAccountId
+      ? await getMercadoPagoAccessTokenForUser(this.db, context.providerAccountId)
+      : context.organizationId
+        ? await getMercadoPagoAccessToken(this.db, context.organizationId)
+        : await this.accessTokenForPayment(providerPaymentId);
+    const raw = await requestJson(
+      `/v1/payments/${encodeURIComponent(providerPaymentId)}`,
+      accessToken,
+    );
+    return toSnapshot(raw);
+  }
+
+  async findPaymentByReference(idempotencyKey: string) {
+    const payment = await this.db.payment.findUnique({
+      where: { idempotencyKey },
+      select: {
+        id: true,
+        providerPreferenceId: true,
+        order: { select: { organizationId: true } },
+      },
+    });
+    if (!payment || !payment.providerPreferenceId) throw providerError();
+    const accessToken = await getMercadoPagoAccessToken(
+      this.db,
+      payment.order.organizationId,
+    );
+    const search = z.object({
+      results: z.array(z.unknown()),
+    }).safeParse(await requestJson(
+      `/v1/payments/search?external_reference=${encodeURIComponent(payment.id)}&limit=2`,
+      accessToken,
+    ));
+    if (!search.success) throw providerError();
+    if (search.data.results.length > 1) throw providerError();
+    if (search.data.results.length === 1) return toSnapshot(search.data.results[0]);
+
+    const preference = z.object({
+      external_reference: z.string(),
+      expiration_date_to: z.string().optional(),
+    }).safeParse(await requestJson(
+      `/checkout/preferences/${encodeURIComponent(payment.providerPreferenceId)}`,
+      accessToken,
+    ));
+    if (!preference.success || preference.data.external_reference !== payment.id) {
+      throw providerError();
+    }
+    const expiresAt = providerDate(preference.data.expiration_date_to);
+    if (!expiresAt || Date.now() <= expiresAt.getTime() + 24 * 60 * 60 * 1000) {
+      throw providerError();
+    }
+    return null;
+  }
+
+  async refundPayment(input: {
+    providerPaymentId: string;
+    amountCents: number;
+    idempotencyKey: string;
+    organizationId?: string;
+  }): Promise<RefundResult> {
+    if (!input.organizationId || input.amountCents <= 0) throw providerError();
+    const accessToken = await getMercadoPagoAccessToken(this.db, input.organizationId);
+    const raw = await requestJson(
+      `/v1/payments/${encodeURIComponent(input.providerPaymentId)}/refunds`,
+      accessToken,
+      {
+        method: "POST",
+        headers: { "X-Idempotency-Key": input.idempotencyKey },
+        body: JSON.stringify({ amount: amount(input.amountCents) }),
+      },
+    );
+    const result = z.object({
+      id: z.union([z.string(), z.number()]).transform(String),
+      status: z.enum(["approved", "pending", "rejected"]),
+    }).safeParse(raw);
+    if (!result.success) throw providerError();
+    return {
+      providerRefundId: result.data.id,
+      status:
+        result.data.status === "approved"
+          ? "SUCCEEDED"
+          : result.data.status === "pending"
+            ? "PENDING"
+            : "FAILED",
+    };
   }
 
   async verifyWebhook(req: WebhookRequest): Promise<WebhookVerification> {
-    if (!this.webhookSecret) return { valid: false, reason: "MERCADO_PAGO_WEBHOOK_SECRET não configurado" };
-    const header = req.headers.get("x-signature");
-    const requestId = req.headers.get("x-request-id") ?? "";
-    const dataId = req.url.searchParams.get("data.id") ?? "";
-    if (!header || !dataId) return { valid: false, reason: "assinatura ou data.id ausente" };
-    const parts = Object.fromEntries(header.split(",").map((kv) => kv.trim().split("=") as [string, string]));
-    const manifest = `id:${dataId.toLowerCase()};request-id:${requestId};ts:${parts.ts};`;
+    if (!this.webhookSecret) {
+      return { valid: false, reason: "MERCADO_PAGO_WEBHOOK_SECRET não configurado" };
+    }
+    const signature = req.headers.get("x-signature");
+    const requestId = req.headers.get("x-request-id");
+    const dataId = req.url.searchParams.get("data.id");
+    if (!signature || !requestId || !dataId) {
+      return { valid: false, reason: "assinatura ou identificadores ausentes" };
+    }
+    const parts = new Map<string, string>();
+    for (const component of signature.split(",")) {
+      const separator = component.indexOf("=");
+      if (separator <= 0) continue;
+      const key = component.slice(0, separator).trim();
+      const value = component.slice(separator + 1).trim();
+      if (parts.has(key)) return { valid: false, reason: "assinatura malformada" };
+      parts.set(key, value);
+    }
+    const timestamp = parts.get("ts");
+    const signatureValue = parts.get("v1");
+    if (!timestamp || !signatureValue) {
+      return { valid: false, reason: "assinatura malformada" };
+    }
+    const manifest = `id:${dataId.toLowerCase()};request-id:${requestId};ts:${timestamp};`;
     const expected = createHmac("sha256", this.webhookSecret).update(manifest).digest("hex");
-    if (!parts.v1 || !safeEqual(parts.v1, expected)) return { valid: false, reason: "assinatura inválida" };
-    let payload: { id?: string | number; type?: string; action?: string };
+    if (!safeEqual(signatureValue, expected)) {
+      return { valid: false, reason: "assinatura inválida" };
+    }
+
+    let rawPayload: unknown;
     try {
-      payload = JSON.parse(req.rawBody);
+      rawPayload = JSON.parse(req.rawBody);
     } catch {
       return { valid: false, reason: "corpo inválido" };
     }
+    const parsedPayload = webhookPayloadSchema.safeParse(rawPayload);
+    if (!parsedPayload.success) return { valid: false, reason: "corpo inválido" };
+    const payload = parsedPayload.data;
+    if (payload.user_id === undefined) {
+      return { valid: false, reason: "conta do vendedor ausente" };
+    }
+    if (payload.data?.id && String(payload.data.id).toLowerCase() !== dataId.toLowerCase()) {
+      return { valid: false, reason: "id do evento divergente" };
+    }
     return {
       valid: true,
-      externalEventId: String(payload.id ?? `${dataId}:${parts.ts}`),
+      externalEventId: String(payload.id ?? `${dataId}:${timestamp}`),
       eventType: payload.action ?? payload.type ?? "unknown",
       providerPaymentId: dataId,
+      providerAccountId: String(payload.user_id),
       payload,
     };
+  }
+
+  private async accessTokenForPayment(providerPaymentId: string) {
+    const payment = await this.db.payment.findFirst({
+      where: { provider: this.id, providerPaymentId },
+      select: { order: { select: { organizationId: true } } },
+    });
+    if (!payment) throw providerError();
+    return getMercadoPagoAccessToken(this.db, payment.order.organizationId);
   }
 }
