@@ -83,7 +83,8 @@ export interface WebhookRequest {
 }
 
 export type WebhookVerification =
-  | { valid: false; reason: string }
+  // ignore: aviso conhecido que não deve ser processado nem reenviado (responde 200).
+  | { valid: false; reason: string; ignore?: boolean }
   | {
       valid: true;
       externalEventId: string;

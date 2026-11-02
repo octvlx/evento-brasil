@@ -513,6 +513,12 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
     const signature = req.headers.get("x-signature");
     const requestId = req.headers.get("x-request-id");
     const dataId = req.url.searchParams.get("data.id");
+    // IPN no formato antigo (?id=…&topic=payment|merchant_order) chega sem assinatura,
+    // junto com o webhook assinado do mesmo evento. Nada é processado a partir dele;
+    // responder 200 só evita que o Mercado Pago o reenvie sem fim.
+    if (!signature && !dataId && req.url.searchParams.has("topic") && req.url.searchParams.has("id")) {
+      return { valid: false, ignore: true, reason: "IPN sem assinatura (formato antigo)" };
+    }
     if (!signature || !requestId || !dataId) {
       return { valid: false, reason: "assinatura ou identificadores ausentes" };
     }

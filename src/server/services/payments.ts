@@ -422,6 +422,8 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
 export async function handlePaymentWebhook(db: Db, adapter: PaymentProviderAdapter, req: WebhookRequest): Promise<{ status: number; body: string }> {
   const verification = await adapter.verifyWebhook(req);
   if (!verification.valid) {
+    // Ignorado: nada é lido nem gravado a partir dele.
+    if (verification.ignore) return { status: 200, body: "ignored" };
     console.warn(`[webhook:${adapter.id}] rejeitado: ${verification.reason}`);
     return { status: 401, body: "invalid signature" };
   }
