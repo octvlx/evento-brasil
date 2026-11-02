@@ -237,8 +237,86 @@ sandbox do vendedor. Com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true` (fora de
 produção), a conexão em `/organizador/configuracoes` faz isso; depois de mudar a
 variável, autorize o vendedor novamente. Em produção a aplicação não inicia com
 essa variável ligada. A compra de teste é feita logado como o **comprador de
-teste** da aplicação, numa janela anônima. Pagamentos com credenciais de teste
-não enviam webhooks: use "Simular" no painel ou a reconciliação.
+teste** da aplicação, numa janela anônima. Em 02/11/2026, um pagamento com
+credenciais de teste enviou webhooks `payment.created` assinados para a
+`notification_url` da preferência. Mesmo assim, não dependa disso: a página do
+pedido reconcilia sozinha (abaixo).
+
+### Confirmação do pagamento (webhook e reconciliação)
+
+Identificadores de uma compra pelo Checkout Pro:
+
+| Onde aparece | Valor | Entidade |
+| --- | --- | --- |
+| `/pedido/<id>` | `Order.id` | pedido |
+| `external_reference`, `items[0].id` | `Payment.id` | tentativa de pagamento (uma preferência) |
+| `preference_id` | `Payment.providerPreferenceId` | preferência do Checkout Pro |
+| `payment_id` / `collection_id`, `data.id` do webhook | `Payment.providerPaymentId` (gravado ao confirmar) | pagamento no Mercado Pago |
+| `merchant_order_id` | não gravado | agrupa os pagamentos de uma preferência |
+
+Um checkout pode ter vários pagamentos, por exemplo um cartão recusado seguido de
+saldo aprovado. O pagamento aprovado substitui o recusado na tentativa. Um segundo
+pagamento aprovado vira `duplicate_payment`, com auditoria e reembolso manual.
+
+Caminhos de confirmação (todos passam por `applyPaymentSnapshot`, idempotente e sob
+trava do pedido; nenhum confia nos parâmetros `status=approved` do redirect):
+
+1. **Webhook** `POST /api/webhooks/mercadopago`: assinatura `x-signature`, consulta de
+   `/v1/payments/{id}` com o token do vendedor (`user_id` do aviso). Avisos de
+   `merchant_order` são registrados e ignorados.
+2. **Página do pedido**: enquanto o pedido aguarda pagamento, a página consulta o
+   provedor ao abrir e a cada 12 s, por até 6 min. Também há o botão "Verificar
+   pagamento agora", limitado a 10 consultas por minuto por pedido e só para o dono.
+   O pagamento é localizado por `/merchant_orders/search?preference_id=` da tentativa
+   registrada, e não por ids vindos da URL.
+3. **Cron** `POST /api/cron/maintenance`: reprocessa webhooks que falharam e
+   tentativas paradas.
+
+`/v1/payments/search` não listou o pagamento aprovado de teste. A merchant order
+listou. Por isso a busca usa a merchant order primeiro.
+
+### Compra de teste com cartão (procedimento oficial)
+
+Fonte: documentação do Checkout Pro, páginas "Realizar compras de teste" e "Cartões de teste".
+
+1. Vendedor conectado com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true`: o token começa com
+   `TEST-` e pertence a um **usuário de teste vendedor**.
+2. Faça o pedido no site e abra o checkout numa **janela anônima**. No Mercado Pago,
+   entre como o **usuário de teste comprador** da mesma aplicação, e não com sua conta
+   real. Se pedirem código por e-mail, use os 6 dígitos indicados para a conta de teste.
+3. Use um cartão de **crédito** de teste: Mastercard `5480 8328 0103 3311` ou Visa
+   `4235 6477 2802 5682`, CVV `123`, validade `11/30`. Titular `APRO` aprova, `OTHE`
+   recusa, `CONT` fica pendente. CPF `12345678909`.
+   O cartão Elo de teste é de **débito**, e o site aceita só crédito.
+4. Cartão real não funciona no sandbox. Se o checkout mostrar `/congrats/recover/error/`
+   e a merchant order da preferência continuar sem pagamentos, o erro foi no checkout
+   (conta, cartão ou sessão), sem cobrança. Não foi recusa do emissor.
+5. Confira `Payment.status`, `IssuedTicket` e `PaymentWebhookEvent` no banco. A página
+   do pedido deve mostrar "Pagamento confirmado!" só depois disso.
+
+Uma preferência que já recebeu pagamento não é reaberta por "Voltar ao pagamento". O
+site confere o checkout no provedor antes de reaproveitá-lo.
+
+
+
+A `notification_url` e as `back_urls` saem de `APP_URL` **no momento em que a
+preferência é criada**. Uma preferência criada com um túnel antigo continua
+avisando o endereço antigo.
+
+1. `npm run db:start` e `npm run dev:oauth` (ou `npm run dev`).
+2. `cloudflared tunnel --url http://localhost:3000` e anote o endereço `https://….trycloudflare.com`.
+3. No `.env`, `APP_URL` = esse endereço (sem barra no final), e reinicie o `next dev`.
+4. No painel do Mercado Pago, a URL de redirecionamento do OAuth é
+   `<APP_URL>/api/mercadopago/callback`. A URL de webhooks do painel (se usada) é
+   `<APP_URL>/api/webhooks/mercadopago`, com a mesma chave secreta de
+   `MERCADO_PAGO_WEBHOOK_SECRET`.
+5. Entre no site **pelo túnel** e faça um pedido novo. Para conferir a notificação,
+   veja `PaymentWebhookEvent`: `processedAt` preenchido e `processingResult` = `paid`.
+   Se a coluna `error` estiver preenchida, o aviso chegou, mas a consulta ao
+   provedor falhou.
+
+O túnel rápido muda de endereço a cada execução. Para um endereço estável, use um
+túnel nomeado do Cloudflare com domínio próprio. Nunca fixe o endereço no código.
 
 ## Passos de habilitação
 

@@ -2,7 +2,7 @@
 // status autoritativo do provedor. Um redirect de checkout NUNCA confirma
 // pagamento; só `getPayment` no provedor, após webhook verificado ou consulta.
 import "server-only";
-import type { Prisma } from "@/generated/prisma/client";
+import type { Payment, Prisma } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
@@ -72,7 +72,7 @@ export async function startPayment(
     });
     return { kind: "new", payment, order } as const;
   }, TX_OPTIONS);
-  if (decision.kind === "reuse") return decision.payment;
+  if (decision.kind === "reuse") return guardReusedCheckout(db, adapter, decision.payment);
   if (decision.kind === "await") return awaitPixInFlight(db, decision.paymentId);
   const { payment, order } = decision;
 
@@ -125,6 +125,29 @@ export async function startPayment(
   // Resultado síncrono (ex.: cartão) é revalidado na consulta autoritativa.
   if (created.status !== "PENDING" && created.providerPaymentId) await syncPaymentFromProvider(db, adapter, created.providerPaymentId);
   return db.payment.findUniqueOrThrow({ where: { id: updated.id } });
+}
+
+/**
+ * Antes de devolver o comprador a um checkout hospedado já criado, confere se ele já
+ * recebeu pagamento. Com o webhook atrasado, um pedido pago continuava pendente e
+ * "Voltar ao pagamento" reabria a mesma preferência, permitindo cobrar de novo.
+ * Sem resposta do provedor, recusa: reabrir às cegas arrisca cobrança dupla.
+ */
+async function guardReusedCheckout(db: Db, adapter: PaymentProviderAdapter, payment: Payment) {
+  if (!payment.providerPreferenceId || !adapter.findCheckoutPayment) return payment;
+  let snapshot: ProviderPaymentSnapshot | null;
+  try {
+    snapshot = await adapter.findCheckoutPayment(payment.idempotencyKey);
+  } catch {
+    throw new AppError("PROVIDER_ERROR", "Não foi possível conferir o pagamento com o provedor agora. Tente novamente em instantes.");
+  }
+  if (!snapshot || snapshot.status === "FAILED" || snapshot.status === "CANCELLED") return payment;
+  await applyPaymentSnapshot(db, adapter, snapshot);
+  throw invalidState(
+    snapshot.status === "PENDING"
+      ? "Há um pagamento em análise para este pedido. Acompanhe o resultado na página do pedido."
+      : "Este pedido já foi pago. Acompanhe a confirmação na página do pedido.",
+  );
 }
 
 const PIX_IN_FLIGHT_WAIT_MS = 10_000;
@@ -207,13 +230,9 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     where: { provider_providerPaymentId: { provider: adapter.id, providerPaymentId: snapshot.providerPaymentId } },
     select: { id: true, orderId: true, order: { select: { eventId: true } } },
   });
+  // A referência externa é o nosso Payment.id (uma tentativa = uma preferência do Checkout Pro).
   const ref = linked ?? await db.payment.findFirst({
-    where: {
-      id: snapshot.externalReference,
-      provider: adapter.id,
-      status: "PENDING",
-      providerPaymentId: null,
-    },
+    where: { id: snapshot.externalReference, provider: adapter.id },
     select: { id: true, orderId: true, order: { select: { eventId: true } } },
   });
   if (!ref) return "unknown_payment";
@@ -223,9 +242,25 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     await lockEvent(tx, ref.order.eventId);
     await lockOrder(tx, ref.orderId);
     const payment = await tx.payment.findUniqueOrThrow({ where: { id: ref.id } });
-    if (payment.providerPaymentId && payment.providerPaymentId !== snapshot.providerPaymentId) return "duplicate_payment";
-    if (!payment.providerPaymentId && payment.status !== "PENDING") return "no_change";
-    if (!payment.providerPaymentId) {
+    const unsettled = ["PENDING", "FAILED", "CANCELLED", "EXPIRED"].includes(payment.status);
+    if (payment.providerPaymentId && payment.providerPaymentId !== snapshot.providerPaymentId) {
+      // Outra tentativa no mesmo checkout: o comprador pode ter um cartão recusado e
+      // depois pagar com saldo. Só a tentativa aprovada substitui a vinculada.
+      if (snapshot.status !== "PAID") return "no_change";
+      if (!unsettled) {
+        await audit(tx, {
+          action: "payment.duplicate_provider_payment",
+          entityType: "Payment",
+          entityId: payment.id,
+          metadata: { providerPaymentId: snapshot.providerPaymentId },
+        });
+        return "duplicate_payment";
+      }
+      await tx.payment.update({ where: { id: payment.id }, data: { providerPaymentId: snapshot.providerPaymentId, failureReason: null } });
+    } else if (!payment.providerPaymentId) {
+      // Encerrada sem vínculo (ex.: reserva expirada): só um pagamento aprovado a reabre,
+      // para nunca ignorar dinheiro recebido; o ramo PAID trata o pagamento tardio.
+      if (payment.status !== "PENDING" && !(snapshot.status === "PAID" && unsettled)) return "no_change";
       await tx.payment.update({
         where: { id: payment.id },
         data: { providerPaymentId: snapshot.providerPaymentId },

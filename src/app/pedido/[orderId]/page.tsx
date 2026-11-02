@@ -57,18 +57,27 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
   const canRequestCancellation = !cancellations.some((c) => c.status === "OPEN") && (order.status === "PAID" || order.status === "PENDING_PAYMENT");
   const refund = refundView(order.status, order.refunds);
   const isRefund = order.status === "REFUND_PENDING" || order.status === "REFUNDED";
+  // Última tentativa recusada pelo provedor, com o pedido ainda reservado: permite tentar de novo.
+  const lastPayment = order.payments[0];
+  // Só recusas do provedor (com pagamento vinculado); falhas antes da cobrança aparecem no checkout.
+  const rejected = order.status === "PENDING_PAYMENT" && !!lastPayment?.providerPaymentId && (lastPayment.status === "FAILED" || lastPayment.status === "CANCELLED");
   const Icon = order.status === "PAID" ? CheckCircle2 : order.status === "PENDING_PAYMENT" ? Clock : isRefund ? RotateCcw : XCircle;
 
   return (
     <>
       {completedDraft && <ClearPurchasedCart eventId={order.eventId} idempotencyKey={completedDraft.idempotencyKey} />}
-      {order.status === "PENDING_PAYMENT" && <PendingPoller orderId={order.id} returnedPaymentId={hint} />}
       <div className="flex items-start gap-4">
         <Icon className={`size-10 shrink-0 ${order.status === "PAID" ? "text-success" : order.status === "PENDING_PAYMENT" || order.status === "REFUND_PENDING" ? "text-warning" : "text-muted-foreground"}`} aria-hidden />
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pedido {order.publicCode}</p>
           <h1 className="font-display text-3xl font-extrabold tracking-tight">
-            {order.status === "PAID" ? "Pagamento confirmado!" : order.status === "PENDING_PAYMENT" ? "Aguardando confirmação do pagamento" : st.label}
+            {order.status === "PAID"
+              ? "Pagamento confirmado!"
+              : rejected
+                ? "Pagamento não aprovado"
+                : order.status === "PENDING_PAYMENT"
+                  ? "Aguardando confirmação do pagamento."
+                  : st.label}
           </h1>
           <p className="mt-1 text-muted-foreground">
             {order.event.title} · {formatEventDateTime(order.event.startsAt, order.event.timezone)}
@@ -116,20 +125,34 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
         </Card>
       )}
 
+      {order.status === "PAID" && (
+        <Alert variant="success" className="mt-6" data-testid="payment-confirmed">
+          Pagamento confirmado pelo provedor. {order.tickets.length} {order.tickets.length === 1 ? "ingresso emitido" : "ingressos emitidos"} — veja abaixo.
+        </Alert>
+      )}
+
       {order.status === "PENDING_PAYMENT" && (
         <Card className="mt-6 space-y-3 p-5">
-          <p className="text-sm">
-            Seus ingressos serão emitidos automaticamente quando o provedor confirmar o pagamento. Esta página se atualiza sozinha. A reserva vale até{" "}
-            <strong>{formatDateTimeShort(order.expiresAt)}</strong>.
-          </p>
+          {rejected ? (
+            <p className="text-sm" data-testid="payment-rejected">
+              O pagamento não foi aprovado e nenhum ingresso foi emitido. Você pode tentar de novo, com outro cartão ou forma de pagamento, até{" "}
+              <strong>{formatDateTimeShort(order.expiresAt)}</strong>.
+            </p>
+          ) : (
+            <p className="text-sm">
+              Seus ingressos serão emitidos automaticamente quando o provedor confirmar o pagamento. Esta página se atualiza sozinha. A reserva vale até{" "}
+              <strong>{formatDateTimeShort(order.expiresAt)}</strong>.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <Link href={`/checkout/${order.id}`} className={buttonVariants({ variant: "secondary" })}>
-              Voltar ao pagamento
+              {rejected ? "Tentar pagar de novo" : "Voltar ao pagamento"}
             </Link>
             <form action={cancelOrderAction.bind(null, order.id)}>
               <button className={buttonVariants({ variant: "ghost" })}>Cancelar pedido</button>
             </form>
           </div>
+          <PendingPoller orderId={order.id} returnedPaymentId={hint} />
         </Card>
       )}
 

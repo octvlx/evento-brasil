@@ -109,4 +109,10 @@ export interface PaymentProviderAdapter {
    * Resultado inconclusivo/consistência eventual deve lançar erro.
    */
   findPaymentByReference?(idempotencyKey: string): Promise<ProviderPaymentSnapshot | null>;
+  /**
+   * Opcional: pagamento já feito no checkout hospedado desta tentativa (ex.: Checkout Pro),
+   * para recuperar a confirmação sem depender do webhook. null = nada pago até agora,
+   * o que NÃO prova ausência; resultado inconclusivo lança erro.
+   */
+  findCheckoutPayment?(idempotencyKey: string): Promise<ProviderPaymentSnapshot | null>;
 }
