@@ -21,7 +21,7 @@ export default function PrivacyPage() {
       <h2>Confirmação e endereço</h2>
       <p>Usamos seu e-mail para confirmar o acesso à conta. Quando você escolhe entrar com Google, recebemos os dados necessários para autenticação. Na busca por CEP, somente o CEP é enviado ao ViaCEP; as sugestões podem ser corrigidas manualmente. O CPF é armazenado cifrado e aparece mascarado na revisão da compra.</p>
       <h2>Seus direitos</h2>
-      <p>Você pode solicitar acesso, correção, portabilidade e exclusão de dados, ressalvadas as informações que precisam ser mantidas por obrigação legal. Canal do encarregado: a definir.</p>
+      <p>Você pode solicitar acesso, correção, portabilidade e exclusão de dados, ressalvadas as informações que precisam ser mantidas por obrigação legal. Em Minha conta você baixa seus dados e exclui a conta: nome, e-mail, celular, CPF e endereço são apagados, e os registros das compras ficam guardados sem identificação pelo prazo legal. Canal do encarregado: a definir.</p>
       <h2>Cookies</h2>
       <p>Usamos cookies essenciais de sessão e de preferência de cidade. Não há cookies de publicidade nesta versão.</p>
     </ProsePage>

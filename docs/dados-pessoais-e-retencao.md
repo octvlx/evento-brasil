@@ -151,11 +151,55 @@ dados de auditoria do comercializador).
 engenharia, não exigência legal; mesmo assim deve passar pelo jurídico junto
 com D6.
 
+## 2.1 Prazos provisórios em uso (L9b, 2026-11-02)
+
+**Provisórios até a decisão D6 (jurídico).** Ficam em `src/server/retention.ts`;
+mudar o valor ali muda o expurgo. Onde havia dúvida, o prazo ficou do lado de guardar
+mais tempo o que pode servir de prova, e de apagar cedo o que é só operacional.
+
+| Dado | Prazo provisório | O que acontece | Onde |
+| --- | --- | --- | --- |
+| Comprador do pedido (`buyerName`, `buyerEmail`, `buyerPhone`), participantes (`OrderItem.attendees`) e titular do ingresso (`holderName`, `holderEmail`) | **5 anos após o fim do evento** (prazo usual de guarda fiscal e de reclamação de consumo) | troca por marcador (`Conta excluída`, `excluido+<id>@anonimo.invalid`), marca `piiRedactedAt`; valores, datas e status ficam. Pedidos em `PENDING_PAYMENT`, `REFUND_PENDING` ou `DISPUTED` esperam | expurgo |
+| Leituras do check-in (`TicketCheckin`) | **180 dias após o fim do evento** (janela de contestação do pagamento) | apaga as leituras; `IssuedTicket.checkedInAt` e o status ficam | expurgo |
+| QR/copia e cola do PIX e link do checkout (`Payment`) | **24 h depois que o pagamento sai de `PENDING`** | apaga os três campos | expurgo |
+| Corpo de webhooks (`PaymentWebhookEvent.payload`) | **180 dias** após o recebimento | vira `{}`; id externo fica para a idempotência | expurgo |
+| E-mails transacionais encerrados (`EmailOutbox`) | **90 dias** após a criação | apaga a linha | expurgo |
+| Convites de equipe aceitos, revogados ou vencidos | **90 dias** | apaga a linha (o fato fica no `AuditLog`) | expurgo |
+| Sessões | ao vencer | apaga | expurgo |
+| Tokens de senha e de verificação de e-mail, carrinhos sem pedido | **7 dias** após vencer | apaga | expurgo |
+| Razão, repasses, auditoria, aceites de termos, histórico de transferências | **sem expurgo** até D6 | ficam como estão (tabelas só de inserção; transferência ≥ 2 anos pelo decreto) | — |
+
+O expurgo roda no cron de manutenção (`/api/cron/maintenance`,
+`src/server/services/retention-purge.ts`), em lotes de 200 e de forma idempotente.
+
+### Exclusão pelo titular
+
+`/minha-conta` → "Excluir minha conta" (`src/server/services/account-deletion.ts`).
+Confirma com a senha, ou com o e-mail digitado em conta criada pelo Google. Fica
+bloqueada enquanto houver: papel de admin da plataforma; propriedade de organização;
+pedido aguardando pagamento, com reembolso em andamento ou em contestação; ingresso
+válido para evento que ainda não terminou; transferência pendente; pedido de
+cancelamento aberto. Na exclusão, numa transação:
+
+- `User`: nome e e-mail viram marcador; celular, CPF, data de nascimento, vínculo
+  com o Google e verificação de e-mail saem; senha aleatória; `status = SUSPENDED`;
+  `anonymizedAt` preenchido. A linha fica (nunca `DELETE`).
+- Pedidos do titular e ingressos de que ele é titular: anonimizados na hora, sem
+  esperar os 5 anos. Ingresso comprado por ele mas transferido a outra pessoa
+  mantém os dados do novo titular.
+- Apagados: endereço, sessões, tokens, carrinhos sem pedido, vínculos de equipe,
+  e-mails da fila para o endereço e convites abertos para o endereço.
+- Ficam: histórico de transferências (só inserção), aceites de termos, auditoria
+  (`user.anonymized` sem dado pessoal no `metadata`) e textos livres já gravados em
+  pedidos de cancelamento e reembolsos.
+
 ## 3. O que falta para os direitos do titular e o expurgo (proposta para a Fase 2)
 
-Nada disto foi implementado. São pedidos para o lote de schema único da Fase 2
-e para a tarefa L9b, a revisar com os donos de domínio
-(`.claude/agents/banco-de-dados.md` §23).
+Proposta original (2026-10-27). A exclusão, o expurgo e os campos `anonymizedAt`/
+`piiRedactedAt` foram feitos em L9b (§2.1). Continuam pendentes: `DataSubjectRequest`
+(protocolo de pedidos do titular), expurgo de `OrganizerVerification` e de
+organizações encerradas, anonimização do histórico de transferências e da auditoria
+após o prazo legal (exige mudar os gatilhos) e a correção de e-mail verificada.
 
 ### 3.1 Bloqueios atuais no schema
 

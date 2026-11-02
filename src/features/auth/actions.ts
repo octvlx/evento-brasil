@@ -34,6 +34,7 @@ import {
   registerUser,
   updateProfile,
 } from "@/server/services/users";
+import { deleteOwnAccount } from "@/server/services/account-deletion";
 
 async function clientKey() {
   const h = await headers();
@@ -146,6 +147,36 @@ export async function updateProfileAction(
     updateProfile(db, user, parsed.data),
   );
   return result.ok ? { ok: true } : { error: result.error };
+}
+
+export type DeleteAccountState = { error?: string } | undefined;
+
+/** Exclusão da conta pelo titular (L9b): anonimiza, encerra as sessões e sai. */
+export async function deleteAccountAction(
+  _prev: DeleteAccountState,
+  formData: FormData,
+): Promise<DeleteAccountState> {
+  const user = await requireUser("/minha-conta");
+  const key = `delete-account:${user.id}`;
+  const WINDOW = 15 * 60_000;
+  try {
+    failureLimiter.assert(key, 5, WINDOW);
+  } catch (err) {
+    if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+  const result = await toActionResult(() =>
+    deleteOwnAccount(db, user, {
+      password: String(formData.get("password") ?? ""),
+      email: String(formData.get("email") ?? ""),
+    }),
+  );
+  if (!result.ok) {
+    if (result.code === "VALIDATION") failureLimiter.fail(key, WINDOW);
+    return { error: result.error };
+  }
+  await clearSessionCookie();
+  redirect("/conta-excluida");
 }
 
 export async function currentUserSummary() {

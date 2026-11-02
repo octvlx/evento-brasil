@@ -6,7 +6,7 @@ import { assertActive, type Actor } from "../auth/permissions";
 // Exportação dos dados do titular (LGPD art. 18, II e V; R9). Só dados do próprio
 // usuário: nada de senha, hashes de token, token do QR, dados do pagamento no
 // provedor nem dados pessoais de outras pessoas (ex.: quem transferiu um ingresso
-// para o usuário). Exclusão/anonimização aguarda a decisão de retenção (D6).
+// para o usuário). Exclusão/anonimização: services/account-deletion.ts (prazos provisórios até D6).
 
 export const DATA_EXPORT_FORMAT = "evento-brasil/meus-dados@1";
 
