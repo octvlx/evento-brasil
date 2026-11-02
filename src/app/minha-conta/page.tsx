@@ -2,11 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { Download } from "lucide-react";
-import { Card, Skeleton } from "@/components/ui/primitives";
+import { Alert, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { ProfileForm } from "@/features/auth/profile-form";
+import { DeleteAccountForm } from "@/features/auth/delete-account-form";
 import { logoutAction } from "@/features/auth/actions";
 import { requireUser } from "@/server/auth/current";
+import { db } from "@/server/db";
+import { accountDeletionBlockers, DELETION_BLOCKER_TEXT } from "@/server/services/account-deletion";
 import { formatPhoneBR } from "@/lib/br";
 
 export const metadata: Metadata = { title: "Minha conta", robots: { index: false } };
@@ -24,6 +27,10 @@ export default function AccountPage() {
 
 async function Content() {
   const user = await requireUser("/minha-conta");
+  const [blockers, account] = await Promise.all([
+    accountDeletionBlockers(db, user.id),
+    db.user.findUniqueOrThrow({ where: { id: user.id }, select: { googleSubject: true } }),
+  ]);
   return (
     <div className="mt-6 space-y-6">
       <Card className="p-6">
@@ -43,12 +50,30 @@ async function Content() {
           <span className="text-xs text-muted-foreground">Arquivo JSON com perfil, pedidos, ingressos, transferências e aceites de termos.</span>
         </div>
         <p className="text-sm text-muted-foreground">
-          Para corrigir ou excluir seus dados, use o canal indicado na{" "}
+          Para corrigir dados que não estão no formulário acima, use o canal indicado na{" "}
           <Link href="/privacidade" className="text-secondary underline">
             política de privacidade
           </Link>
-          . Registros fiscais e financeiros podem precisar ser mantidos pelo prazo legal.
+          .
         </p>
+      </Card>
+      <Card className="space-y-3 border-destructive/30 p-6" data-testid="delete-account">
+        <h2 className="font-display text-lg font-bold">Excluir minha conta</h2>
+        <p className="text-sm text-muted-foreground">
+          Apagamos seu nome, e-mail, celular, CPF, endereço e sessões, e tiramos seu nome dos pedidos e ingressos. Valores, datas e status das compras continuam guardados de forma anônima pelo prazo legal, assim como o histórico de transferências e os registros de auditoria.
+        </p>
+        {blockers.length ? (
+          <Alert variant="warning">
+            <p className="font-semibold">Ainda não dá para excluir a conta:</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5">
+              {blockers.map((b) => (
+                <li key={b}>{DELETION_BLOCKER_TEXT[b]}</li>
+              ))}
+            </ul>
+          </Alert>
+        ) : (
+          <DeleteAccountForm confirmWithEmail={Boolean(account.googleSubject)} />
+        )}
       </Card>
       <div className="flex flex-wrap gap-3">
         <Link href="/meus-ingressos" className={buttonVariants({ variant: "outline" })}>

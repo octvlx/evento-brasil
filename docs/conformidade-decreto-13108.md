@@ -82,7 +82,7 @@ Pedidos no formato de COORDENACAO.md, revisados pelos donos de domínio:
 | L8a | `openChangeRefundWindow(eventId)`: reembolso integral (com taxas) a pedido do comprador até `refundUntil`, fora da regra normal; também para ingressos transferidos (paga o pagador original — D7) | pagamentos-financeiro | Fase 2, D2 |
 | L8b | `updateEvent` detecta alteração relevante em evento com vendas, exige motivo, grava `EventChange`, chama L8a e notifica compradores | area-organizador | L8a |
 | L5b | Pedido de cancelamento com protocolo, prazos e decisão (aprovar → `requestCustomerRefund`/`adminRefundOrder`) | pagamentos-financeiro | Fase 2 |
-| L9b | Exportar meus dados; excluir/anonimizar conta preservando pedidos, razão, auditoria e histórico de transferência pelo prazo legal; cron de expurgo | banco-de-dados (expurgo) + paginas-publicas (`/minha-conta`) | D6 |
+| L9b | Exportar meus dados; excluir/anonimizar conta preservando pedidos, razão, auditoria e histórico de transferência pelo prazo legal; cron de expurgo. **Feito com prazos provisórios** (`src/server/retention.ts`, `docs/dados-pessoais-e-retencao.md` §2.1); D6 confirma ou ajusta | banco-de-dados (expurgo) + paginas-publicas (`/minha-conta`) | D6 (prazos finais) |
 | L10a | Aceite registrado de termos no cadastro, checkout e cadastro de organizador; bloqueio se houver versão nova | paginas-publicas + area-organizador | Fase 2, D8 |
 
 ### Fase 4 — Telas, admin e verificação

@@ -42,6 +42,9 @@ model User {
   suspendedReason String?
   // Contas de demonstração do seed: bloqueadas em produção.
   isDemoAccount   Boolean      @default(false)
+  // Exclusão pelo titular (L9b): a linha fica, anonimizada, porque pedidos, ingressos
+  // e auditoria apontam para ela. Nunca DELETE.
+  anonymizedAt    DateTime?    @db.Timestamptz(3)
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
@@ -567,6 +570,8 @@ model Order {
   buyerName              String
   buyerEmail             String
   buyerPhone             String?
+  // Comprador e participantes anonimizados (exclusão da conta ou expurgo por prazo).
+  piiRedactedAt          DateTime?   @db.Timestamptz(3)
   checkoutReviewRequired Boolean     @default(false)
   checkoutReviewedAt     DateTime?   @db.Timestamptz(3)
   idempotencyKey         String
@@ -850,6 +855,8 @@ model IssuedTicket {
   sequence         Int
   holderName       String?
   holderEmail      String?
+  // Titular anonimizado (exclusão da conta ou expurgo por prazo).
+  piiRedactedAt    DateTime?               @db.Timestamptz(3)
   validationToken  String                  @unique
   status           TicketStatus            @default(VALID)
   revokedAt        DateTime?               @db.Timestamptz(3)
