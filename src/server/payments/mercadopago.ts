@@ -89,7 +89,7 @@ export async function sellerCheckoutReadiness(db: Db, organizationId: string): P
 }
 const amount = (cents: number) => Number((cents / 100).toFixed(2));
 const cents = (value: number) => Math.round(value * 100);
-function providerDate(value: string | undefined) {
+function providerDate(value: string | null | undefined) {
   if (!value) return undefined;
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) throw providerError();
@@ -103,22 +103,33 @@ const preferenceSchema = z.object({
   expiration_date_to: z.string().optional(),
 });
 
+// O Mercado Pago devolve `null` (não ausência) em campos sem valor: `date_of_expiration`
+// é null em saldo em conta e cartão. Recusar null deixava pagamentos aprovados sem confirmação.
 const paymentSchema = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
   external_reference: z.string().min(1),
   status: z.string().min(1),
-  status_detail: z.string().optional(),
+  status_detail: z.string().nullish(),
   currency_id: z.literal("BRL"),
   transaction_amount: z.number().nonnegative(),
-  date_of_expiration: z.string().optional(),
-  fee_details: z.array(z.object({ amount: z.number().nonnegative() })).optional(),
+  date_of_expiration: z.string().nullish(),
+  fee_details: z.array(z.object({ amount: z.number().nonnegative(), type: z.string().nullish() })).nullish(),
   point_of_interaction: z.object({
     transaction_data: z.object({
-      qr_code: z.string().optional(),
-      qr_code_base64: z.string().optional(),
-      date_of_expiration: z.string().optional(),
-    }).optional(),
-  }).optional(),
+      qr_code: z.string().nullish(),
+      qr_code_base64: z.string().nullish(),
+      date_of_expiration: z.string().nullish(),
+    }).nullish(),
+  }).nullish(),
+});
+const merchantOrderSearchSchema = z.object({
+  elements: z.array(z.object({
+    external_reference: z.string().nullish(),
+    payments: z.array(z.object({
+      id: z.union([z.string(), z.number()]).transform(String),
+      status: z.string().nullish(),
+    })).nullish(),
+  })).nullish(),
 });
 const webhookPayloadSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -178,7 +189,7 @@ async function requestJson(
   return body;
 }
 
-function mapStatus(status: string, detail: string | undefined): ProviderPaymentStatus {
+function mapStatus(status: string, detail: string | null | undefined): ProviderPaymentStatus {
   switch (status) {
     case "approved":
       return "PAID";
@@ -215,12 +226,27 @@ function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
       ? `${payment.status}:${payment.status_detail}`
       : payment.status,
     amountCents: cents(payment.transaction_amount),
-    processingFeeCents: fees ? fees.reduce((total, fee) => total + cents(fee.amount), 0) : null,
-    pixCopyPaste: payment.point_of_interaction?.transaction_data?.qr_code,
-    pixQrCodeBase64: payment.point_of_interaction?.transaction_data?.qr_code_base64,
+    // `application_fee` é a comissão da plataforma (marketplace_fee), já lançada na venda:
+    // somá-la como taxa de processamento contaria a comissão duas vezes.
+    processingFeeCents: fees
+      ? fees.filter((fee) => fee.type !== "application_fee").reduce((total, fee) => total + cents(fee.amount), 0)
+      : null,
+    pixCopyPaste: payment.point_of_interaction?.transaction_data?.qr_code ?? undefined,
+    pixQrCodeBase64: payment.point_of_interaction?.transaction_data?.qr_code_base64 ?? undefined,
     expiresAt: providerDate(expiration),
   };
 }
+
+const SNAPSHOT_PRIORITY: Record<ProviderPaymentStatus, number> = {
+  PAID: 0,
+  REFUNDED: 1,
+  CHARGED_BACK: 2,
+  DISPUTED: 3,
+  PENDING: 4,
+  FAILED: 5,
+  CANCELLED: 6,
+  EXPIRED: 7,
+};
 
 export class MercadoPagoAdapter implements PaymentProviderAdapter {
   readonly id = "mercadopago";
@@ -363,33 +389,56 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
     return toSnapshot(raw);
   }
 
-  async findPaymentByReference(idempotencyKey: string) {
-    const payment = await this.db.payment.findUnique({
-      where: { idempotencyKey },
-      select: {
-        id: true,
-        providerPreferenceId: true,
-        order: { select: { organizationId: true } },
-      },
-    });
-    if (!payment || !payment.providerPreferenceId) throw providerError();
-    const accessToken = await getMercadoPagoAccessToken(
-      this.db,
-      payment.order.organizationId,
-    );
-    const search = z.object({
-      results: z.array(z.unknown()),
-    }).safeParse(await requestJson(
-      `/v1/payments/search?external_reference=${encodeURIComponent(payment.id)}&limit=2`,
+  /**
+   * Pagamento do Checkout Pro de uma tentativa nossa; null = nenhum pagamento no checkout
+   * até agora (não prova ausência). A busca de pagamentos (`/v1/payments/search`) pode não
+   * listar pagamentos recentes ou de usuários de teste; a merchant order da preferência
+   * lista todos os pagamentos daquele checkout. Cada candidato é relido em
+   * `/v1/payments/{id}` e precisa ter a nossa referência externa.
+   */
+  async findCheckoutPayment(idempotencyKey: string) {
+    const { payment, accessToken } = await this.checkoutContext(idempotencyKey);
+    const merchantOrders = merchantOrderSearchSchema.safeParse(await requestJson(
+      `/merchant_orders/search?preference_id=${encodeURIComponent(payment.providerPreferenceId)}`,
       accessToken,
     ));
-    if (!search.success) throw providerError();
-    if (search.data.results.length > 1) throw providerError();
-    if (search.data.results.length === 1) return toSnapshot(search.data.results[0]);
+    if (!merchantOrders.success) throw providerError();
+    const ids = new Set<string>();
+    for (const order of merchantOrders.data.elements ?? []) {
+      if (order.external_reference && order.external_reference !== payment.id) continue;
+      for (const candidate of order.payments ?? []) ids.add(candidate.id);
+    }
+    if (ids.size === 0) {
+      const search = z.object({
+        results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String) }).passthrough()),
+      }).safeParse(await requestJson(
+        `/v1/payments/search?external_reference=${encodeURIComponent(payment.id)}&limit=10`,
+        accessToken,
+      ));
+      if (!search.success) throw providerError();
+      for (const result of search.data.results) ids.add(result.id);
+    }
+    if (ids.size > 10) throw providerError();
+    if (ids.size === 0) return null;
+    const snapshots: ProviderPaymentSnapshot[] = [];
+    for (const id of ids) {
+      const snapshot = toSnapshot(await requestJson(`/v1/payments/${encodeURIComponent(id)}`, accessToken));
+      if (snapshot.externalReference === payment.id) snapshots.push(snapshot);
+    }
+    if (snapshots.length === 0) throw providerError();
+    // Um checkout pode ter várias tentativas (cartão recusado, depois saldo aprovado):
+    // a tentativa que movimentou dinheiro prevalece sobre as recusadas.
+    return snapshots.sort((a, b) => SNAPSHOT_PRIORITY[a.status] - SNAPSHOT_PRIORITY[b.status])[0];
+  }
 
+  async findPaymentByReference(idempotencyKey: string) {
+    const found = await this.findCheckoutPayment(idempotencyKey);
+    if (found) return found;
+    // Ausência só é definitiva depois que a preferência venceu há mais de um dia.
+    const { payment, accessToken } = await this.checkoutContext(idempotencyKey);
     const preference = z.object({
       external_reference: z.string(),
-      expiration_date_to: z.string().optional(),
+      expiration_date_to: z.string().nullish(),
     }).safeParse(await requestJson(
       `/checkout/preferences/${encodeURIComponent(payment.providerPreferenceId)}`,
       accessToken,
@@ -402,6 +451,20 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       throw providerError();
     }
     return null;
+  }
+
+  private async checkoutContext(idempotencyKey: string) {
+    const payment = await this.db.payment.findUnique({
+      where: { idempotencyKey },
+      select: {
+        id: true,
+        providerPreferenceId: true,
+        order: { select: { organizationId: true } },
+      },
+    });
+    if (!payment || !payment.providerPreferenceId) throw providerError();
+    const accessToken = await getMercadoPagoAccessToken(this.db, payment.order.organizationId);
+    return { payment: { id: payment.id, providerPreferenceId: payment.providerPreferenceId }, accessToken };
   }
 
   async refundPayment(input: {
@@ -482,11 +545,15 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
     if (payload.data?.id && String(payload.data.id).toLowerCase() !== dataId.toLowerCase()) {
       return { valid: false, reason: "id do evento divergente" };
     }
+    const eventType = payload.action ?? payload.type ?? "unknown";
+    // `merchant_order` e outros tópicos trazem em data.id um id que não é de pagamento:
+    // consultá-lo em /v1/payments falharia e o provedor reenviaria o aviso sem fim.
+    const isPayment = payload.type === "payment" || eventType.startsWith("payment.");
     return {
       valid: true,
       externalEventId: String(payload.id ?? `${dataId}:${timestamp}`),
-      eventType: payload.action ?? payload.type ?? "unknown",
-      providerPaymentId: dataId,
+      eventType,
+      providerPaymentId: isPayment ? dataId : null,
       providerAccountId: String(payload.user_id),
       payload,
     };

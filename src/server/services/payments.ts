@@ -189,13 +189,9 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     where: { provider_providerPaymentId: { provider: adapter.id, providerPaymentId: snapshot.providerPaymentId } },
     select: { id: true, orderId: true, order: { select: { eventId: true } } },
   });
+  // A referência externa é o nosso Payment.id (uma tentativa = uma preferência do Checkout Pro).
   const ref = linked ?? await db.payment.findFirst({
-    where: {
-      id: snapshot.externalReference,
-      provider: adapter.id,
-      status: "PENDING",
-      providerPaymentId: null,
-    },
+    where: { id: snapshot.externalReference, provider: adapter.id },
     select: { id: true, orderId: true, order: { select: { eventId: true } } },
   });
   if (!ref) return "unknown_payment";
@@ -205,9 +201,25 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     await lockEvent(tx, ref.order.eventId);
     await lockOrder(tx, ref.orderId);
     const payment = await tx.payment.findUniqueOrThrow({ where: { id: ref.id } });
-    if (payment.providerPaymentId && payment.providerPaymentId !== snapshot.providerPaymentId) return "duplicate_payment";
-    if (!payment.providerPaymentId && payment.status !== "PENDING") return "no_change";
-    if (!payment.providerPaymentId) {
+    const unsettled = ["PENDING", "FAILED", "CANCELLED", "EXPIRED"].includes(payment.status);
+    if (payment.providerPaymentId && payment.providerPaymentId !== snapshot.providerPaymentId) {
+      // Outra tentativa no mesmo checkout: o comprador pode ter um cartão recusado e
+      // depois pagar com saldo. Só a tentativa aprovada substitui a vinculada.
+      if (snapshot.status !== "PAID") return "no_change";
+      if (!unsettled) {
+        await audit(tx, {
+          action: "payment.duplicate_provider_payment",
+          entityType: "Payment",
+          entityId: payment.id,
+          metadata: { providerPaymentId: snapshot.providerPaymentId },
+        });
+        return "duplicate_payment";
+      }
+      await tx.payment.update({ where: { id: payment.id }, data: { providerPaymentId: snapshot.providerPaymentId, failureReason: null } });
+    } else if (!payment.providerPaymentId) {
+      // Encerrada sem vínculo (ex.: reserva expirada): só um pagamento aprovado a reabre,
+      // para nunca ignorar dinheiro recebido; o ramo PAID trata o pagamento tardio.
+      if (payment.status !== "PENDING" && !(snapshot.status === "PAID" && unsettled)) return "no_change";
       await tx.payment.update({
         where: { id: payment.id },
         data: { providerPaymentId: snapshot.providerPaymentId },

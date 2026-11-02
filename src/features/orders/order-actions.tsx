@@ -6,20 +6,39 @@ import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/primitives";
 import { refreshPaymentStatusAction, requestRefundAction } from "./actions";
 
-/** Reconsulta o provedor enquanto o pedido está pendente (nunca confia no redirect). */
+/**
+ * Reconsulta o provedor enquanto o pedido está pendente (nunca confia no redirect):
+ * logo ao abrir e depois a cada 12 s por até 6 min; nos intervalos, só relê o banco.
+ */
 export function PendingPoller({ orderId }: { orderId: string }) {
   const router = useRouter();
+  const [check, setCheck] = useState<Awaited<ReturnType<typeof refreshPaymentStatusAction>> | null>(null);
+  const [pending, start] = useTransition();
   useEffect(() => {
     let n = 0;
-    const t = setInterval(async () => {
+    const tick = async () => {
       n++;
-      if (n % 4 === 0) await refreshPaymentStatusAction(orderId);
+      if (n === 1 || n % 4 === 0) setCheck(await refreshPaymentStatusAction(orderId));
       else router.refresh();
-      if (n > 120) clearInterval(t);
+    };
+    void tick();
+    const t = setInterval(() => {
+      if (n > 120) return clearInterval(t);
+      void tick();
     }, 3000);
     return () => clearInterval(t);
   }, [orderId, router]);
-  return null;
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-3 text-sm" aria-live="polite">
+      <Button size="sm" variant="outline" disabled={pending} onClick={() => start(async () => setCheck(await refreshPaymentStatusAction(orderId)))}>
+        {pending ? "Verificando…" : "Verificar pagamento agora"}
+      </Button>
+      {check === "unavailable" && (
+        <span className="text-warning">Não foi possível consultar o Mercado Pago agora. Tentaremos de novo em instantes.</span>
+      )}
+      {check === "rate_limited" && <span className="text-muted-foreground">Aguarde um pouco antes de verificar de novo.</span>}
+    </div>
+  );
 }
 
 export function RefundButton({ orderId }: { orderId: string }) {

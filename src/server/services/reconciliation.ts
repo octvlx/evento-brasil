@@ -7,7 +7,8 @@
 import "server-only";
 import type { Db } from "../db";
 import type { PaymentProviderAdapter } from "../payments/types";
-import { applyPaymentSnapshot, syncPaymentFromProvider } from "./payments";
+import { financeLog } from "./finance-log";
+import { applyPaymentSnapshot, syncPaymentFromProvider, type ApplyOutcome } from "./payments";
 import { resumeRefund, retryFailedRefunds } from "./refunds";
 
 export interface ReconciliationReport {
@@ -155,6 +156,45 @@ export async function reconcilePayments(
   report.refundsAwaitingAdminDecision = retry.awaitingAdminDecision;
   report.errors.push(...retry.errors);
   return report;
+}
+
+export type OrderPaymentCheck = "updated" | "unchanged" | "unavailable";
+const NO_PROGRESS: ApplyOutcome[] = ["no_change", "already_processed", "unknown_payment"];
+
+/**
+ * Reconsulta sob demanda as tentativas de um pedido que aguarda pagamento, sem depender
+ * do webhook. Só lê o provedor e aplica o status autoritativo pelo mesmo caminho do
+ * webhook (idempotente, sob trava do pedido): não cria cobrança nem reembolso, e só
+ * age em pedidos PENDING_PAYMENT, onde a confirmação não dispara reembolso automático.
+ * A autorização (dono do pedido) e o limite de frequência ficam com quem chama.
+ */
+export async function reconcileOrderPayments(db: Db, adapter: PaymentProviderAdapter, orderId: string): Promise<OrderPaymentCheck> {
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    select: {
+      status: true,
+      // FAILED com checkout: o comprador pode ter pagado depois de um cartão recusado.
+      payments: { where: { provider: adapter.id, status: { in: ["PENDING", "FAILED"] } }, orderBy: { createdAt: "asc" } },
+    },
+  });
+  if (!order || order.status !== "PENDING_PAYMENT") return "unchanged";
+  let result: OrderPaymentCheck = "unchanged";
+  for (const p of order.payments) {
+    try {
+      let outcome: ApplyOutcome | null = null;
+      if (adapter.findCheckoutPayment && p.providerPreferenceId) {
+        const snapshot = await adapter.findCheckoutPayment(p.idempotencyKey);
+        if (snapshot) outcome = await applyPaymentSnapshot(db, adapter, snapshot);
+      } else if (p.providerPaymentId && p.status === "PENDING") {
+        outcome = await syncPaymentFromProvider(db, adapter, p.providerPaymentId);
+      }
+      if (outcome && !NO_PROGRESS.includes(outcome) && result !== "unavailable") result = "updated";
+    } catch (err) {
+      result = "unavailable";
+      financeLog("warn", "reconciliation.order_check_failed", { orderId, paymentId: p.id }, { message: String(err).slice(0, 300) });
+    }
+  }
+  return result;
 }
 
 export interface InvariantViolation {
