@@ -256,7 +256,29 @@ trava do pedido; nenhum confia nos parâmetros `status=approved` do redirect):
 `/v1/payments/search` não listou o pagamento aprovado de teste. A merchant order
 listou. Por isso a busca usa a merchant order primeiro.
 
-### Túnel do Cloudflare em desenvolvimento
+### Compra de teste com cartão (procedimento oficial)
+
+Fonte: documentação do Checkout Pro, páginas "Realizar compras de teste" e "Cartões de teste".
+
+1. Vendedor conectado com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true`: o token começa com
+   `TEST-` e pertence a um **usuário de teste vendedor**.
+2. Faça o pedido no site e abra o checkout numa **janela anônima**. No Mercado Pago,
+   entre como o **usuário de teste comprador** da mesma aplicação, e não com sua conta
+   real. Se pedirem código por e-mail, use os 6 dígitos indicados para a conta de teste.
+3. Use um cartão de **crédito** de teste: Mastercard `5480 8328 0103 3311` ou Visa
+   `4235 6477 2802 5682`, CVV `123`, validade `11/30`. Titular `APRO` aprova, `OTHE`
+   recusa, `CONT` fica pendente. CPF `12345678909`.
+   O cartão Elo de teste é de **débito**, e o site aceita só crédito.
+4. Cartão real não funciona no sandbox. Se o checkout mostrar `/congrats/recover/error/`
+   e a merchant order da preferência continuar sem pagamentos, o erro foi no checkout
+   (conta, cartão ou sessão), sem cobrança. Não foi recusa do emissor.
+5. Confira `Payment.status`, `IssuedTicket` e `PaymentWebhookEvent` no banco. A página
+   do pedido deve mostrar "Pagamento confirmado!" só depois disso.
+
+Uma preferência que já recebeu pagamento não é reaberta por "Voltar ao pagamento". O
+site confere o checkout no provedor antes de reaproveitá-lo.
+
+
 
 A `notification_url` e as `back_urls` saem de `APP_URL` **no momento em que a
 preferência é criada**. Uma preferência criada com um túnel antigo continua

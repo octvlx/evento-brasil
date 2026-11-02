@@ -3,7 +3,7 @@
 // funcionar pelo webhook e também sem ele (reconciliação pela página do pedido).
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaymentProviderAdapter, ProviderPaymentSnapshot } from "@/server/payments/types";
-import { applyPaymentSnapshot, handlePaymentWebhook } from "@/server/services/payments";
+import { applyPaymentSnapshot, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { reconcileOrderPayments } from "@/server/services/reconciliation";
 import { buy, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
@@ -206,5 +206,24 @@ describe("Checkout Pro: confirmação com e sem webhook", () => {
     const a = checkoutAdapter();
     expect(await reconcileOrderPayments(db, a, order.id)).toBe("unchanged");
     expect(a.findCheckoutPayment).not.toHaveBeenCalled();
+  });
+
+  it("'Voltar ao pagamento' não reabre um checkout que já recebeu pagamento (evita cobrança dupla)", async () => {
+    const { buyer, order, payment } = await checkoutOrder();
+    const a = checkoutAdapter();
+    // Nada pago ainda: devolve a mesma preferência, sem criar outra cobrança.
+    a.findCheckoutPayment.mockResolvedValueOnce(null);
+    expect((await startPayment(db, a, buyer, order.id, "CREDIT_CARD")).id).toBe(payment.id);
+    // Cartão recusado no checkout: ainda pode tentar de novo na mesma preferência.
+    a.findCheckoutPayment.mockResolvedValueOnce(snapshot(payment.id, order.totalCents, { providerPaymentId: "1", status: "FAILED", rawStatus: "rejected:cc_rejected_other_reason" }));
+    expect((await startPayment(db, a, buyer, order.id, "CREDIT_CARD")).id).toBe(payment.id);
+    // Provedor indisponível: recusa em vez de reabrir às cegas.
+    a.findCheckoutPayment.mockRejectedValueOnce(new Error("503"));
+    await expect(startPayment(db, a, buyer, order.id, "CREDIT_CARD")).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    // Já pago (webhook atrasado): confirma o pedido e recusa reabrir o checkout.
+    a.findCheckoutPayment.mockResolvedValueOnce(snapshot(payment.id, order.totalCents));
+    await expect(startPayment(db, a, buyer, order.id, "CREDIT_CARD")).rejects.toMatchObject({ code: "INVALID_STATE" });
+    expect(await state(order.id)).toMatchObject({ order: { status: "PAID" }, tickets: 2 });
+    expect(a.createPayment).not.toHaveBeenCalled();
   });
 });

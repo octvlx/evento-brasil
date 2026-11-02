@@ -2,7 +2,7 @@
 // status autoritativo do provedor. Um redirect de checkout NUNCA confirma
 // pagamento; só `getPayment` no provedor, após webhook verificado ou consulta.
 import "server-only";
-import type { Prisma } from "@/generated/prisma/client";
+import type { Payment, Prisma } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
@@ -72,7 +72,7 @@ export async function startPayment(
     });
     return { kind: "new", payment, order } as const;
   }, TX_OPTIONS);
-  if (decision.kind === "reuse") return decision.payment;
+  if (decision.kind === "reuse") return guardReusedCheckout(db, adapter, decision.payment);
   if (decision.kind === "await") return awaitPixInFlight(db, decision.paymentId);
   const { payment, order } = decision;
 
@@ -125,6 +125,29 @@ export async function startPayment(
   // Resultado síncrono (ex.: cartão) é revalidado na consulta autoritativa.
   if (created.status !== "PENDING" && created.providerPaymentId) await syncPaymentFromProvider(db, adapter, created.providerPaymentId);
   return db.payment.findUniqueOrThrow({ where: { id: updated.id } });
+}
+
+/**
+ * Antes de devolver o comprador a um checkout hospedado já criado, confere se ele já
+ * recebeu pagamento. Com o webhook atrasado, um pedido pago continuava pendente e
+ * "Voltar ao pagamento" reabria a mesma preferência, permitindo cobrar de novo.
+ * Sem resposta do provedor, recusa: reabrir às cegas arrisca cobrança dupla.
+ */
+async function guardReusedCheckout(db: Db, adapter: PaymentProviderAdapter, payment: Payment) {
+  if (!payment.providerPreferenceId || !adapter.findCheckoutPayment) return payment;
+  let snapshot: ProviderPaymentSnapshot | null;
+  try {
+    snapshot = await adapter.findCheckoutPayment(payment.idempotencyKey);
+  } catch {
+    throw new AppError("PROVIDER_ERROR", "Não foi possível conferir o pagamento com o provedor agora. Tente novamente em instantes.");
+  }
+  if (!snapshot || snapshot.status === "FAILED" || snapshot.status === "CANCELLED") return payment;
+  await applyPaymentSnapshot(db, adapter, snapshot);
+  throw invalidState(
+    snapshot.status === "PENDING"
+      ? "Há um pagamento em análise para este pedido. Acompanhe o resultado na página do pedido."
+      : "Este pedido já foi pago. Acompanhe a confirmação na página do pedido.",
+  );
 }
 
 const PIX_IN_FLIGHT_WAIT_MS = 10_000;
