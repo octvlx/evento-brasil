@@ -5,6 +5,7 @@ import type { Db } from "@/server/db";
 const oauth = vi.hoisted(() => ({
   getForOrganization: vi.fn(async () => "seller-access-token"),
   getForUser: vi.fn(async () => "seller-access-token"),
+  sandboxTokens: vi.fn(() => false),
 }));
 
 const envOverrides = vi.hoisted(() => ({}) as { NODE_ENV?: string });
@@ -20,6 +21,7 @@ vi.mock("@/server/env", () => ({
 vi.mock("@/server/payments/mercadopago-oauth", () => ({
   getMercadoPagoAccessToken: oauth.getForOrganization,
   getMercadoPagoAccessTokenForUser: oauth.getForUser,
+  sandboxTokens: oauth.sandboxTokens,
 }));
 
 import { MercadoPagoAdapter } from "@/server/payments/mercadopago";
@@ -99,6 +101,21 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(body.marketplace_fee).toBe(5);
     expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "visa" }]);
     expect(body.notification_url).toBe("https://events.example/api/webhooks/mercadopago");
+    expect(body.payer).toEqual({ email: "buyer@example.com" });
+  });
+
+  it("omits the buyer email from the preference with sandbox seller credentials", async () => {
+    oauth.sandboxTokens.mockReturnValue(true);
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([{ id: "pix" }]))
+      .mockResolvedValueOnce(Response.json({
+        id: "preference-123",
+        init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=live",
+        sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=test",
+      }));
+    await adapter().createPayment(pixInput());
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body));
+    expect(body).not.toHaveProperty("payer");
   });
 
   const pixInput = () => ({

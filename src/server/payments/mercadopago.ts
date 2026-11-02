@@ -8,6 +8,7 @@ import { AppError } from "../errors";
 import {
   getMercadoPagoAccessToken,
   getMercadoPagoAccessTokenForUser,
+  sandboxTokens,
 } from "./mercadopago-oauth";
 import {
   PaymentNotStartedError,
@@ -325,7 +326,9 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
         currency_id: "BRL",
         unit_price: amount(input.amountCents),
       }],
-      payer: { email: input.payer.email },
+      // Sandbox: o e-mail do comprador no Evento Brasil não é de um usuário de teste do
+      // Mercado Pago e diverge da conta logada no checkout, que então recusa o cartão.
+      ...(sandboxTokens() ? {} : { payer: { email: input.payer.email } }),
       external_reference: input.paymentId,
       marketplace_fee: amount(input.marketplace.applicationFeeCents),
       payment_methods: {

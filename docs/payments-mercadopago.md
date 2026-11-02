@@ -237,7 +237,10 @@ sandbox do vendedor. Com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true` (fora de
 produção), a conexão em `/organizador/configuracoes` faz isso; depois de mudar a
 variável, autorize o vendedor novamente. Em produção a aplicação não inicia com
 essa variável ligada. A compra de teste é feita logado como o **comprador de
-teste** da aplicação, numa janela anônima. Em 02/11/2026, um pagamento com
+teste** da aplicação, numa janela anônima. Nesse modo a preferência sai **sem
+`payer.email`**: o e-mail do comprador no Evento Brasil não é de um usuário de teste
+do Mercado Pago e diverge da conta logada no checkout. Em produção o e-mail continua
+sendo enviado. Em 02/11/2026, um pagamento com
 credenciais de teste enviou webhooks `payment.created` assinados para a
 `notification_url` da preferência. Mesmo assim, não dependa disso: a página do
 pedido reconcilia sozinha (abaixo).
@@ -287,7 +290,9 @@ Fonte: documentação do Checkout Pro, páginas "Realizar compras de teste" e "C
 3. Use um cartão de **crédito** de teste: Mastercard `5480 8328 0103 3311` ou Visa
    `4235 6477 2802 5682`, CVV `123`, validade `11/30`. Titular `APRO` aprova, `OTHE`
    recusa, `CONT` fica pendente. CPF `12345678909`.
-   O cartão Elo de teste é de **débito**, e o site aceita só crédito.
+   Digite o cartão como **cartão novo**: um cartão já salvo na conta de teste usa o
+   titular com que foi cadastrado, e qualquer nome diferente de `APRO` não aprova.
+   O cartão Elo de teste é pré-pago.
 4. Cartão real não funciona no sandbox. Se o checkout mostrar `/congrats/recover/error/`
    e a merchant order da preferência continuar sem pagamentos, o erro foi no checkout
    (conta, cartão ou sessão), sem cobrança. Não foi recusa do emissor.
