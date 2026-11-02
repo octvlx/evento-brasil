@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { acceptSignupTerms, emailLink } from "./helpers";
+import { acceptSignupTerms, confirmEmail, emailLink } from "./helpers";
 test("email recovery: console verification, reset, session revocation and safe login", async ({
   page,
 }) => {
@@ -17,17 +17,7 @@ test("email recovery: console verification, reset, session revocation and safe l
   await acceptSignupTerms(page);
   await page.getByRole("button", { name: "Criar conta", exact: true }).click();
   await page.waitForURL(/\/confirmar-email/);
-  await page.goto(
-    await emailLink(email, "EMAIL_VERIFICATION", "confirmar-email"),
-  );
-  await page
-    .getByRole("button", { name: "Confirmar meu e-mail", exact: true })
-    .click();
-  await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "E-mail confirmado com sucesso." }),
-  ).toBeVisible();
+  await confirmEmail(page, email);
   await page.goto("/esqueci-minha-senha");
   await page.getByLabel("E-mail da sua conta").fill(email);
   await page
