@@ -29,7 +29,8 @@ test("organizador reenvia, revoga e altera papel; convidado aceita e recusa", as
   await member.goto("/registrar?next=/");
   await member.getByLabel("Nome completo").fill("Membro E2E");
   await member.getByLabel("E-mail", { exact: true }).fill(memberEmail);
-  await member.getByLabel("Senha", { exact: true }).fill("senha-segura-e2e");
+  await member.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
+  await member.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
   await acceptSignupTerms(member);
   await member.getByRole("button", { name: "Criar conta" }).click();
   await member.waitForURL((url) => !url.pathname.startsWith("/registrar"));

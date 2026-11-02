@@ -29,9 +29,9 @@ function eventInput(categoryId: string, cityId: string) {
 
 describe("A — organizador: cadastro → aprovação → evento → publicação", () => {
   it("percorre o fluxo completo com moderação", async () => {
-    const user = await registerUser(db, { name: "Ana Organiza", email: "Ana@Example.com", password: "senha-forte-1", acceptTerms: true, acceptPrivacy: true });
+    const user = await registerUser(db, { name: "Ana Organiza", email: "Ana@Example.com", password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91", acceptTerms: true, acceptPrivacy: true });
     expect(user.email).toBe("ana@example.com");
-    expect(await authenticate(db, "ana@example.com", "senha-forte-1", { production: false })).not.toBeNull();
+    expect(await authenticate(db, "ana@example.com", "Ingresso#Forte91", { production: false })).not.toBeNull();
     expect(await authenticate(db, "ana@example.com", "errada", { production: false })).toBeNull();
 
     const org = await submitOrganizerApplication(db, user, {
@@ -124,7 +124,7 @@ describe("A — organizador: cadastro → aprovação → evento → publicaçã
     await expect(
       submitOrganizerApplication(db, user, { name: "X", legalType: "INDIVIDUAL", legalName: "X Y", document: "123.456.789-00", contactEmail: "x@y.com" }),
     ).rejects.toThrow();
-    await registerUser(db, { name: "Dup", email: "dup@example.com", password: "12345678", acceptTerms: true, acceptPrivacy: true });
-    await expect(registerUser(db, { name: "Dup", email: "DUP@example.com", password: "12345678", acceptTerms: true, acceptPrivacy: true })).rejects.toMatchObject({ code: "CONFLICT" });
+    await registerUser(db, { name: "Dup", email: "dup@example.com", password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91", acceptTerms: true, acceptPrivacy: true });
+    await expect(registerUser(db, { name: "Dup", email: "DUP@example.com", password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91", acceptTerms: true, acceptPrivacy: true })).rejects.toMatchObject({ code: "CONFLICT" });
   });
 });

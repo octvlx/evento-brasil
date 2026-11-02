@@ -6,6 +6,7 @@ import { Alert, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { ProfileForm } from "@/features/auth/profile-form";
 import { DeleteAccountForm } from "@/features/auth/delete-account-form";
+import { ChangePasswordForm } from "@/features/auth/change-password-form";
 import { logoutAction } from "@/features/auth/actions";
 import { requireUser } from "@/server/auth/current";
 import { db } from "@/server/db";
@@ -36,6 +37,19 @@ async function Content() {
       <Card className="p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Dados pessoais</h2>
         <ProfileForm name={user.name} email={user.email} phone={user.phone ? formatPhoneBR(user.phone) : ""} />
+      </Card>
+      <Card className="space-y-3 p-6" data-testid="account-security">
+        <h2 className="font-display text-lg font-bold">Segurança da conta</h2>
+        <h3 className="font-semibold">Alterar senha</h3>
+        {account.googleSubject ? (
+          <p className="text-sm text-muted-foreground">Você utiliza o Google para acessar sua conta.</p>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">Para proteger sua conta, informe sua senha atual e escolha uma nova senha.</p>
+            <ChangePasswordForm />
+            <p className="text-xs text-muted-foreground">Ao alterar a senha, as sessões abertas em outros dispositivos são encerradas.</p>
+          </>
+        )}
       </Card>
       <Card className="space-y-3 p-6">
         <h2 className="font-display text-lg font-bold">Privacidade (LGPD)</h2>

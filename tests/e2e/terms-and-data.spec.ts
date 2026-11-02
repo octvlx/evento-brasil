@@ -24,7 +24,8 @@ test("cadastro exige termos e privacidade, grava o aceite e a conta baixa os pr√
     await page.goto("/registrar");
     await page.getByLabel("Nome completo").fill("Pessoa Termos E2E");
     await page.getByLabel("E-mail", { exact: true }).fill(email);
-    await page.getByLabel("Senha", { exact: true }).fill("senha-segura-e2e");
+    await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
+    await page.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
     const terms = page.getByRole("checkbox", { name: /termos de uso/ });
     const privacy = page.getByRole("checkbox", { name: /pol√≠tica de privacidade/ });
     // Links para os textos ao lado de cada aceite.

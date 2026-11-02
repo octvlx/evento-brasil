@@ -40,6 +40,12 @@ const schema = z.object({
   EMAIL_REPLY_TO: z.union([z.literal(""), z.string().email()]).optional(),
   EMAIL_VERIFICATION_EXPIRATION_MINUTES: int(30),
   PASSWORD_RESET_EXPIRATION_MINUTES: int(30),
+  // Consulta de senhas vazadas (Pwned Passwords, k-anonimato). Ligada por padrão, exceto
+  // nos testes; "false" desliga. Falha aberta: indisponibilidade não bloqueia o fluxo.
+  PASSWORD_BREACH_CHECK: z
+    .enum(["true", "false", ""])
+    .optional()
+    .transform((v) => (v ? v === "true" : process.env.NODE_ENV !== "test")),
   EMAIL_FROM: z.string().default("Evento Brasil <nao-responda@example.com>"),
   STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
   OBJECT_STORAGE_ENDPOINT: z.string().optional(),

@@ -9,7 +9,8 @@ test("novo organizador se cadastra → admin aprova pela fila", async ({ browser
   await owner.goto("/registrar?next=/organizador/cadastro");
   await owner.getByLabel("Nome completo").fill("Pessoa Teste E2E");
   await owner.getByLabel("E-mail", { exact: true }).fill(`e2e+${stamp}@test.local`);
-  await owner.getByLabel("Senha", { exact: true }).fill("senha-segura-e2e");
+  await owner.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
+  await owner.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
   await acceptSignupTerms(owner);
   await owner.getByRole("button", { name: "Criar conta" }).click();
   await owner.waitForURL(/\/organizador\/cadastro/);

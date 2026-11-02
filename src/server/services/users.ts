@@ -1,14 +1,22 @@
 import "server-only";
+import type { z } from "zod";
 import { enqueueVerificationForUserTx } from "./email-verification";
 import {
+  changePasswordSchema,
   profileSchema,
   registerSchema,
   type RegisterInput,
 } from "@/features/schemas";
+import { PASSWORD_MESSAGES } from "@/lib/password-policy";
+import { enqueueEmail } from "../email/outbox";
+import { passwordChangedEmail } from "../email/templates";
+import { hashToken } from "../crypto";
+import { authAppUrl } from "./email-verification";
 import { onlyDigits } from "@/lib/br";
 import type { Db } from "../db";
 import { audit } from "../audit";
 import { DUMMY_HASH, hashPassword, verifyPassword } from "../auth/password";
+import { assertAcceptableNewPassword } from "../auth/breached-password";
 import {
   assertActive,
   assertPlatformAdmin,
@@ -18,6 +26,13 @@ import { revokeAllSessions } from "../auth/sessions";
 import { AppError } from "../errors";
 import { BUYER_KINDS, recordAcceptanceTx } from "./terms";
 
+/** Erro de validação com a primeira mensagem do schema (pt-BR), em vez de ZodError. */
+function parseOrThrow<T extends z.ZodType>(schema: T, raw: unknown): z.output<T> {
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) throw new AppError("VALIDATION", parsed.error.issues[0]?.message ?? "Dados inválidos.");
+  return parsed.data;
+}
+
 /** O schema exige os dois aceites; o aceite das versões vigentes é gravado junto com a conta (R10). */
 export async function registerUser(
   db: Db,
@@ -25,7 +40,8 @@ export async function registerUser(
   client: { ip?: string | null; userAgent?: string | null } = {},
   verificationNext?: string,
 ) {
-  const input = registerSchema.parse(raw);
+  const input = parseOrThrow(registerSchema, raw);
+  await assertAcceptableNewPassword(input.password);
   const exists = await db.user.findUnique({
     where: { email: input.email },
     select: { id: true },
@@ -130,4 +146,53 @@ export async function setUserSuspended(
     metadata: { reason: reason ?? null },
   });
   return user;
+}
+
+/**
+ * Troca de senha em Minha conta. A identidade vem da sessão (actor), nunca do cliente;
+ * a senha atual é obrigatória. Erros de digitação não mexem em nada. Sucesso: grava o
+ * novo hash, encerra as OUTRAS sessões (a atual continua), invalida links de
+ * redefinição pendentes e envia o aviso por e-mail. O limite de tentativas fica na ação.
+ */
+export async function changePassword(db: Db, actor: Actor, raw: unknown, currentSessionToken: string | null) {
+  assertActive(actor);
+  const input = parseOrThrow(changePasswordSchema, raw);
+  const account = await db.user.findUniqueOrThrow({ where: { id: actor.id }, select: { passwordHash: true, googleSubject: true } });
+  if (account.googleSubject) throw new AppError("INVALID_STATE", "Você utiliza o Google para acessar sua conta.");
+  if (!(await verifyPassword(input.currentPassword, account.passwordHash))) {
+    throw new AppError("VALIDATION", "A senha atual está incorreta.");
+  }
+  if (input.newPassword === input.currentPassword || (await verifyPassword(input.newPassword, account.passwordHash))) {
+    throw new AppError("VALIDATION", PASSWORD_MESSAGES.sameAsCurrent);
+  }
+  await assertAcceptableNewPassword(input.newPassword);
+  const passwordHash = await hashPassword(input.newPassword);
+  const keepTokenHash = currentSessionToken ? hashToken(currentSessionToken) : null;
+
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.id} FOR UPDATE`;
+    // Sob a trava: se outra troca terminou antes, a "senha atual" informada já não vale.
+    const locked = await tx.user.findUniqueOrThrow({ where: { id: actor.id }, select: { email: true, passwordHash: true } });
+    if (locked.passwordHash !== account.passwordHash) throw new AppError("VALIDATION", "A senha atual está incorreta.");
+    await tx.user.update({ where: { id: actor.id }, data: { passwordHash } });
+    const sessions = await tx.session.deleteMany({
+      where: { userId: actor.id, ...(keepTokenHash ? { NOT: { tokenHash: keepTokenHash } } : {}) },
+    });
+    const now = new Date();
+    await tx.passwordResetToken.updateMany({ where: { userId: actor.id, consumedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
+    await enqueueEmail(tx, {
+      dedupeKey: `password-changed:account:${actor.id}:${now.getTime()}`,
+      template: "PASSWORD_CHANGED",
+      recipient: locked.email,
+      message: passwordChangedEmail("changed", new URL("/esqueci-minha-senha", authAppUrl()).toString()),
+    });
+    await audit(tx, {
+      actorUserId: actor.id,
+      action: "user.password_changed",
+      entityType: "User",
+      entityId: actor.id,
+      metadata: { otherSessionsRevoked: sessions.count },
+    });
+    return { otherSessionsRevoked: sessions.count };
+  });
 }

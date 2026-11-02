@@ -48,7 +48,7 @@ async function shop() {
 }
 
 const signup = (email: string) =>
-  registerUser(db, { name: "Comprador", email, password: "senha-forte-1", acceptTerms: true, acceptPrivacy: true }, { ip: "198.51.100.9", userAgent: "vitest-agent" }).then(makeBuyerReady);
+  registerUser(db, { name: "Comprador", email, password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91", acceptTerms: true, acceptPrivacy: true }, { ip: "198.51.100.9", userAgent: "vitest-agent" }).then(makeBuyerReady);
 
 beforeEach(async () => {
   await resetDb();
@@ -58,7 +58,7 @@ beforeEach(async () => {
 describe("aceite de termos versionados (R10)", () => {
   it("cadastro exige os dois aceites e grava SIGNUP das versões vigentes, com IP e agente", async () => {
     await publishV1();
-    await expect(registerUser(db, { name: "Sem aceite", email: "a@test.local", password: "senha-forte-1", acceptTerms: true } as never)).rejects.toThrow();
+    await expect(registerUser(db, { name: "Sem aceite", email: "a@test.local", password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91", acceptTerms: true } as never)).rejects.toThrow();
     expect(await db.user.count({ where: { email: "a@test.local" } })).toBe(0);
 
     const user = await signup("b@test.local");
