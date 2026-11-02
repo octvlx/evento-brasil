@@ -6,7 +6,7 @@ import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, assertPlatformAdmin, type Actor } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
-import type { PaymentProviderAdapter } from "../payments/types";
+import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { financeLog } from "./finance-log";
 import { postReversal } from "./ledger";
 import { lockEvent, lockOrder } from "./orders";
@@ -146,7 +146,7 @@ export interface RefundRequestLinks {
  * reembolso em aberto/concluído — é a guarda contra reembolso em dobro.
  */
 export async function createRefundRequestTx(tx: Tx, orderId: string, reason: RefundReason, requestedById: string | null, links: RefundRequestLinks = {}) {
-  const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: { where: { status: "PAID" } } } });
+  const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: VALID_PAID_PAYMENTS } });
   if (order.status !== "PAID") throw invalidState("Pedido não está pago.");
   // Reembolsos são integrais (MVP): qualquer outro em aberto ou concluído impede um novo.
   if ((await committedRefundCents(tx, orderId, ["REQUESTED", "PROCESSING", "SUCCEEDED"])) > 0) {

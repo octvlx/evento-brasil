@@ -2,7 +2,7 @@
 // sem id de pagamento; o id só aparece quando o comprador paga. A confirmação precisa
 // funcionar pelo webhook e também sem ele (reconciliação pela página do pedido).
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PaymentProviderAdapter, ProviderPaymentSnapshot } from "@/server/payments/types";
+import { DUPLICATE_PAYMENT_FLAG, VALID_PAID_PAYMENTS, type PaymentProviderAdapter, type ProviderPaymentSnapshot } from "@/server/payments/types";
 import { applyPaymentSnapshot, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { reconcileOrderPayments } from "@/server/services/reconciliation";
 import { buy, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
@@ -141,14 +141,40 @@ describe("Checkout Pro: confirmação com e sem webhook", () => {
     expect(s.tickets).toBe(2);
   });
 
-  it("segundo pagamento aprovado para a mesma tentativa já paga: sinaliza, sem novos ingressos", async () => {
+  it("segundo pagamento aprovado para a mesma tentativa já paga: vira Payment marcado para reembolso, sem novos ingressos", async () => {
     const { order, payment } = await checkoutOrder();
     const a = checkoutAdapter();
     await applyPaymentSnapshot(db, a, snapshot(payment.id, order.totalCents));
     const before = await state(order.id);
     expect(await applyPaymentSnapshot(db, a, snapshot(payment.id, order.totalCents, { providerPaymentId: "999" }))).toBe("duplicate_payment");
-    expect(await state(order.id)).toMatchObject({ tickets: before.tickets, ledger: before.ledger });
-    expect(await db.auditLog.count({ where: { action: "payment.duplicate_provider_payment", entityId: payment.id } })).toBe(1);
+    const after = await state(order.id);
+    expect(after).toMatchObject({ tickets: before.tickets, ledger: before.ledger });
+    const duplicate = after.payments.find((p) => p.providerPaymentId === "999")!;
+    expect(duplicate).toMatchObject({ status: "PAID", failureReason: DUPLICATE_PAYMENT_FLAG, amountCents: order.totalCents });
+    // A tentativa original continua sendo o pagamento do pedido.
+    expect(after.payments.find((p) => p.id === payment.id)).toMatchObject({ status: "PAID", providerPaymentId: "187330752002", failureReason: null });
+    expect(await db.auditLog.count({ where: { action: "payment.duplicate_provider_payment", entityId: duplicate.id } })).toBe(1);
+    // Aviso repetido do mesmo pagamento duplicado: nada muda.
+    expect(await applyPaymentSnapshot(db, a, snapshot(payment.id, order.totalCents, { providerPaymentId: "999" }))).toBe("duplicate_payment");
+    expect(await state(order.id)).toMatchObject({ tickets: before.tickets, ledger: before.ledger, payments: { length: 2 } });
+    // O reembolso do pedido usa o pagamento válido, nunca o duplicado.
+    const paid = await db.order.findUniqueOrThrow({ where: { id: order.id }, include: { payments: VALID_PAID_PAYMENTS } });
+    expect(paid.payments.map((p) => p.id)).toEqual([payment.id]);
+  });
+
+  it("estorno do pagamento duplicado no provedor não reembolsa o pedido nem revoga os ingressos", async () => {
+    const { order, payment } = await checkoutOrder();
+    const a = checkoutAdapter();
+    await applyPaymentSnapshot(db, a, snapshot(payment.id, order.totalCents));
+    await applyPaymentSnapshot(db, a, snapshot(payment.id, order.totalCents, { providerPaymentId: "999" }));
+    const before = await state(order.id);
+    expect(await applyPaymentSnapshot(db, a, snapshot(payment.id, order.totalCents, { providerPaymentId: "999", status: "REFUNDED", rawStatus: "refunded" }))).toBe("duplicate_payment");
+    const after = await state(order.id);
+    expect(after.order.status).toBe("PAID");
+    expect(after.ledger).toBe(before.ledger);
+    expect(await db.issuedTicket.count({ where: { orderId: order.id, status: "VALID" } })).toBe(before.tickets);
+    expect(await db.refund.count({ where: { orderId: order.id } })).toBe(0);
+    expect(after.payments.find((p) => p.providerPaymentId === "999")).toMatchObject({ status: "REFUNDED", failureReason: DUPLICATE_PAYMENT_FLAG });
   });
 
   it("valor divergente não confirma o pedido", async () => {

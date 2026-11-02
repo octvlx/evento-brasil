@@ -1,3 +1,4 @@
+import type { Prisma } from "@/generated/prisma/client";
 // Contrato neutro de provedor de pagamentos. Nenhum status vindo do cliente
 // ou do corpo do webhook é confiável: o sistema sempre consulta `getPayment`.
 import { AppError } from "../errors";
@@ -116,3 +117,15 @@ export interface PaymentProviderAdapter {
    */
   findCheckoutPayment?(idempotencyKey: string): Promise<ProviderPaymentSnapshot | null>;
 }
+
+/**
+ * Pagamento aprovado a mais para um pedido já pago (outra tentativa ou o mesmo checkout):
+ * fica PAID com esta marca, fora do razão, para reembolso manual pelo admin.
+ */
+export const DUPLICATE_PAYMENT_FLAG = "DUPLICATE_PAYMENT_REQUIRES_REFUND";
+
+/** Pagamentos que pagaram o pedido (o reembolso usa o primeiro): sem os duplicados marcados. */
+export const VALID_PAID_PAYMENTS = {
+  where: { status: "PAID", OR: [{ failureReason: null }, { failureReason: { not: DUPLICATE_PAYMENT_FLAG } }] },
+  orderBy: { paidAt: "asc" },
+} satisfies Prisma.Order$paymentsArgs;
