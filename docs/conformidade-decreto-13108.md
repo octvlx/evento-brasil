@@ -1,6 +1,7 @@
 # Conformidade — Decreto nº 13.108/2026 (venda de ingressos)
 
-Análise técnica feita em 2026-10-27 sobre `main` @ `2d46458`. **Não é parecer
+Análise técnica feita em 2026-10-27 sobre `main` @ `2d46458`; situação atualizada
+em 2026-11-02. **Não é parecer
 jurídico.** O texto integral do decreto não pôde ser lido nesta análise; as
 regras abaixo vêm do resumo do backlog de lançamento e de reportagens/análises
 citadas em [Fontes](#fontes). Cada linha marcada **(confirmar)** precisa ser
@@ -15,22 +16,35 @@ transferência de titularidade valem 20 dias depois (≈ 21/09/2026) — ou seja
 
 ## Situação por requisito
 
-| # | Requisito | O que o Evento Brasil faz hoje | Lacuna | Gravidade |
+Atualizada em 2026-11-02 sobre `main` @ `8a54b1f` (Fases 1 a 4 entregues, PRs #25–#61;
+exclusão de conta no #88). A análise original de 2026-10-27 está no histórico do git.
+"Provisório" = funciona com um padrão técnico até a decisão jurídica indicada.
+
+| # | Requisito | Situação em `main` | O que falta | Gravidade do que falta |
 | --- | --- | --- | --- | --- |
-| R1 | **Preço total e taxas discriminadas desde a oferta** | Página do evento mostra preço e "+ R$ x de taxa de serviço" por tipo, e o resumo do checkout discrimina subtotal/taxa/total. **Cards da home, busca e cidade mostram "A partir de R$ X" sem a taxa** (`src/components/site/event-card.tsx`, `priceLabel`). | Mostrar o **total por ingresso (preço + taxa)** em todo ponto de oferta, com a taxa discriminada; mesmo valor que o servidor cobrará. | Alta |
-| R2 | Taxa só com ciência prévia; nada embutido; sem cobrança duplicada ou sem serviço | Taxa calculada no servidor (`computeFees`), ingresso gratuito sem taxa, nenhum serviço adicional vendido. **A parte fixa da comissão (`fixedCentsPerTicket`) incide cheia sobre meia-entrada** (`commissionPerUnit` em `src/features/fees/policy.ts`). | Decidir se a taxa da meia deve ser proporcional (uma fonte diz que taxa cheia em meia é abusiva — **confirmar**, art. 9º). | Média |
-| R3 | **Reserva temporária** e preço congelado durante a compra (art. 13) | Reserva com trava do evento e CHECK no banco, `RESERVATION_MINUTES=15`, contagem regressiva no checkout, preço gravado no pedido (`OrderItem.unitPriceCents`), PIX expira com a reserva. | Teste explícito de que mudar o preço durante a reserva não altera o pedido; revisar se 15 min é "tempo necessário" (cartão + 3DS) — **confirmar**. | Baixa |
-| R4 | Proteção contra compras abusivas (robôs/cambismo) | Limite mínimo/máximo **por pedido** (`maxPerOrder`), rate limit em login/cadastro. **Nada limita compras por conta/CPF por evento nem a criação de pedidos** (`createOrderAction` sem rate limit); sem verificação anti-robô. | Limite por conta por evento, rate limit em criação de pedido e de pagamento, sinal anti-robô (fornecedor a decidir), e a transferência (R6) não pode furar esses limites. | Alta |
-| R5 | **Canal acessível de cancelamento e arrependimento** | Botão de reembolso na página do pedido quando elegível (`refundEligibility`: 7 dias após a compra **e** 48 h antes do evento); `/ajuda` explica. Sem canal quando o botão não aparece; sem protocolo. | Link "Cancelar compra" visível (rodapé, Meus pedidos, e-mail), formulário com **número de protocolo** mesmo fora da elegibilidade automática, fila no admin com prazo de resposta. Regra dos 48 h × arrependimento do CDC — **confirmar**. | Alta |
-| R6 | **Transferência gratuita de titularidade**, com autenticação, rastreabilidade e histórico por **≥ 2 anos** | **Não existe.** `IssuedTicket` guarda `holderName`/`holderEmail` definidos na compra; não há dono por conta nem histórico. | Fluxo completo (ver T-TRANSF): pedido pelo titular autenticado, aceite pelo destinatário autenticado, novo QR (o antigo deixa de valer), histórico imutável retido ≥ 2 anos, gratuito, sem burlar limites antifraude. | **Crítica** |
-| R7 | **Meia-entrada** e relatórios | Tipo `HALF_PRICE`, cota por evento (`halfPriceQuotaBps`), declaração obrigatória no checkout, cota restante exibida, relatório da cota em *Vendas e repasses*, aviso no ingresso. **A cota é um teto, não uma reserva**: ingressos inteiros podem consumir a capacidade e deixar a meia sem lugar. | Reservar a cota de meia até **48 h antes** do evento (fonte secundária — **confirmar**); relatório exportável por evento; check-in sinalizar "exigir documento" ao ler meia. | Alta |
-| R8 | **Reembolso integral** (inclui taxas) em cancelamento, **adiamento ou alteração relevante** (art. 20) | Cancelamento pelo organizador/admin reembolsa tudo, inclusive a taxa (`cancelEvent`). **Editar data, local ou formato de evento publicado com vendas não gera aviso nem direito a reembolso** (`updateEvent` só audita). Não há estado "adiado". | Detectar alteração relevante em evento com vendas, exigir motivo, guardar histórico, avisar compradores e abrir **janela de reembolso integral** fora da regra normal. Definir "alteração relevante" — **confirmar**. | **Crítica** |
-| R9 | Proteção de dados, logs de auditoria e **retenção legal** | `AuditLog` e razão somente inserção (triggers), CPF/CNPJ cifrado, exportação de participantes auditada, cookies só essenciais. Sem política de retenção aplicada, sem exportação/exclusão de dados pelo titular, sem expurgo programado. | Tabela de retenção por tipo de dado (com prazos jurídicos), atendimento LGPD (exportar, corrigir, excluir/anonimizar mantendo o que a lei obriga guardar), auditoria de transferências e pedidos de cancelamento. | Alta |
-| R10 | **Contratos claros** (responsabilidade de organizador × plataforma) | `/termos` e `/privacidade` são **rascunhos técnicos** (aviso na página); nenhum aceite é registrado; página do evento não identifica a pessoa jurídica responsável. | Textos definitivos (jurídico), termos versionados com **aceite registrado** (comprador no cadastro/checkout, organizador no cadastro), identificação do organizador responsável no evento e no ingresso. | Alta |
+| R1 | **Preço total e taxas discriminadas desde a oferta** | Feito (L1a, L1b): cards, busca, cidade e página do evento mostram o total por ingresso com a taxa discriminada, pela mesma regra que o servidor cobra. | — | — |
+| R2 | Taxa só com ciência prévia; nada embutido; sem cobrança duplicada ou sem serviço | Feito: taxa calculada no servidor, ingresso gratuito sem taxa, nenhum serviço adicional. A parte fixa da comissão (`fixedCentsPerTicket`) ainda incide cheia sobre a meia-entrada (`commissionPerUnit`, `src/features/fees/policy.ts`). | Decidir se a taxa da meia deve ser proporcional (**D4**, art. 9º — confirmar) e, se sim, ajustar a regra. | Média |
+| R3 | **Reserva temporária** e preço congelado durante a compra (art. 13) | Feito: reserva com trava e CHECK no banco, 15 min com contagem regressiva, preço gravado no pedido; teste de congelamento (L3). | Confirmar se 15 min é "tempo necessário" para cartão (Checkout Pro). | Baixa |
+| R4 | Proteção contra compras abusivas (robôs/cambismo) | Feito: limite por pedido, **limite por conta por evento** (`Event.maxTicketsPerAccount`, L4b, vale também na transferência) e limite de frequência na criação de pedido e de pagamento (L4a). | **Verificação anti-robô** (fornecedor a escolher, ex.: Cloudflare Turnstile) no cadastro e no checkout. | Média |
+| R5 | **Canal acessível de cancelamento e arrependimento** | Feito: link "Cancelar compra / arrependimento" no rodapé, Meus pedidos, Meus ingressos, pedido e `/ajuda` (L5a); pedido de cancelamento com **protocolo** e prazo de resposta mesmo fora da elegibilidade automática (L5b); fila no admin (A1). Prazo de reembolso automático por evento (`refundWindowDays`/`refundMinHoursBeforeEvent`, padrão 7 dias e 48 h). | Regra das 48 h × arrependimento do CDC (**D3**) e prazo de resposta definitivo — provisórios. | Média |
+| R6 | **Transferência gratuita de titularidade**, com autenticação, rastreabilidade e histórico por **≥ 2 anos** | Feito (T-TRANSF, telas na Fase 4): pedido pelo titular autenticado, aceite pelo destinatário autenticado, novo QR, histórico só de inserção (`TicketTransfer`), gratuito, sem furar o limite por conta; política por evento (prazo e número de trocas). Reembolso de ingresso transferido vai ao pagador original. | Confirmar **D7** (quem recebe o reembolso, prazo-limite para transferir) — provisório. | Baixa |
+| R7 | **Meia-entrada** e relatórios | Feito: tipo `HALF_PRICE`, cota por evento, declaração no checkout, CSV de meia por evento (L7b), check-in sinaliza "exigir documento" (L7a). **A cota ainda é um teto, não uma reserva.** | **L7c**: reservar a cota de meia até o prazo de **D5** (48 h antes? — confirmar). | Alta |
+| R8 | **Reembolso integral** (inclui taxas) em cancelamento, **adiamento ou alteração relevante** (art. 20) | Feito: cancelamento reembolsa tudo; alteração relevante em evento com vendas exige motivo, grava `EventChange`, avisa compradores e abre janela de reembolso integral (L8a, L8b), também para ingressos transferidos. | Definição de "alteração relevante" e prazo da janela (**D2**) — provisórios. | Baixa |
+| R9 | Proteção de dados, logs de auditoria e **retenção legal** | Feito: auditoria e razão só de inserção, CPF/CNPJ cifrado, exportação "Meus dados" (L9b), **exclusão/anonimização da conta pelo titular e expurgo programado com prazos provisórios** (#88, `src/server/retention.ts`, `docs/dados-pessoais-e-retencao.md` §2.1). | Prazos definitivos (**D6**); protocolo de pedidos do titular; expurgo de CPF/CNPJ de organizações encerradas; decidir se o Marco Civil exige guardar registros de acesso (IP), hoje não coletados. | Média |
+| R10 | **Contratos claros** (responsabilidade de organizador × plataforma) | Feito: termos versionados com **aceite registrado** no cadastro, checkout e cadastro de organizador, com bloqueio em versão nova (L10a); organizador responsável identificado no evento e no ingresso/PDF (L10b). **`/termos` e `/privacidade` ainda são rascunhos técnicos.** | Textos definitivos de termos, privacidade e contrato do organizador (**D8**). | Alta |
 
 Já atende (manter e cobrir com testes): sem overselling (CHECK + trava), preço
 e taxa calculados no servidor, reembolso integral automático no cancelamento,
 pagamento confirmado só pelo provedor, auditoria somente inserção.
+
+### O que falta, em resumo
+
+1. **Jurídico (bloqueia a homologação comercial — V2):** ler e conferir o texto
+   oficial do decreto (as regras vieram de fontes secundárias) e decidir D1–D8.
+   D2, D3, D6 e D7 já têm padrão provisório em produção; D4, D5 e D8 bloqueiam
+   trabalho técnico.
+2. **Técnico:** L7c (reserva da cota de meia, depende de D5); ajuste da taxa
+   sobre meia (depende de D4); verificação anti-robô; sobras de R9.
 
 ## Plano por agente
 
