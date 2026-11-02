@@ -263,8 +263,23 @@ Pré-requisitos: Node 24, `npm ci`, `.env` copiado de `.env.example` (nunca vers
 | Opção | Comando |
 | --- | --- |
 | Docker | `docker compose up -d` (porta 5433, volume `pgdata`, health check) |
-| Sem Docker | `npm run db:start` (PostgreSQL embutido; dados em `os.tmpdir()/evento-brasil-pgdata/<porta>`; recusa `NODE_ENV=production`) |
+| Sem Docker | `npm run db:start` (PostgreSQL embutido; dados em `%LOCALAPPDATA%\evento-brasil\pgdata\<porta>` no Windows e `~/.local/share/evento-brasil/pgdata/<porta>` nos demais; `DEV_PG_DATA_DIR` sobrescreve; recusa `NODE_ENV=production`) |
 | Windows, um clique | `INICIAR-EVENTO-BRASIL.bat` |
+
+### Banco fora da pasta temporária
+
+Até a versão anterior, o `db:start` guardava o cluster em `os.tmpdir()`. A limpeza
+automática de temporários do Windows apaga arquivos de lá, inclusive catálogos do
+PostgreSQL. Com isso, `UPDATE`/`DELETE` passam a falhar com
+`58P01: could not open file "base/…"`. Um cluster antigo que ainda estiver em
+`%TEMP%\evento-brasil-pgdata\<porta>` continua sendo usado, mas `db:start` avisa.
+Para mudar de pasta:
+
+- Sem dados locais importantes: pare o banco, apague a pasta antiga e rode
+  `npm run db:start`, `npm run db:deploy` e `npm run db:seed`.
+- Para manter os dados: exporte as tabelas de `public`, suba o cluster novo,
+  rode `db:deploy` e reimporte com `session_replication_role = replica`.
+  Depois confira as contagens e as chaves estrangeiras.
 
 | Script | O que faz |
 | --- | --- |
