@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe("Mercado Pago Checkout Pro adapter", () => {
-  it("creates an idempotent PIX-only marketplace preference and returns sandbox checkout URL", async () => {
+  it("creates an idempotent PIX-only marketplace preference and returns the init_point checkout URL", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(Response.json([{ id: "pix" }, { id: "visa" }]))
       .mockResolvedValueOnce(Response.json({
@@ -87,7 +87,7 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(result).toMatchObject({
       providerPaymentId: null,
       providerPreferenceId: "preference-123",
-      checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=test",
+      checkoutUrl: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=live",
       status: "PENDING",
     });
     const [url, init] = vi.mocked(fetch).mock.calls[1];
@@ -99,6 +99,20 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(body.marketplace_fee).toBe(5);
     expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "visa" }]);
     expect(body.notification_url).toBe("https://events.example/api/webhooks/mercadopago");
+    expect(body.payer).toEqual({ email: "buyer@example.com" });
+  });
+
+  it("opens the sandbox checkout only for sellers connected with TEST- credentials", async () => {
+    oauth.getForOrganization.mockResolvedValue("TEST-seller-access-token");
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json([{ id: "pix" }]))
+      .mockResolvedValueOnce(Response.json({
+        id: "preference-123",
+        init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=live",
+        sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=test",
+      }));
+    const result = await adapter().createPayment(pixInput());
+    expect(result.checkoutUrl).toBe("https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=test");
   });
 
   const pixInput = () => ({
@@ -142,7 +156,7 @@ describe("Mercado Pago Checkout Pro adapter", () => {
         sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=x",
       }));
     const result = await adapter().createPayment({ ...pixInput(), method: "CREDIT_CARD" });
-    expect(result).toMatchObject({ providerPreferenceId: "pref-card", checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=x" });
+    expect(result).toMatchObject({ providerPreferenceId: "pref-card", checkoutUrl: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=x" });
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body));
     // Crédito, débito e pré-pago ficam; só o boleto sai. account_money nunca é excluído (400 no Mercado Pago).
     expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }]);
