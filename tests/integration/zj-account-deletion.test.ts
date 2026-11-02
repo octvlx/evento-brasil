@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "@/server/auth/password";
 import { createSession } from "@/server/auth/sessions";
 import { accountDeletionBlockers, deleteOwnAccount } from "@/server/services/account-deletion";
-import { runRetentionPurge } from "@/server/services/retention-purge";
+import { PURGE_INTERVAL_MS, runRetentionPurge, runRetentionPurgeIfDue } from "@/server/services/retention-purge";
 import { authenticate } from "@/server/services/users";
 import { REDACTED_NAME, redactedEmail } from "@/server/retention";
 import { makeBuyerReady } from "../support/buyer-ready";
@@ -127,5 +127,16 @@ describe("expurgo programado (prazos provisórios)", () => {
 
     // Idempotente: a segunda passada não encontra nada.
     expect(await runRetentionPurge(db)).toMatchObject({ sessions: 0, chargeData: 0, webhookPayloads: 0, orders: 0, tickets: 0 });
+  });
+
+  it("no cron, roda no máximo uma vez por hora e registra cada execução na auditoria", async () => {
+    const now = new Date();
+    expect(await runRetentionPurgeIfDue(db, now)).not.toBeNull();
+    expect(await runRetentionPurgeIfDue(db, new Date(now.getTime() + 60_000))).toBeNull();
+    const runs = await db.auditLog.findMany({ where: { action: "retention.purged" } });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].metadata).toMatchObject({ sessions: 0, orders: 0 });
+    // A execução registrada usa o relógio do banco; depois do intervalo, roda de novo.
+    expect(await runRetentionPurgeIfDue(db, new Date(runs[0].createdAt.getTime() + PURGE_INTERVAL_MS + 1))).not.toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import "server-only";
 import { Prisma } from "@/generated/prisma/client";
 import type { Db } from "../db";
+import { audit } from "../audit";
 import { REDACTED_NAME, RETENTION, redactedEmail } from "../retention";
 
 // Expurgo programado (L9b): roda no cron de manutenção, em lotes, e é idempotente
@@ -26,6 +27,23 @@ export interface RetentionPurgeResult {
 }
 
 const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+
+/** O cron de manutenção roda a cada minuto; o expurgo, no máximo uma vez por intervalo. */
+export const PURGE_INTERVAL_MS = 3_600_000;
+const RUN_ENTITY = { entityType: "RetentionPurge", entityId: "scheduled" } as const;
+
+/**
+ * Roda o expurgo se a última execução registrada tiver mais de PURGE_INTERVAL_MS.
+ * Cada execução vai para a auditoria (só contagens), o que prova que o expurgo roda.
+ * Duas chamadas simultâneas podem rodar ambas: o expurgo é idempotente.
+ */
+export async function runRetentionPurgeIfDue(db: Db, now = new Date()): Promise<RetentionPurgeResult | null> {
+  const last = await db.auditLog.findFirst({ where: RUN_ENTITY, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
+  if (last && now.getTime() - last.createdAt.getTime() < PURGE_INTERVAL_MS) return null;
+  const result = await runRetentionPurge(db, now);
+  await audit(db, { action: "retention.purged", ...RUN_ENTITY, metadata: { ...result } });
+  return result;
+}
 
 export async function runRetentionPurge(db: Db, now = new Date()): Promise<RetentionPurgeResult> {
   const tokenCutoff = daysAgo(now, RETENTION.expiredTokenDays);

@@ -1,8 +1,8 @@
 // Job agendado (ex.: a cada minuto): expira reservas vencidas e convites de
 // transferência de ingresso vencidos, encerra eventos
 // finalizados, reconcilia pagamentos/reembolsos com o provedor e verifica os
-// invariantes financeiros e expurga dados pessoais vencidos (prazos provisórios em
-// src/server/retention.ts). Protegido por segredo no header x-cron-secret.
+// invariantes financeiros e, no máximo uma vez por hora, expurga dados pessoais
+// vencidos (prazos provisórios em src/server/retention.ts). Protegido por segredo no header x-cron-secret.
 import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
@@ -12,7 +12,7 @@ import { completeEndedEvents } from "@/server/services/events";
 import { expireStaleOrders } from "@/server/services/orders";
 import { financeLog } from "@/server/services/finance-log";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
-import { runRetentionPurge } from "@/server/services/retention-purge";
+import { runRetentionPurgeIfDue } from "@/server/services/retention-purge";
 import { expireTicketTransfers } from "@/server/services/transfers";
 
 export async function POST(req: Request) {
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     financeLog("error", `reconciliation.${e.kind}_failed`, { orderId: e.orderId }, { entityId: e.id, message: e.message });
   }
   const emailDelivery = await dispatchEmailOutbox(db);
-  const retention = await runRetentionPurge(db);
+  const retention = await runRetentionPurgeIfDue(db);
   return Response.json({
     emailDelivery,
     expiredOrders,

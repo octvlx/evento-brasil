@@ -170,7 +170,9 @@ mais tempo o que pode servir de prova, e de apagar cedo o que é só operacional
 | Razão, repasses, auditoria, aceites de termos, histórico de transferências | **sem expurgo** até D6 | ficam como estão (tabelas só de inserção; transferência ≥ 2 anos pelo decreto) | — |
 
 O expurgo roda no cron de manutenção (`/api/cron/maintenance`,
-`src/server/services/retention-purge.ts`), em lotes de 200 e de forma idempotente.
+`src/server/services/retention-purge.ts`), no máximo uma vez por hora, em lotes de 200
+e de forma idempotente. Cada execução fica na auditoria (`retention.purged`, só
+contagens).
 
 ### Exclusão pelo titular
 
