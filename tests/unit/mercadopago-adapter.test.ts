@@ -286,6 +286,16 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     });
   });
 
+  it("ignores the unsigned legacy IPN (?id=&topic=) instead of rejecting it, and still rejects other unsigned calls", async () => {
+    const ipn = (query: string) => adapter().verifyWebhook({ headers: new Headers(), rawBody: "", url: new URL(`https://events.example/api/webhooks/mercadopago?${query}`) });
+    expect(await ipn("id=187374883982&topic=payment")).toEqual({ valid: false, ignore: true, reason: expect.stringContaining("IPN") });
+    expect(await ipn("id=45759762887&topic=merchant_order")).toMatchObject({ valid: false, ignore: true });
+    // Sem assinatura e no formato novo: continua recusado (401).
+    const unsigned = await ipn("data.id=987&type=payment");
+    expect(unsigned).toMatchObject({ valid: false });
+    expect(unsigned).not.toHaveProperty("ignore");
+  });
+
   it("does not enable payments without a webhook signing secret", () => {
     expect(adapter("").supportedMethods).toEqual([]);
   });
