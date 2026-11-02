@@ -7,8 +7,12 @@ import { Alert } from "@/components/ui/primitives";
 import { refreshPaymentStatusAction, requestRefundAction } from "./actions";
 
 /** Reconsulta o provedor enquanto o pedido está pendente (nunca confia no redirect). */
-export function PendingPoller({ orderId }: { orderId: string }) {
+export function PendingPoller({ orderId, returnedPaymentId }: { orderId: string; returnedPaymentId?: string | null }) {
   const router = useRouter();
+  useEffect(() => {
+    // Volta do checkout externo: confere já o pagamento informado (o servidor consulta o provedor).
+    if (returnedPaymentId) void refreshPaymentStatusAction(orderId, returnedPaymentId);
+  }, [orderId, returnedPaymentId]);
   useEffect(() => {
     let n = 0;
     const t = setInterval(async () => {

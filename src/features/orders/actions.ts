@@ -11,7 +11,7 @@ import { getCurrentUser, requireAdmin, requireUser } from "@/server/auth/current
 import { getPaymentAdapter, getSimulatedAdapter } from "@/server/payments";
 import { checkoutReadiness, createCheckoutDraft, prepareCheckoutReview } from "@/server/services/checkout-review";
 import { cancelPendingOrder } from "@/server/services/orders";
-import { handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/server/services/payments";
+import { confirmReturnedPayment, handlePaymentWebhook, startPayment, syncPaymentFromProvider } from "@/server/services/payments";
 import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
 import { ATTR_COOKIE, attributionCookieOptions, decodeAttribution, encodeAttribution, utmsFromParams } from "./attribution";
@@ -105,11 +105,13 @@ export async function simulatePaymentAction(orderId: string, action: SimulatedAc
 }
 
 /** O comprador pede para reconsultar o status (nunca confia no redirect). */
-export async function refreshPaymentStatusAction(orderId: string) {
+export async function refreshPaymentStatusAction(orderId: string, returnedPaymentId?: string) {
   const user = await requireUser(`/pedido/${orderId}`);
   const order = await db.order.findUnique({ where: { id: orderId }, include: { payments: { where: { status: "PENDING" } } } });
   if (!order || order.userId !== user.id) return;
   const adapter = getPaymentAdapter();
+  // Volta do Checkout Pro: o id da URL é só uma pista, conferida no provedor.
+  if (returnedPaymentId) await confirmReturnedPayment(db, adapter, user, orderId, returnedPaymentId).catch(() => {});
   for (const p of order.payments) {
     if (p.providerPaymentId && p.provider === adapter.id) await syncPaymentFromProvider(db, adapter, p.providerPaymentId).catch(() => {});
   }

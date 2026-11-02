@@ -167,7 +167,7 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
                 [
                   "CREDIT_CARD",
                   isSimulated ? "Cartão de crédito (simulado)" : "Cartão pelo Mercado Pago",
-                  isSimulated ? "Ambiente de teste" : cardEnabled ? "Crédito à vista" : "Indisponível",
+                  isSimulated ? "Ambiente de teste" : cardEnabled ? "Crédito à vista ou débito" : "Indisponível",
                   CreditCard,
                 ],
               ] as const

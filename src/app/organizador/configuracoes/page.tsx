@@ -39,7 +39,7 @@ async function PixAvailability({ organizationId }: { organizationId: string }) {
       <p className={readiness.pix ? "text-success" : "text-warning"}>
         PIX: {readiness.pix ? "disponível" : "indisponível — cadastre uma chave PIX na conta Mercado Pago para recebê-lo"}
       </p>
-      <p className={readiness.card ? "text-success" : "text-warning"}>Cartão de crédito: {readiness.card ? "disponível" : "indisponível nesta conta"}</p>
+      <p className={readiness.card ? "text-success" : "text-warning"}>Cartão (crédito ou débito): {readiness.card ? "disponível" : "indisponível nesta conta"}</p>
     </div>
   );
 }
@@ -76,7 +76,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
             </Alert>
           ) : adapter.id === "mercadopago" && adapter.supportedMethods.length > 0 ? (
             <Alert variant="warning">
-              Checkout Pro está configurado para PIX e cartão de crédito à vista. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
+              Checkout Pro está configurado para PIX, cartão (crédito à vista ou débito) e saldo Mercado Pago. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
             </Alert>
           ) : adapter.id === "mercadopago" ? (
             <Alert variant="warning">

@@ -24,18 +24,21 @@ import { ORDER_STATUS, REFUND_REASON, REFUND_STATUS, TICKET_STATUS } from "@/lib
 
 export const metadata: Metadata = { title: "Pedido", robots: { index: false } };
 
-export default function OrderPage({ params }: PageProps<"/pedido/[orderId]">) {
+export default function OrderPage({ params, searchParams }: PageProps<"/pedido/[orderId]">) {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
       <Suspense fallback={<Skeleton className="h-96" />}>
-        <OrderContent params={params} />
+        <OrderContent params={params} searchParams={searchParams} />
       </Suspense>
     </div>
   );
 }
 
-async function OrderContent({ params }: { params: Promise<{ orderId: string }> }) {
+async function OrderContent({ params, searchParams }: { params: Promise<{ orderId: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { orderId } = await params;
+  // Volta do Checkout Pro (back_urls): payment_id/collection_id é só uma pista, conferida no provedor.
+  const query = await searchParams;
+  const hint = [query.payment_id, query.collection_id].map((v) => (typeof v === "string" ? v : undefined)).find((v) => v && /^\d{1,24}$/.test(v)) ?? null;
   const user = await requireUser(`/pedido/${orderId}`);
   const order = await getOrderForBuyer(db, user, orderId);
   const completedDraft = order.status === "PAID" && order.checkoutReviewRequired ? await db.checkoutDraft.findUnique({ where: { orderId: order.id }, select: { idempotencyKey: true } }) : null;
@@ -59,7 +62,7 @@ async function OrderContent({ params }: { params: Promise<{ orderId: string }> }
   return (
     <>
       {completedDraft && <ClearPurchasedCart eventId={order.eventId} idempotencyKey={completedDraft.idempotencyKey} />}
-      {order.status === "PENDING_PAYMENT" && <PendingPoller orderId={order.id} />}
+      {order.status === "PENDING_PAYMENT" && <PendingPoller orderId={order.id} returnedPaymentId={hint} />}
       <div className="flex items-start gap-4">
         <Icon className={`size-10 shrink-0 ${order.status === "PAID" ? "text-success" : order.status === "PENDING_PAYMENT" || order.status === "REFUND_PENDING" ? "text-warning" : "text-muted-foreground"}`} aria-hidden />
         <div>
