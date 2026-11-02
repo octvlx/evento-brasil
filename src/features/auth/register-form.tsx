@@ -2,17 +2,19 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Alert, FieldError, Input, Label } from "@/components/ui/primitives";
 import { registerSchema, type RegisterInput } from "@/features/schemas";
 import { registerAction } from "./actions";
+import { PasswordChecklist, PasswordInput } from "./password-fields";
 
 export function RegisterForm({ next }: { next?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const form = useForm<RegisterInput>({ resolver: zodResolver(registerSchema), defaultValues: { name: "", email: "", password: "", phone: "" } });
+  const form = useForm<RegisterInput>({ resolver: zodResolver(registerSchema), defaultValues: { name: "", email: "", password: "", confirmPassword: "", phone: "" } });
+  const password = useWatch({ control: form.control, name: "password" }) ?? "";
   const { errors } = form.formState;
 
   const onSubmit = form.handleSubmit((values) =>
@@ -44,8 +46,14 @@ export function RegisterForm({ next }: { next?: string }) {
       </div>
       <div>
         <Label htmlFor="password">Senha</Label>
-        <Input id="password" type="password" autoComplete="new-password" className="mt-1.5" aria-invalid={!!errors.password} {...form.register("password")} />
-        <FieldError message={errors.password?.message} />
+        <PasswordInput id="password" autoComplete="new-password" className="mt-1.5" aria-invalid={!!errors.password} aria-describedby="password-error password-rules" {...form.register("password")} />
+        <FieldError id="password-error" message={errors.password?.message} />
+        <PasswordChecklist id="password-rules" password={password} />
+      </div>
+      <div>
+        <Label htmlFor="confirmPassword">Confirmar senha</Label>
+        <PasswordInput id="confirmPassword" autoComplete="new-password" className="mt-1.5" aria-invalid={!!errors.confirmPassword} aria-describedby="confirm-password-error" {...form.register("confirmPassword")} />
+        <FieldError id="confirm-password-error" message={errors.confirmPassword?.message} />
       </div>
       <fieldset className="space-y-2">
         <legend className="sr-only">Aceites</legend>

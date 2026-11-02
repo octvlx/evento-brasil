@@ -2,24 +2,26 @@ import "server-only";
 import { z } from "zod";
 import type { Db } from "../db";
 import { audit } from "../audit";
-import { hashPassword } from "../auth/password";
+import { PASSWORD_MESSAGES, newPasswordSchema } from "@/lib/password-policy";
+import { hashPassword, verifyPassword } from "../auth/password";
+import { assertAcceptableNewPassword } from "../auth/breached-password";
 import { hashToken, randomToken } from "../crypto";
 import { env } from "../env";
 import { AppError } from "../errors";
 import { authAppUrl } from "./email-verification";
 import { consumeEmailRateLimit, enqueueEmail } from "../email/outbox";
-import { authEmail } from "../email/templates";
+import { authEmail, passwordChangedEmail } from "../email/templates";
 
 export const PASSWORD_RESET_MESSAGE =
   "Se este endereço estiver associado a uma conta com senha, enviaremos um link de recuperação. Confira também a caixa de spam.";
 const emailSchema = z.string().trim().toLowerCase().email().max(200);
-const resetSchema = z.object({
-  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  password: z
-    .string()
-    .min(8, "A senha deve ter ao menos 8 caracteres.")
-    .max(200, "A senha deve ter no máximo 200 caracteres."),
-});
+const resetSchema = z
+  .object({
+    token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    password: newPasswordSchema,
+    confirmation: z.string(),
+  })
+  .refine((v) => v.password === v.confirmation, { path: ["password"], message: PASSWORD_MESSAGES.mismatch });
 const invalidLink = () =>
   new AppError(
     "VALIDATION",
@@ -125,17 +127,23 @@ export async function resetPassword(db: Db, raw: unknown) {
   }
   const token = await db.passwordResetToken.findUnique({
     where: { tokenHash: hashToken(parsed.data.token) },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, consumedAt: true, expiresAt: true },
   });
-  if (!token) throw invalidLink();
+  if (!token || token.consumedAt || token.expiresAt <= new Date()) throw invalidLink();
+  // Recusas da senha proposta acontecem antes de consumir o token: o link continua valendo.
+  await assertAcceptableNewPassword(parsed.data.password);
   const passwordHash = await hashPassword(parsed.data.password);
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${token.userId} FOR UPDATE`;
     const user = await tx.user.findUniqueOrThrow({
       where: { id: token.userId },
-      select: { email: true, status: true, googleSubject: true },
+      select: { email: true, status: true, googleSubject: true, passwordHash: true },
     });
     if (user.status !== "ACTIVE" || user.googleSubject) throw invalidLink();
+    // Compara pela verificação do hash (salts diferentes), sob a trava do usuário.
+    if (await verifyPassword(parsed.data.password, user.passwordHash)) {
+      throw new AppError("VALIDATION", PASSWORD_MESSAGES.sameAsPrevious);
+    }
     const now = new Date();
     const consumed = await tx.passwordResetToken.updateMany({
       where: { id: token.id, consumedAt: null, expiresAt: { gt: now } },
@@ -162,6 +170,12 @@ export async function resetPassword(db: Db, raw: unknown) {
         messageEncrypted: null,
         payloadEncrypted: null,
       },
+    });
+    await enqueueEmail(tx, {
+      dedupeKey: `password-changed:reset:${token.id}`,
+      template: "PASSWORD_CHANGED",
+      recipient: user.email,
+      message: passwordChangedEmail("reset", new URL("/esqueci-minha-senha", authAppUrl()).toString()),
     });
     await audit(tx, {
       actorUserId: token.userId,

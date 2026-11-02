@@ -87,7 +87,8 @@ test("first purchase preserves anonymous cart, verifies email, collects identity
     .getByLabel("Nome completo", { exact: true })
     .fill("Pessoa Revisão E2E");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
-  await page.getByLabel("Senha", { exact: true }).fill("senha-segura-e2e");
+  await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
+  await page.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
   await acceptSignupTerms(page);
   await page.getByRole("button", { name: "Criar conta", exact: true }).click();
   await page.waitForURL(/\/confirmar-email/);

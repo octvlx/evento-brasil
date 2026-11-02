@@ -91,3 +91,23 @@ export function transactionalEmail(
     text: [title, ...lines, label + ": " + url].join("\n"),
   };
 }
+/** Aviso de segurança após troca ou redefinição de senha. Nunca leva senha, hash ou token. */
+export function passwordChangedEmail(kind: "changed" | "reset", resetUrl: string) {
+  const what = kind === "changed" ? "alterada" : "redefinida";
+  const lines = [
+    "Olá!",
+    `A senha da sua conta Evento Brasil foi ${what} com sucesso.`,
+    "Se você realizou essa alteração, nenhuma ação adicional é necessária.",
+    "Se você não reconhece essa atividade, solicite imediatamente uma redefinição de senha e entre em contato com o suporte.",
+    "Equipe Evento Brasil.",
+  ];
+  return {
+    subject: `Evento Brasil — Sua senha foi ${what}`,
+    html: emailLayout(
+      `Sua senha foi ${what}`,
+      lines.map((line) => "<p>" + escapeHtml(line) + "</p>").join(""),
+      { label: "Não fui eu: redefinir senha", url: resetUrl },
+    ),
+    text: [...lines, "Não fui eu: " + resetUrl].join("\n"),
+  };
+}

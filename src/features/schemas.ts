@@ -2,6 +2,7 @@
 // O servidor SEMPRE revalida; nunca confia em preço/estoque vindos do cliente.
 import { z } from "zod";
 import { BR_TIMEZONES, isValidCNPJ, isValidCPF, isValidMobileBR, UF_CODES } from "@/lib/br";
+import { newPasswordSchema, PASSWORD_MAX_LENGTH, PASSWORD_MESSAGES } from "@/lib/password-policy";
 
 const trimmed = (min: number, max: number, msg = "Campo obrigatório") => z.string().trim().min(min, msg).max(max);
 const optionalText = (max: number) =>
@@ -19,19 +20,33 @@ const mobile = z
 const localDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Data/hora inválida");
 
 // ── Contas ──
-export const registerSchema = z.object({
-  name: trimmed(2, 120, "Informe seu nome"),
-  email,
-  password: z.string().min(8, "A senha deve ter ao menos 8 caracteres").max(200),
-  phone: mobile.optional(),
-  acceptTerms: z.literal(true, { error: "É preciso aceitar os termos de uso" }),
-  acceptPrivacy: z.literal(true, { error: "É preciso aceitar a política de privacidade" }),
-});
+export const registerSchema = z
+  .object({
+    name: trimmed(2, 120, "Informe seu nome"),
+    email,
+    password: newPasswordSchema,
+    // Só confere a digitação; nunca é gravado.
+    confirmPassword: z.string().min(1, "Confirme a senha"),
+    phone: mobile.optional(),
+    acceptTerms: z.literal(true, { error: "É preciso aceitar os termos de uso" }),
+    acceptPrivacy: z.literal(true, { error: "É preciso aceitar a política de privacidade" }),
+  })
+  .refine((v) => v.password === v.confirmPassword, { path: ["confirmPassword"], message: PASSWORD_MESSAGES.mismatch });
 export type RegisterInput = z.input<typeof registerSchema>;
 
 export const loginSchema = z.object({ email, password: z.string().min(1, "Informe a senha").max(200) });
 
 export const profileSchema = z.object({ name: trimmed(2, 120), phone: mobile.optional() });
+
+/** Troca de senha em Minha conta: a atual é obrigatória (prova de posse, não só a sessão). */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Informe a senha atual").max(PASSWORD_MAX_LENGTH * 2),
+    newPassword: newPasswordSchema,
+    confirmPassword: z.string().min(1, "Confirme a nova senha"),
+  })
+  .refine((v) => v.newPassword === v.confirmPassword, { path: ["confirmPassword"], message: PASSWORD_MESSAGES.newMismatch });
+export type ChangePasswordInput = z.input<typeof changePasswordSchema>;
 
 // ── Organizador ──
 export const organizerApplicationSchema = z

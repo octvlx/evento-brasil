@@ -31,6 +31,7 @@ import {
 } from "@/server/auth/current";
 import {
   authenticate,
+  changePassword,
   registerUser,
   updateProfile,
 } from "@/server/services/users";
@@ -177,6 +178,41 @@ export async function deleteAccountAction(
   }
   await clearSessionCookie();
   redirect("/conta-excluida");
+}
+
+export type ChangePasswordState = { ok?: boolean; error?: string; field?: "currentPassword" | "newPassword" | "confirmPassword" } | undefined;
+
+/** Troca de senha em Minha conta: identidade pela sessão, senha atual obrigatória, tentativas limitadas. */
+export async function changePasswordAction(
+  _prev: ChangePasswordState,
+  formData: FormData,
+): Promise<ChangePasswordState> {
+  const user = await requireUser("/minha-conta");
+  const key = `change-password:${user.id}`;
+  const WINDOW = 15 * 60_000;
+  try {
+    failureLimiter.assert(key, 5, WINDOW);
+  } catch (err) {
+    if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+  const input = {
+    currentPassword: String(formData.get("currentPassword") ?? ""),
+    newPassword: String(formData.get("newPassword") ?? ""),
+    confirmPassword: String(formData.get("confirmPassword") ?? ""),
+  };
+  const token = (await cookies()).get(SESSION_COOKIE)?.value ?? null;
+  const result = await toActionResult(() => changePassword(db, user, input, token));
+  if (!result.ok) {
+    if (result.error === "A senha atual está incorreta.") {
+      failureLimiter.fail(key, WINDOW);
+      return { error: result.error, field: "currentPassword" };
+    }
+    return { error: result.error };
+  }
+  failureLimiter.reset(key);
+  if (process.env.NODE_ENV !== "test") void dispatchEmailOutbox(db, { limit: 5 }).catch(() => {});
+  return { ok: true };
 }
 
 export async function currentUserSummary() {

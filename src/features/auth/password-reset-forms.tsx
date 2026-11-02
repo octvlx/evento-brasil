@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Alert, Input, Label } from "@/components/ui/primitives";
 import {
   requestPasswordResetAction,
   resetPasswordAction,
 } from "./password-reset-actions";
+import { PasswordChecklist, PasswordInput } from "./password-fields";
+import { PASSWORD_MESSAGES, passwordIssues } from "@/lib/password-policy";
 
 export function ForgotPasswordForm() {
   const router = useRouter();
@@ -79,14 +81,15 @@ export function ResetPasswordForm() {
   const [pending, start] = useTransition();
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [password, setPassword] = useState("");
   if (success)
     return (
       <div role="status" className="space-y-4">
-        <Alert>
-          Sua senha foi redefinida. As sessões anteriores foram encerradas.
+        <Alert variant="success">
+          Senha redefinida com sucesso! Você já pode entrar com sua nova senha.
         </Alert>
-        <Link href="/entrar" className="font-semibold text-secondary underline">
-          Entrar com a nova senha
+        <Link href="/entrar" className={buttonVariants({ className: "w-full", size: "lg" })}>
+          Entrar na minha conta
         </Link>
       </div>
     );
@@ -98,14 +101,20 @@ export function ResetPasswordForm() {
         event.preventDefault();
         const values = new FormData(event.currentTarget);
         const password = String(values.get("password") ?? "");
-        if (password !== values.get("confirmation")) {
-          setError("As senhas precisam ser iguais.");
+        const confirmation = String(values.get("confirmation") ?? "");
+        const [issue] = passwordIssues(password);
+        if (issue) {
+          setError(issue);
+          return;
+        }
+        if (password !== confirmation) {
+          setError(PASSWORD_MESSAGES.mismatch);
           return;
         }
         start(async () => {
           setError("");
           try {
-            const result = await resetPasswordAction(token, password);
+            const result = await resetPasswordAction(token, password, confirmation);
             if (!result.ok) {
               setError(result.error);
               return;
@@ -127,30 +136,25 @@ export function ResetPasswordForm() {
       )}
       <div>
         <Label htmlFor="new-password">Nova senha</Label>
-        <Input
+        <PasswordInput
           id="new-password"
           name="password"
-          type="password"
           autoComplete="new-password"
-          minLength={8}
-          maxLength={200}
           required
           className="mt-1.5"
           disabled={pending}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          aria-describedby="new-password-rules"
         />
-        <p className="mt-1 text-xs text-muted-foreground">
-          Use pelo menos 8 caracteres.
-        </p>
+        <PasswordChecklist id="new-password-rules" password={password} />
       </div>
       <div>
-        <Label htmlFor="confirm-password">Confirme a nova senha</Label>
-        <Input
+        <Label htmlFor="confirm-password">Confirmar nova senha</Label>
+        <PasswordInput
           id="confirm-password"
           name="confirmation"
-          type="password"
           autoComplete="new-password"
-          minLength={8}
-          maxLength={200}
           required
           className="mt-1.5"
           disabled={pending}

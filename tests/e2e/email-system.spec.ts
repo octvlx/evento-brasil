@@ -44,7 +44,8 @@ test("email recovery: console verification, reset, session revocation and safe l
   await page.goto("/registrar");
   await page.getByLabel("Nome completo", { exact: true }).fill("Pessoa Email");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
-  await page.getByLabel("Senha", { exact: true }).fill("senha-original-123");
+  await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
+  await page.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
   await acceptSignupTerms(page);
   await page.getByRole("button", { name: "Criar conta", exact: true }).click();
   await page.waitForURL(/\/confirmar-email/);
@@ -69,21 +70,21 @@ test("email recovery: console verification, reset, session revocation and safe l
   await page.goto(link);
   await page
     .getByLabel("Nova senha", { exact: true })
-    .fill("senha-nova-segura-123");
-  await page.getByLabel("Confirme a nova senha").fill("senha-nova-segura-123");
+    .fill("Recuperada#E2e1357");
+  await page.getByLabel("Confirmar nova senha", { exact: true }).fill("Recuperada#E2e1357");
   await page.getByRole("button", { name: "Redefinir minha senha" }).click();
   await expect(page.getByRole("status").first()).toContainText(
-    "Sua senha foi redefinida",
+    "Senha redefinida com sucesso!",
   );
   await page.goto("/minha-conta");
   await page.waitForURL(/\/entrar/);
   await page.getByLabel("E-mail", { exact: true }).fill(email);
-  await page.getByLabel("Senha", { exact: true }).fill("senha-nova-segura-123");
+  await page.getByLabel("Senha", { exact: true }).fill("Recuperada#E2e1357");
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
   await page.waitForURL(/\/minha-conta/);
   await page.goto(link);
-  await page.getByLabel("Nova senha", { exact: true }).fill("senha-replay-123");
-  await page.getByLabel("Confirme a nova senha").fill("senha-replay-123");
+  await page.getByLabel("Nova senha", { exact: true }).fill("Repeticao#E2e9753");
+  await page.getByLabel("Confirmar nova senha", { exact: true }).fill("Repeticao#E2e9753");
   await page.getByRole("button", { name: "Redefinir minha senha" }).click();
   await expect(page.getByRole("alert").first()).toContainText(
     "já foi utilizado",

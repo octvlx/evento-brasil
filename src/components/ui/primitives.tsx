@@ -80,7 +80,8 @@ export function Skeleton({ className, ...props }: ComponentProps<"div">) {
   return <div className={cn("animate-pulse rounded-xl bg-muted", className)} {...props} />;
 }
 
-export function FieldError({ message }: { message?: string }) {
+/** `id` permite ligar a mensagem ao campo com aria-describedby. */
+export function FieldError({ message, id }: { message?: string; id?: string }) {
   if (!message) return null;
-  return <p className="mt-1.5 text-xs font-medium text-destructive">{message}</p>;
+  return <p id={id} className="mt-1.5 text-xs font-medium text-destructive">{message}</p>;
 }

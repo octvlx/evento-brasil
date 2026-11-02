@@ -17,7 +17,7 @@ async function account() {
   const user = await makeUser();
   return db.user.update({
     where: { id: user.id },
-    data: { passwordHash: await hashPassword("old-password-123") },
+    data: { passwordHash: await hashPassword("Antiga#Senha77") },
   });
 }
 
@@ -52,13 +52,13 @@ describe("password recovery", () => {
       record.expiresAt.getTime() - record.createdAt.getTime(),
     ).toBeLessThanOrEqual(30 * 60_000);
     expect(
-      await resetPassword(db, { token, password: "new-password-456" }),
+      await resetPassword(db, { token, password: "Nova#Chave2580", confirmation: "Nova#Chave2580" }),
     ).toEqual({ reset: true });
     const updated = await db.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(await verifyPassword("new-password-456", updated.passwordHash)).toBe(
+    expect(await verifyPassword("Nova#Chave2580", updated.passwordHash)).toBe(
       true,
     );
-    expect(await verifyPassword("old-password-123", updated.passwordHash)).toBe(
+    expect(await verifyPassword("Antiga#Senha77", updated.passwordHash)).toBe(
       false,
     );
     expect(updated.emailVerifiedAt).toBeNull();
@@ -74,7 +74,7 @@ describe("password recovery", () => {
       payloadEncrypted: null,
     });
     await expect(
-      resetPassword(db, { token, password: "other-password-789" }),
+      resetPassword(db, { token, password: "Terceira#Via741", confirmation: "Terceira#Via741" }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
     expect(
       await db.auditLog.count({
@@ -88,8 +88,8 @@ describe("password recovery", () => {
     const user = await account();
     const token = await requestProof(user.email);
     const results = await Promise.allSettled([
-      resetPassword(db, { token, password: "concurrent-password-one" }),
-      resetPassword(db, { token, password: "concurrent-password-two" }),
+      resetPassword(db, { token, password: "Paralela#Uma852", confirmation: "Paralela#Uma852" }),
+      resetPassword(db, { token, password: "Paralela#Dois963", confirmation: "Paralela#Dois963" }),
     ]);
     expect(
       results.filter((result) => result.status === "fulfilled"),
@@ -105,7 +105,7 @@ describe("password recovery", () => {
     const user = await account();
     const token = await requestProof(user.email);
     await expect(
-      resetPassword(db, { token, password: "short" }),
+      resetPassword(db, { token, password: "short", confirmation: "short" }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
     expect(
       (await db.passwordResetToken.findFirstOrThrow()).consumedAt,
@@ -114,14 +114,14 @@ describe("password recovery", () => {
       data: { createdAt: new Date(-1000), expiresAt: new Date(0) },
     });
     await expect(
-      resetPassword(db, { token, password: "new-password-123" }),
+      resetPassword(db, { token, password: "Outra#Chave369", confirmation: "Outra#Chave369" }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
     await expect(
-      resetPassword(db, { token: "invalid", password: "new-password-123" }),
+      resetPassword(db, { token: "invalid", password: "Outra#Chave369", confirmation: "Outra#Chave369" }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
     expect(
       await verifyPassword(
-        "old-password-123",
+        "Antiga#Senha77",
         (await db.user.findUniqueOrThrow({ where: { id: user.id } }))
           .passwordHash,
       ),
@@ -194,14 +194,14 @@ describe("password recovery", () => {
       }),
     ).toBe(1);
     await expect(
-      resetPassword(db, { token: first, password: "first-password-123" }),
+      resetPassword(db, { token: first, password: "Primeira#Vez147", confirmation: "Primeira#Vez147" }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
     await db.user.update({
       where: { id: user.id },
       data: { status: "SUSPENDED" },
     });
     await expect(
-      resetPassword(db, { token: second, password: "second-password-123" }),
+      resetPassword(db, { token: second, password: "Segunda#Vez258", confirmation: "Segunda#Vez258" }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
   });
 });
