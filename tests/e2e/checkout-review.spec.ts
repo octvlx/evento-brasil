@@ -282,6 +282,11 @@ test("backend price change requires a second explicit confirmation without charg
   await page
     .getByRole("button", { name: "Revisar valores e ingressos" })
     .click();
+  // A revisão precisa estar pronta (valores congelados) antes de mudar o preço;
+  // sem isso, num servidor lento a revisão já sairia com o preço novo.
+  await expect(
+    page.getByRole("button", { name: "Confirmar e ir para pagamento" }),
+  ).toBeEnabled();
   const draftId = new URL(page.url()).pathname.split("/").pop()!;
   const original = (
     await sql<{ id: string; priceCents: number }>(

@@ -111,7 +111,11 @@ export async function emailLink(email: string, template: string, route: string) 
 
 /** Confirma o e-mail de uma conta recém-criada pelo link enviado (suíte isolada). */
 export async function confirmEmail(page: Page, email: string) {
-  await page.goto(await emailLink(email, "EMAIL_VERIFICATION", "confirmar-email"));
+  const link = await emailLink(email, "EMAIL_VERIFICATION", "confirmar-email");
+  // A página já costuma estar em /confirmar-email?next=…; o link só acrescenta #token=…,
+  // o que seria uma troca de âncora e não carregaria a confirmação. Sai antes.
+  await page.goto("about:blank");
+  await page.goto(link);
   await page.getByRole("button", { name: "Confirmar meu e-mail", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "E-mail confirmado com sucesso." })).toBeVisible();
 }
