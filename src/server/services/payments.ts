@@ -250,6 +250,9 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
       if (!unsettled) {
         // Segundo pagamento aprovado no mesmo checkout: vira um Payment próprio, marcado
         // para reembolso manual (aparece em /admin/pagamentos), fora do razão e do pedido.
+        // Aviso simultâneo do mesmo pagamento já o criou (sob a mesma trava do pedido).
+        const existing = await tx.payment.findUnique({ where: { provider_providerPaymentId: { provider: payment.provider, providerPaymentId: snapshot.providerPaymentId } }, select: { id: true } });
+        if (existing) return "duplicate_payment";
         const duplicate = await tx.payment.create({
           data: {
             orderId: payment.orderId,

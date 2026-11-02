@@ -162,6 +162,16 @@ describe("Checkout Pro: confirmação com e sem webhook", () => {
     expect(paid.payments.map((p) => p.id)).toEqual([payment.id]);
   });
 
+  it("avisos simultâneos do mesmo pagamento duplicado criam um único Payment marcado", async () => {
+    const { order, payment } = await checkoutOrder();
+    const a = checkoutAdapter();
+    await applyPaymentSnapshot(db, a, snapshot(payment.id, order.totalCents));
+    const dup = snapshot(payment.id, order.totalCents, { providerPaymentId: "999" });
+    const outcomes = await Promise.all([applyPaymentSnapshot(db, a, dup), applyPaymentSnapshot(db, a, dup), applyPaymentSnapshot(db, a, dup)]);
+    expect(outcomes).toEqual(["duplicate_payment", "duplicate_payment", "duplicate_payment"]);
+    expect(await db.payment.count({ where: { orderId: order.id, failureReason: DUPLICATE_PAYMENT_FLAG } })).toBe(1);
+  });
+
   it("estorno do pagamento duplicado no provedor não reembolsa o pedido nem revoga os ingressos", async () => {
     const { order, payment } = await checkoutOrder();
     const a = checkoutAdapter();
