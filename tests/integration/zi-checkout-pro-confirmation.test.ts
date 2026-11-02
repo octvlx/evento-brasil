@@ -114,7 +114,8 @@ describe("Checkout Pro: confirmação com e sem webhook", () => {
       reconcileOrderPayments(db, a, order.id),
       reconcileOrderPayments(db, a, order.id),
     ]);
-    expect(outcomes.filter((o) => o === "paid")).toHaveLength(1);
+    // Quem pegar a trava primeiro confirma: o webhook devolve "paid"; a reconciliação, "updated".
+    expect(outcomes.filter((o) => o === "paid" || o === "updated")).toHaveLength(1);
     const s = await state(order.id);
     expect(s.tickets).toBe(3);
     expect(await db.financialLedgerEntry.count({ where: { orderId: order.id, type: "SALE" } })).toBeGreaterThan(0);
