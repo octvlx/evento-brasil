@@ -4,7 +4,7 @@ import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { assertEventPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
 import { AppError } from "../errors";
-import type { PaymentProviderAdapter } from "../payments/types";
+import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { assertEventTransition } from "./events";
 import { lockCouponsOfOrders, lockEvent, releaseOrderTx } from "./orders";
 import { closePendingTransfersTx, processRefund } from "./refunds";
@@ -40,7 +40,7 @@ export async function cancelEvent(
     await tx.issuedTicket.updateMany({ where: { eventId, status: "VALID" }, data: { status: "REVOKED", revokedAt: now, revocationReason: "EVENT_CANCELLED" } });
     const transfersClosed = await closePendingTransfersTx(tx, { eventId }, "Evento cancelado", now);
 
-    const paid = await tx.order.findMany({ where: { eventId, status: "PAID" }, include: { payments: { where: { status: "PAID" } } } });
+    const paid = await tx.order.findMany({ where: { eventId, status: "PAID" }, include: { payments: VALID_PAID_PAYMENTS } });
     await enqueueCancelledEventEmailsTx(tx, eventId);
     const refundIds: string[] = [];
     for (const o of paid) {

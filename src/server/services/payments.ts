@@ -7,7 +7,7 @@ import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
-import { PaymentNotStartedError, type PaymentProviderAdapter, type ProviderPaymentSnapshot, type WebhookRequest } from "../payments/types";
+import { DUPLICATE_PAYMENT_FLAG, PaymentNotStartedError, type PaymentProviderAdapter, type ProviderPaymentSnapshot, type WebhookRequest } from "../payments/types";
 import { assertCheckoutReviewed } from "./checkout-review";
 import { financeLog } from "./finance-log";
 import { postProcessingFee, postReversal, postSale } from "./ledger";
@@ -248,11 +248,32 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
       // depois pagar com saldo. Só a tentativa aprovada substitui a vinculada.
       if (snapshot.status !== "PAID") return "no_change";
       if (!unsettled) {
+        // Segundo pagamento aprovado no mesmo checkout: vira um Payment próprio, marcado
+        // para reembolso manual (aparece em /admin/pagamentos), fora do razão e do pedido.
+        // Aviso simultâneo do mesmo pagamento já o criou (sob a mesma trava do pedido).
+        const existing = await tx.payment.findUnique({ where: { provider_providerPaymentId: { provider: payment.provider, providerPaymentId: snapshot.providerPaymentId } }, select: { id: true } });
+        if (existing) return "duplicate_payment";
+        const duplicate = await tx.payment.create({
+          data: {
+            orderId: payment.orderId,
+            provider: payment.provider,
+            providerPaymentId: snapshot.providerPaymentId,
+            providerPreferenceId: payment.providerPreferenceId,
+            method: payment.method,
+            status: "PAID",
+            amountCents: snapshot.amountCents,
+            providerRawStatus: snapshot.rawStatus,
+            failureReason: DUPLICATE_PAYMENT_FLAG,
+            isSimulated: payment.isSimulated,
+            idempotencyKey: `${payment.idempotencyKey}:duplicate:${snapshot.providerPaymentId}`,
+            paidAt: new Date(),
+          },
+        });
         await audit(tx, {
           action: "payment.duplicate_provider_payment",
           entityType: "Payment",
-          entityId: payment.id,
-          metadata: { providerPaymentId: snapshot.providerPaymentId },
+          entityId: duplicate.id,
+          metadata: { attemptPaymentId: payment.id, providerPaymentId: snapshot.providerPaymentId },
         });
         return "duplicate_payment";
       }
@@ -268,6 +289,17 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
     }
     const order = await tx.order.findUniqueOrThrow({ where: { id: ref.orderId }, include: { items: true, commissionRule: true } });
     const now = new Date();
+
+    // Pagamento duplicado já marcado: só acompanha o status no provedor (ex.: o admin
+    // estornou no painel). Nunca mexe no pedido, nos ingressos nem no razão — o
+    // pagamento válido do pedido é outro.
+    if (payment.failureReason === DUPLICATE_PAYMENT_FLAG) {
+      if (snapshot.status !== payment.status && ["REFUNDED", "CHARGED_BACK", "DISPUTED", "PAID"].includes(snapshot.status)) {
+        await tx.payment.update({ where: { id: payment.id }, data: { status: snapshot.status, providerRawStatus: snapshot.rawStatus } });
+        await audit(tx, { organizationId: order.organizationId, action: "payment.duplicate_status_changed", entityType: "Payment", entityId: payment.id, metadata: { status: snapshot.status } });
+      }
+      return "duplicate_payment";
+    }
 
     if (snapshot.amountCents !== payment.amountCents || payment.amountCents !== order.totalCents) {
       await tx.payment.update({ where: { id: payment.id }, data: { failureReason: "AMOUNT_MISMATCH", providerRawStatus: snapshot.rawStatus } });
@@ -320,7 +352,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
           const paidByOther = await tx.payment.count({ where: { orderId: order.id, status: "PAID", NOT: { id: payment.id } } });
           if (!wasPaid && paidByOther > 0) {
             // Segundo pagamento para o mesmo pedido: sinaliza para reembolso manual.
-            await markPayment({ failureReason: "DUPLICATE_PAYMENT_REQUIRES_REFUND" });
+            await markPayment({ failureReason: DUPLICATE_PAYMENT_FLAG });
             await audit(tx, { organizationId: order.organizationId, action: "payment.duplicate", entityType: "Payment", entityId: payment.id });
             return "duplicate_payment";
           }
@@ -422,6 +454,8 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
 export async function handlePaymentWebhook(db: Db, adapter: PaymentProviderAdapter, req: WebhookRequest): Promise<{ status: number; body: string }> {
   const verification = await adapter.verifyWebhook(req);
   if (!verification.valid) {
+    // Ignorado: nada é lido nem gravado a partir dele.
+    if (verification.ignore) return { status: 200, body: "ignored" };
     console.warn(`[webhook:${adapter.id}] rejeitado: ${verification.reason}`);
     return { status: 401, body: "invalid signature" };
   }
