@@ -106,6 +106,8 @@ jobs:
     env:
       # Banco descartável do job; o runner gera os demais segredos a cada execução.
       E2E_DATABASE_URL: postgresql://evento_e2e:evento_e2e_pw@localhost:5432/evento_e2e
+      # O `prisma generate` do npm ci lê o prisma.config.ts, que exige DATABASE_URL.
+      DATABASE_URL: postgresql://evento_e2e:evento_e2e_pw@localhost:5432/evento_e2e
       PW_CHANNEL: chromium
       NEXT_TELEMETRY_DISABLED: "1"
       VITE_CONFIG_NATIVE_IGNORE_WARNING: "true"
