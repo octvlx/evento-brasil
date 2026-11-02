@@ -3,11 +3,20 @@
 //
 // No Windows, executáveis em caminhos com mais de 260 caracteres não podem ser
 // iniciados; por isso os binários são copiados uma vez para um diretório curto
-// em os.tmpdir() quando o projeto está num caminho longo.
+// em localStateDir() quando o projeto está num caminho longo.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+/**
+ * Diretório curto e persistente para o PostgreSQL local. Nunca os.tmpdir():
+ * a limpeza de temporários do Windows apaga arquivos do cluster e corrompe o banco.
+ */
+export function localStateDir() {
+  if (process.platform === "win32") return path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"), "evento-brasil");
+  return path.join(process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share"), "evento-brasil");
+}
 
 function nativeDir() {
   const pkg = `@embedded-postgres/${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`;
@@ -15,7 +24,7 @@ function nativeDir() {
   const dir = path.join(pkgDir, "native");
   if (process.platform !== "win32" || dir.length < 180) return dir;
   const version = JSON.parse(readFileSync(path.join(pkgDir, "package.json"), "utf8")).version;
-  const shortDir = path.join(os.tmpdir(), "evento-brasil-pg", version);
+  const shortDir = path.join(localStateDir(), "pg", version);
   if (!existsSync(path.join(shortDir, "bin", "pg_ctl.exe"))) {
     mkdirSync(shortDir, { recursive: true });
     cpSync(dir, shortDir, { recursive: true });

@@ -902,7 +902,7 @@ This section maps the generic spec above to the real repository. Where they diff
 | Option | How |
 |---|---|
 | Docker | `docker compose up -d` (`docker-compose.yml`, port **5433** → 5432, volume `pgdata`, health check) |
-| No Docker (Windows/macOS/Linux) | `npm run db:start` → `scripts/dev-db.mjs` + `scripts/pg-local.mjs` (embedded PostgreSQL, data under `%TEMP%`/`os.tmpdir()/evento-brasil-pgdata/<port>` because of Windows path limits; detects an already-running server; refuses `NODE_ENV=production`) |
+| No Docker (Windows/macOS/Linux) | `npm run db:start` → `scripts/dev-db.mjs` + `scripts/pg-local.mjs` (embedded PostgreSQL, data under `%LOCALAPPDATA%\evento-brasil\pgdata\<port>` (Windows) or `~/.local/share/evento-brasil/pgdata/<port>`, short for Windows path limits and never under `os.tmpdir()`, which Windows cleanup corrupts; `DEV_PG_DATA_DIR` overrides; detects an already-running server; refuses `NODE_ENV=production`) |
 | One-click Windows installer | `INICIAR-EVENTO-BRASIL.bat` (+ `scripts/setup-helper.mjs`) |
 
 Default dev URL: `postgresql://evento:…@localhost:5433/evento_brasil` (`.env.example`). Never commit `.env`.
