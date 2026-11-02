@@ -212,6 +212,25 @@ real e conectar um vendedor de teste faz o checkout falhar ao enviar o cartão,
 sem criar pagamento. Contas de teste normalmente não têm chave PIX: no sandbox,
 use o cartão; o PIX ponta a ponta é validado com uma compra real de valor mínimo.
 
+**Formas de pagamento:** PIX → só PIX. Cartão → crédito (à vista), débito e
+pré-pago; boleto fica de fora (compensação maior que a reserva). O saldo
+Mercado Pago aparece sempre (não pode ser excluído).
+
+**Confirmação na volta do checkout:** as `back_urls` levam a `/pedido/<id>` com
+`payment_id`/`collection_id`. Esse id é só uma pista: o servidor consulta
+`GET /v1/payments/{id}` com o token do vendedor do pedido e só aplica o
+resultado se o `external_reference` for uma tentativa deste pedido (valor
+conferido). Isso confirma o pedido na hora mesmo sem webhook — pagamentos com
+credenciais de teste não enviam notificações, e o `notification_url` fica preso
+ao túnel do momento em que o checkout foi criado.
+
+**Limitações observadas no sandbox (02/11/2026):** com credenciais de teste,
+`/v1/payments/search?external_reference=` não encontrou um pagamento aprovado
+que `GET /v1/payments/{id}` lia normalmente (a reconciliação por referência fica
+cega no sandbox); e o estorno desse pagamento (saldo em conta) respondeu 404
+"Payment not found". Investigar com um pagamento de cartão de teste antes de
+concluir se é limitação do sandbox.
+
 **Credenciais de sandbox via OAuth:** a documentação de OAuth do Mercado Pago
 manda enviar `test_token=true` na troca do código para obter credenciais de
 sandbox do vendedor. Com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true` (fora de

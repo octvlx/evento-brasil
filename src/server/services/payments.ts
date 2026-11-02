@@ -190,6 +190,24 @@ export async function syncPaymentFromProvider(
   return applyPaymentSnapshot(db, adapter, snapshot);
 }
 
+/**
+ * Volta do checkout externo (Checkout Pro): o `payment_id` da URL é só uma pista.
+ * O status vem da consulta autenticada ao provedor com a conta do vendedor deste
+ * pedido, e só é aplicado se a referência externa do pagamento for uma tentativa
+ * deste pedido (o valor é conferido em `applyPaymentSnapshot`). Também vincula o
+ * id do pagamento, para as próximas consultas e a reconciliação.
+ */
+export async function confirmReturnedPayment(db: Db, adapter: PaymentProviderAdapter, actor: Actor, orderId: string, providerPaymentId: string) {
+  if (!/^\d{1,24}$/.test(providerPaymentId)) return "ignored" as const;
+  const order = await db.order.findUnique({ where: { id: orderId }, select: { userId: true, organizationId: true, payments: { where: { provider: adapter.id }, select: { id: true, status: true, providerPaymentId: true } } } });
+  if (!order || order.userId !== actor.id) return "ignored" as const;
+  const open = order.payments.some((p) => p.status === "PENDING" || p.providerPaymentId === providerPaymentId);
+  if (!open) return "ignored" as const;
+  const snapshot = await adapter.getPayment(providerPaymentId, { organizationId: order.organizationId });
+  if (!snapshot.externalReference || !order.payments.some((p) => p.id === snapshot.externalReference)) return "ignored" as const;
+  return applyPaymentSnapshot(db, adapter, snapshot);
+}
+
 export type ApplyOutcome =
   | "unknown_payment"
   | "amount_mismatch"

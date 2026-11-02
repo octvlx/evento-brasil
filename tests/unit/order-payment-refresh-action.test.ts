@@ -4,6 +4,7 @@ const m = vi.hoisted(() => ({
   requireUser: vi.fn(),
   findOrder: vi.fn(),
   reconcile: vi.fn(),
+  confirmReturned: vi.fn(),
   refresh: vi.fn(),
 }));
 vi.mock("next/headers", () => ({ cookies: vi.fn(), headers: vi.fn() }));
@@ -14,7 +15,7 @@ vi.mock("@/server/env", () => ({ env: () => ({}), isProduction: () => false }));
 vi.mock("@/server/auth/current", () => ({ requireUser: m.requireUser, getCurrentUser: vi.fn(), requireAdmin: vi.fn() }));
 vi.mock("@/server/payments", () => ({ getPaymentAdapter: () => ({ id: "mercadopago" }), getSimulatedAdapter: vi.fn() }));
 vi.mock("@/server/services/reconciliation", () => ({ reconcileOrderPayments: m.reconcile }));
-vi.mock("@/server/services/payments", () => ({ handlePaymentWebhook: vi.fn(), startPayment: vi.fn() }));
+vi.mock("@/server/services/payments", () => ({ confirmReturnedPayment: m.confirmReturned, handlePaymentWebhook: vi.fn(), startPayment: vi.fn() }));
 vi.mock("@/server/services/checkout-review", () => ({}));
 vi.mock("@/server/services/orders", () => ({}));
 vi.mock("@/server/services/refunds", () => ({}));
@@ -45,6 +46,21 @@ describe("refreshPaymentStatusAction", () => {
     expect(await refreshPaymentStatusAction(id)).toBe("updated");
     expect(m.reconcile).toHaveBeenCalledWith(expect.anything(), { id: "mercadopago" }, id);
     expect(m.refresh).toHaveBeenCalled();
+  });
+
+  it("confere no provedor o id devolvido pelo Checkout Pro e ainda reconcilia o pedido", async () => {
+    m.findOrder.mockResolvedValue({ userId: "buyer" });
+    m.confirmReturned.mockRejectedValue(new Error("provider down"));
+    const id = `order-${++n}`;
+    expect(await refreshPaymentStatusAction(id, "123456")).toBe("updated");
+    expect(m.confirmReturned).toHaveBeenCalledWith(expect.anything(), { id: "mercadopago" }, { id: "buyer" }, id, "123456");
+    expect(m.reconcile).toHaveBeenCalledWith(expect.anything(), { id: "mercadopago" }, id);
+  });
+
+  it("sem pista na URL, não consulta pagamento por id", async () => {
+    m.findOrder.mockResolvedValue({ userId: "buyer" });
+    await refreshPaymentStatusAction(`order-${++n}`);
+    expect(m.confirmReturned).not.toHaveBeenCalled();
   });
 
   it("limita a frequência por comprador e pedido", async () => {

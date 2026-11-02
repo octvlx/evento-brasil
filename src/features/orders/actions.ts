@@ -11,7 +11,7 @@ import { getCurrentUser, requireAdmin, requireUser } from "@/server/auth/current
 import { getPaymentAdapter, getSimulatedAdapter } from "@/server/payments";
 import { checkoutReadiness, createCheckoutDraft, prepareCheckoutReview } from "@/server/services/checkout-review";
 import { cancelPendingOrder } from "@/server/services/orders";
-import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
+import { confirmReturnedPayment, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { reconcileOrderPayments, type OrderPaymentCheck } from "@/server/services/reconciliation";
 import { rateLimit } from "@/server/rate-limit";
 import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
@@ -108,9 +108,10 @@ export async function simulatePaymentAction(orderId: string, action: SimulatedAc
 
 /**
  * O comprador pede para reconsultar o status (nunca confia no redirect nem em ids da URL):
- * o pagamento é localizado pelo checkout da tentativa registrada no pedido.
+ * o pagamento é localizado pelo checkout da tentativa registrada no pedido. O id que o
+ * Checkout Pro devolve na URL (back_urls) é só uma pista, conferida no provedor.
  */
-export async function refreshPaymentStatusAction(orderId: string): Promise<OrderPaymentCheck | "rate_limited" | "forbidden"> {
+export async function refreshPaymentStatusAction(orderId: string, returnedPaymentId?: string): Promise<OrderPaymentCheck | "rate_limited" | "forbidden"> {
   const user = await requireUser(`/pedido/${orderId}`);
   const order = await db.order.findUnique({ where: { id: orderId }, select: { userId: true } });
   if (!order || order.userId !== user.id) return "forbidden";
@@ -119,7 +120,9 @@ export async function refreshPaymentStatusAction(orderId: string): Promise<Order
   } catch {
     return "rate_limited";
   }
-  const result = await reconcileOrderPayments(db, getPaymentAdapter(), orderId);
+  const adapter = getPaymentAdapter();
+  if (returnedPaymentId) await confirmReturnedPayment(db, adapter, user, orderId, returnedPaymentId).catch(() => {});
+  const result = await reconcileOrderPayments(db, adapter, orderId);
   refresh();
   return result;
 }

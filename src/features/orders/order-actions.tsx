@@ -8,9 +8,10 @@ import { refreshPaymentStatusAction, requestRefundAction } from "./actions";
 
 /**
  * Reconsulta o provedor enquanto o pedido está pendente (nunca confia no redirect):
- * logo ao abrir e depois a cada 12 s por até 6 min; nos intervalos, só relê o banco.
+ * logo ao abrir (com o id devolvido pelo Checkout Pro, se houver) e depois a cada 12 s
+ * por até 6 min; nos intervalos, só relê o banco.
  */
-export function PendingPoller({ orderId }: { orderId: string }) {
+export function PendingPoller({ orderId, returnedPaymentId }: { orderId: string; returnedPaymentId?: string | null }) {
   const router = useRouter();
   const [check, setCheck] = useState<Awaited<ReturnType<typeof refreshPaymentStatusAction>> | null>(null);
   const [pending, start] = useTransition();
@@ -18,7 +19,8 @@ export function PendingPoller({ orderId }: { orderId: string }) {
     let n = 0;
     const tick = async () => {
       n++;
-      if (n === 1 || n % 4 === 0) setCheck(await refreshPaymentStatusAction(orderId));
+      if (n === 1) setCheck(await refreshPaymentStatusAction(orderId, returnedPaymentId ?? undefined));
+      else if (n % 4 === 0) setCheck(await refreshPaymentStatusAction(orderId));
       else router.refresh();
     };
     void tick();
@@ -27,7 +29,7 @@ export function PendingPoller({ orderId }: { orderId: string }) {
       void tick();
     }, 3000);
     return () => clearInterval(t);
-  }, [orderId, router]);
+  }, [orderId, returnedPaymentId, router]);
   return (
     <div className="mt-4 flex flex-wrap items-center gap-3 text-sm" aria-live="polite">
       <Button size="sm" variant="outline" disabled={pending} onClick={() => start(async () => setCheck(await refreshPaymentStatusAction(orderId)))}>
