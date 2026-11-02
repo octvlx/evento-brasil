@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { acceptSignupTerms, login, USERS } from "./helpers";
+import { acceptSignupTerms, login, USERS, confirmEmail } from "./helpers";
 
 test("organizador cria uma segunda organização e alterna entre elas", async ({ page }) => {
   const stamp = Date.now();
@@ -14,7 +14,10 @@ test("organizador cria uma segunda organização e alterna entre elas", async ({
   await page.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
   await acceptSignupTerms(page);
   await page.getByRole("button", { name: "Criar conta" }).click();
-  await page.waitForURL(/\/organizador\/cadastro/);
+  // Conta nova confirma o e-mail antes de seguir para o cadastro de organizador.
+  await page.waitForURL(/\/confirmar-email/);
+  await confirmEmail(page, `org-e2e+${stamp}@test.local`);
+  await page.goto("/organizador/cadastro");
 
   const fill = async (name: string) => {
     await page.getByLabel("Nome público").fill(name);

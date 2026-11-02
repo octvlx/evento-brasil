@@ -38,6 +38,9 @@ const schema = z.object({
   EMAIL_API_KEY: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_REPLY_TO: z.union([z.literal(""), z.string().email()]).optional(),
+  // Cadastros por IP por hora (anti-abuso). A suíte e2e isolada cria muitas contas do
+  // mesmo endereço e sobe o valor; em produção fica o padrão.
+  SIGNUP_RATE_LIMIT_PER_HOUR: int(5),
   EMAIL_VERIFICATION_EXPIRATION_MINUTES: int(30),
   PASSWORD_RESET_EXPIRATION_MINUTES: int(30),
   // Consulta de senhas vazadas (Pwned Passwords, k-anonimato). Ligada por padrão, exceto

@@ -1,6 +1,7 @@
 # Verificação automática de cada pull request e de cada push na main.
 # Roda lint, typecheck, testes unitários, testes de integração (PostgreSQL real)
-# e o build de produção. Os testes E2E (Playwright) rodam localmente.
+# e o build de produção. O job e2e roda a suíte Playwright isolada
+# (scripts/test-e2e.mjs) contra um Postgres descartável.
 name: CI
 
 on:
@@ -82,3 +83,54 @@ jobs:
           # Build sem chamadas externas; preserva a proibição do simulador em produção.
           PAYMENT_PROVIDER: mercadopago
         run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: evento_e2e
+          POSTGRES_PASSWORD: evento_e2e_pw
+          POSTGRES_DB: evento_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evento_e2e -d evento_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Banco descartável do job; o runner gera os demais segredos a cada execução.
+      E2E_DATABASE_URL: postgresql://evento_e2e:evento_e2e_pw@localhost:5432/evento_e2e
+      PW_CHANNEL: chromium
+      NEXT_TELEMETRY_DISABLED: "1"
+      VITE_CONFIG_NATIVE_IGNORE_WARNING: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Navegador do Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Testes E2E
+        run: npm run test:e2e:isolated
+
+      - name: Rastros das falhas
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: test-results/
+          retention-days: 7

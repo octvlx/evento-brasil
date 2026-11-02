@@ -1,38 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import pg from "pg";
-import { acceptSignupTerms } from "./helpers";
-async function emailLink(email: string, template: string, route: string) {
-  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    let link = "";
-    await expect
-      .poll(async () => {
-        const { rows } = await client.query(
-          'SELECT "providerMessageId" FROM "EmailOutbox" WHERE recipient=$1 AND template=$2 AND status=\'SENT\' ORDER BY "createdAt" DESC LIMIT 1',
-          [email, template],
-        );
-        if (!rows[0]?.providerMessageId) return false;
-        const filename =
-          rows[0].providerMessageId.replace(/^console:/, "") + ".html";
-        const html = await readFile(
-          path.resolve(".data/outbox", filename),
-          "utf8",
-        );
-        const match = html.match(
-          new RegExp('href="([^\"]*' + route + '[^\"]*)"'),
-        );
-        link = match?.[1]?.replace(/&amp;/g, "&") ?? "";
-        return !!link;
-      })
-      .toBe(true);
-    return link;
-  } finally {
-    await client.end();
-  }
-}
+import { acceptSignupTerms, emailLink } from "./helpers";
 test("email recovery: console verification, reset, session revocation and safe login", async ({
   page,
 }) => {
