@@ -5,7 +5,7 @@ import { hashPassword } from "@/server/auth/password";
 import { createSession } from "@/server/auth/sessions";
 import { accountDeletionBlockers, deleteOwnAccount } from "@/server/services/account-deletion";
 import { PURGE_INTERVAL_MS, runRetentionPurge, runRetentionPurgeIfDue } from "@/server/services/retention-purge";
-import { authenticate } from "@/server/services/users";
+import { authenticate, setUserSuspended } from "@/server/services/users";
 import { REDACTED_NAME, redactedEmail } from "@/server/retention";
 import { makeBuyerReady } from "../support/buyer-ready";
 import { buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
@@ -88,6 +88,9 @@ describe("exclusão da conta pelo titular", () => {
     expect(await db.financialLedgerEntry.count({ where: { orderId: order.id } })).toBeGreaterThan(0);
 
     await expect(deleteOwnAccount(db, { ...user, status: "ACTIVE" }, { password: PASSWORD })).rejects.toThrow(/já foi excluída/);
+    const admin = await makeUser({ admin: true });
+    await expect(setUserSuspended(db, admin, user.id, false)).rejects.toThrow(/não pode ser reativada/);
+    expect((await db.user.findUniqueOrThrow({ where: { id: user.id } })).status).toBe("SUSPENDED");
   });
 
   it("conta do Google confirma digitando o e-mail", async () => {

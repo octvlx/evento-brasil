@@ -38,7 +38,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ q?: string }>
           <li key={u.id} className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
             <div>
               <p className="font-semibold">
-                {u.name} {u.platformRole === "ADMIN" && <Badge variant="primary">Admin</Badge>} {u.status === "SUSPENDED" && <Badge variant="danger">Suspenso</Badge>}{" "}
+                {u.name} {u.platformRole === "ADMIN" && <Badge variant="primary">Admin</Badge>} {u.anonymizedAt ? <Badge>Conta excluída</Badge> : u.status === "SUSPENDED" && <Badge variant="danger">Suspenso</Badge>}{" "}
                 {u.isDemoAccount && <Badge variant="warning">demo</Badge>}
               </p>
               <p className="text-xs text-muted-foreground">
@@ -46,6 +46,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ q?: string }>
               </p>
             </div>
             {u.id !== admin.id &&
+              !u.anonymizedAt &&
               (u.status === "ACTIVE" ? (
                 <AdminActionButton label="Suspender" variant="destructive" askReason="Motivo" reasonRequired action={suspendUserAction.bind(null, u.id, true)} />
               ) : (

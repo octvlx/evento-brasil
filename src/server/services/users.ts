@@ -110,6 +110,10 @@ export async function setUserSuspended(
       "VALIDATION",
       "Você não pode suspender a própria conta.",
     );
+  const target = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { anonymizedAt: true } });
+  // Conta excluída pelo titular: fica suspensa e anonimizada para sempre.
+  if (target.anonymizedAt)
+    throw new AppError("INVALID_STATE", "Esta conta foi excluída pelo titular e não pode ser reativada.");
   const user = await db.user.update({
     where: { id: userId },
     data: {
