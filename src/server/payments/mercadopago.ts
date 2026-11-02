@@ -39,11 +39,15 @@ type SellerMethod = z.infer<typeof methodsSchema>[number];
 
 /**
  * Métodos do Mercado Pago aceitos para o método escolhido no site: PIX → só PIX;
- * cartão → só cartões de crédito (débito e pré-pago ficam de fora).
+ * cartão → crédito (à vista), débito e pré-pago. Boleto fica de fora (compensação
+ * de dias não cabe na reserva de 15 minutos).
  * O saldo em conta (`account_money`) não pode ser excluído e sempre aparece.
  */
+export const CARD_PAYMENT_TYPES = ["credit_card", "debit_card", "prepaid_card"] as const;
 export function allowedCheckoutMethods(methods: SellerMethod[], method: "PIX" | "CREDIT_CARD") {
-  return methods.filter((m) => (method === "PIX" ? m.id === "pix" : m.payment_type_id === "credit_card"));
+  return methods.filter((m) =>
+    method === "PIX" ? m.id === "pix" : (CARD_PAYMENT_TYPES as readonly string[]).includes(m.payment_type_id ?? ""),
+  );
 }
 
 /**
@@ -302,6 +306,7 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
         ...checkoutExclusions(methods.data, allowed),
         // Cartão só à vista: parcelado com juros mudaria o valor pago em relação ao pedido.
         ...(card ? { installments: 1 } : {}),
+        // Debito/pré-pago não parcelam; o limite acima vale para o crédito.
       },
       notification_url: new URL("/api/webhooks/mercadopago", appUrl).href,
       back_urls: {

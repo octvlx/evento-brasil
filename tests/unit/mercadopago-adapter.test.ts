@@ -125,7 +125,7 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(warning).toHaveBeenCalledWith('[mercadopago] {"phase":"pix_method_unavailable","methods":1}');
   });
 
-  it("credit card: checkout with credit cards only, single installment, even without PIX", async () => {
+  it("card: credit (single installment), debit and prepaid cards, no boleto, even without PIX", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(Response.json([
         { id: "visa", payment_type_id: "credit_card" },
@@ -144,13 +144,13 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     const result = await adapter().createPayment({ ...pixInput(), method: "CREDIT_CARD" });
     expect(result).toMatchObject({ providerPreferenceId: "pref-card", checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=x" });
     const body = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body));
-    // master continua permitido (crédito); o pré-pago sai pelo tipo. account_money nunca é excluído (400 no Mercado Pago).
-    expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }, { id: "debvisa" }]);
-    expect(body.payment_methods.excluded_payment_types).toEqual([{ id: "prepaid_card" }, { id: "ticket" }, { id: "debit_card" }]);
+    // Crédito, débito e pré-pago ficam; só o boleto sai. account_money nunca é excluído (400 no Mercado Pago).
+    expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }]);
+    expect(body.payment_methods.excluded_payment_types).toEqual([{ id: "ticket" }]);
     expect(body.payment_methods.installments).toBe(1);
   });
 
-  it("credit card: refuses before any charge when the seller has no credit cards", async () => {
+  it("card: refuses before any charge when the seller has no cards", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.mocked(fetch).mockResolvedValueOnce(Response.json([{ id: "pix", payment_type_id: "bank_transfer" }]));
     await expect(adapter().createPayment({ ...pixInput(), method: "CREDIT_CARD" })).rejects.toMatchObject({ reason: "CARD_UNAVAILABLE" });

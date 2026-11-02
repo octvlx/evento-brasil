@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkInTicket } from "@/server/services/checkin";
 import { createOrder, expireStaleOrders } from "@/server/services/orders";
-import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
+import { confirmReturnedPayment, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { adminRefundOrder, confirmRefundTx, OverRefundError, processRefund, requestCustomerRefund } from "@/server/services/refunds";
 import { qrPayload } from "@/server/services/tickets";
@@ -56,6 +56,54 @@ describe("tentativas de pagamento concorrentes", () => {
       expect(await db.simulatedProviderPayment.count()).toBe(1);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it("volta do checkout externo: confirma pelo provedor, sem confiar na URL", async () => {
+    const { event, tt } = await setup();
+    const customer = await makeUser();
+    const intruder = await makeUser();
+    const order = await buy(customer, event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
+    const other = await buy(intruder, event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
+    const create = vi.spyOn(adapter, "createPayment").mockResolvedValue({
+      providerPaymentId: null,
+      providerPreferenceId: "pref-x",
+      status: "PENDING",
+      rawStatus: "preference_created",
+      checkoutUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-x",
+      expiresAt: order.expiresAt,
+    });
+    const attempt = await startPayment(db, adapter, customer, order.id, "CREDIT_CARD");
+    const otherAttempt = await startPayment(db, adapter, intruder, other.id, "CREDIT_CARD");
+    create.mockRestore();
+    const snapshot = (externalReference: string, amountCents: number) => ({
+      providerPaymentId: "187330752002",
+      externalReference,
+      status: "PAID" as const,
+      rawStatus: "approved:accredited",
+      amountCents,
+      processingFeeCents: 0,
+    });
+    const get = vi.spyOn(adapter, "getPayment");
+    try {
+      // Pista malformada: nem consulta o provedor.
+      expect(await confirmReturnedPayment(db, adapter, customer, order.id, "abc")).toBe("ignored");
+      // Outro comprador não confirma este pedido.
+      expect(await confirmReturnedPayment(db, adapter, intruder, order.id, "187330752002")).toBe("ignored");
+      expect(get).not.toHaveBeenCalled();
+      // Pagamento de OUTRO pedido apresentado na volta: ignorado.
+      get.mockResolvedValueOnce(snapshot(otherAttempt.id, other.totalCents));
+      expect(await confirmReturnedPayment(db, adapter, customer, order.id, "187330752002")).toBe("ignored");
+      expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PENDING_PAYMENT");
+      // Pagamento desta tentativa, aprovado no provedor: confirma e vincula o id.
+      get.mockResolvedValueOnce(snapshot(attempt.id, order.totalCents));
+      expect(await confirmReturnedPayment(db, adapter, customer, order.id, "187330752002")).toBe("paid");
+      expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PAID");
+      expect(await db.payment.findUniqueOrThrow({ where: { id: attempt.id } })).toMatchObject({ status: "PAID", providerPaymentId: "187330752002" });
+      expect(get).toHaveBeenLastCalledWith("187330752002", { organizationId: order.organizationId });
+    } finally {
+      get.mockRestore();
+      await db.order.update({ where: { id: other.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
     }
   });
 
