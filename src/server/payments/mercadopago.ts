@@ -8,7 +8,6 @@ import { AppError } from "../errors";
 import {
   getMercadoPagoAccessToken,
   getMercadoPagoAccessTokenForUser,
-  sandboxTokens,
 } from "./mercadopago-oauth";
 import {
   PaymentNotStartedError,
@@ -326,9 +325,7 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
         currency_id: "BRL",
         unit_price: amount(input.amountCents),
       }],
-      // Sandbox: o e-mail do comprador no Evento Brasil não é de um usuário de teste do
-      // Mercado Pago e diverge da conta logada no checkout, que então recusa o cartão.
-      ...(sandboxTokens() ? {} : { payer: { email: input.payer.email } }),
+      payer: { email: input.payer.email },
       external_reference: input.paymentId,
       marketplace_fee: amount(input.marketplace.applicationFeeCents),
       payment_methods: {
@@ -366,11 +363,12 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
         throw providerError();
       }
     }
-    const e = env();
-    const checkoutUrl =
-      e.NODE_ENV === "production"
-        ? parsed.data.init_point
-        : parsed.data.sandbox_init_point ?? parsed.data.init_point;
+    // O link segue a credencial do vendedor, não o ambiente da aplicação. Com token TEST-
+    // o checkout de sandbox só aceitou saldo em conta (cartão caía em /congrats/recover/error/);
+    // um vendedor de teste com credencial APP_USR- paga com cartão de teste pelo init_point.
+    const checkoutUrl = accessToken.startsWith("TEST-")
+      ? parsed.data.sandbox_init_point ?? parsed.data.init_point
+      : parsed.data.init_point;
     return {
       providerPaymentId: null,
       providerPreferenceId: parsed.data.id,

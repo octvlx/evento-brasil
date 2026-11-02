@@ -231,19 +231,26 @@ cega no sandbox); e o estorno desse pagamento (saldo em conta) respondeu 404
 "Payment not found". Investigar com um pagamento de cartão de teste antes de
 concluir se é limitação do sandbox.
 
-**Credenciais de sandbox via OAuth:** a documentação de OAuth do Mercado Pago
-manda enviar `test_token=true` na troca do código para obter credenciais de
-sandbox do vendedor. Com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true` (fora de
-produção), a conexão em `/organizador/configuracoes` faz isso; depois de mudar a
-variável, autorize o vendedor novamente. Em produção a aplicação não inicia com
-essa variável ligada. A compra de teste é feita logado como o **comprador de
-teste** da aplicação, numa janela anônima. Nesse modo a preferência sai **sem
-`payer.email`**: o e-mail do comprador no Evento Brasil não é de um usuário de teste
-do Mercado Pago e diverge da conta logada no checkout. Em produção o e-mail continua
-sendo enviado. Em 02/11/2026, um pagamento com
-credenciais de teste enviou webhooks `payment.created` assinados para a
-`notification_url` da preferência. Mesmo assim, não dependa disso: a página do
-pedido reconcilia sozinha (abaixo).
+**Credenciais do vendedor de teste:** o link do checkout segue a credencial do
+vendedor: token `TEST-` abre o `sandbox_init_point`; token `APP_USR-` abre o
+`init_point`, inclusive fora de produção.
+
+Em 02/11/2026, com o vendedor de teste conectado com `TEST-`
+(`MERCADO_PAGO_OAUTH_TEST_TOKEN=true`, que envia `test_token=true` na troca do código
+OAuth), o checkout de sandbox **só aceitou saldo em conta**. Todo pagamento com cartão
+de teste caiu em `/congrats/recover/error/` sem criar pagamento, inclusive numa
+preferência mínima, sem comissão nem restrições. Uma preferência criada com a credencial
+`APP_USR-` de um usuário de teste e aberta pelo `init_point` aprovou o Mastercard de
+teste (`payment_type_id: credit_card`, `live_mode: true`, sem dinheiro real, porque
+vendedor e comprador são usuários de teste).
+
+Por isso, para testar cartão, deixe `MERCADO_PAGO_OAUTH_TEST_TOKEN` desligado e conecte
+em `/organizador/configuracoes` o **usuário de teste vendedor**: o OAuth devolve um token
+`APP_USR-` dele. `MERCADO_PAGO_OAUTH_TEST_TOKEN=true` continua disponível para testar o
+saldo em conta no sandbox. Depois de mudar a variável, autorize o vendedor novamente.
+Em produção a aplicação não inicia com essa variável ligada. Webhooks
+`payment.created` assinados chegaram à `notification_url` da preferência nos testes.
+Mesmo assim, não dependa disso: a página do pedido reconcilia sozinha (abaixo).
 
 ### Confirmação do pagamento (webhook e reconciliação)
 
@@ -282,8 +289,10 @@ listou. Por isso a busca usa a merchant order primeiro.
 
 Fonte: documentação do Checkout Pro, páginas "Realizar compras de teste" e "Cartões de teste".
 
-1. Vendedor conectado com `MERCADO_PAGO_OAUTH_TEST_TOKEN=true`: o token começa com
-   `TEST-` e pertence a um **usuário de teste vendedor**.
+1. Vendedor conectado **sem** `MERCADO_PAGO_OAUTH_TEST_TOKEN`, autorizando o OAuth com
+   o **usuário de teste vendedor**. O token começa com `APP_USR-`, e o site abre o
+   checkout pelo `init_point` (`www.mercadopago.com.br`). Com token `TEST-` o cartão
+   não passa (acima).
 2. Faça o pedido no site e abra o checkout numa **janela anônima**. No Mercado Pago,
    entre como o **usuário de teste comprador** da mesma aplicação, e não com sua conta
    real. Se pedirem código por e-mail, use os 6 dígitos indicados para a conta de teste.
@@ -293,7 +302,7 @@ Fonte: documentação do Checkout Pro, páginas "Realizar compras de teste" e "C
    Digite o cartão como **cartão novo**: um cartão já salvo na conta de teste usa o
    titular com que foi cadastrado, e qualquer nome diferente de `APRO` não aprova.
    O cartão Elo de teste é pré-pago.
-4. Cartão real não funciona no sandbox. Se o checkout mostrar `/congrats/recover/error/`
+4. Use só cartões de teste com contas de teste. Se o checkout mostrar `/congrats/recover/error/`
    e a merchant order da preferência continuar sem pagamentos, o erro foi no checkout
    (conta, cartão ou sessão), sem cobrança. Não foi recusa do emissor.
 5. Confira `Payment.status`, `IssuedTicket` e `PaymentWebhookEvent` no banco. A página
