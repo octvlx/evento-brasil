@@ -13,7 +13,7 @@ import { PasswordChecklist, PasswordInput } from "./password-fields";
 export function RegisterForm({ next }: { next?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const form = useForm<RegisterInput>({ resolver: zodResolver(registerSchema), defaultValues: { name: "", email: "", password: "", confirmPassword: "", phone: "" } });
+  const form = useForm<RegisterInput>({ resolver: zodResolver(registerSchema), defaultValues: { name: "", email: "", confirmEmail: "", password: "", confirmPassword: "", phone: "" } });
   const password = useWatch({ control: form.control, name: "password" }) ?? "";
   const { errors } = form.formState;
 
@@ -36,8 +36,14 @@ export function RegisterForm({ next }: { next?: string }) {
       </div>
       <div>
         <Label htmlFor="email">E-mail</Label>
-        <Input id="email" type="email" autoComplete="email" className="mt-1.5" aria-invalid={!!errors.email} {...form.register("email")} />
-        <FieldError message={errors.email?.message} />
+        <Input id="email" type="email" autoComplete="email" className="mt-1.5" aria-invalid={!!errors.email} aria-describedby="email-error" {...form.register("email")} />
+        <FieldError id="email-error" message={errors.email?.message} />
+      </div>
+      <div>
+        <Label htmlFor="confirmEmail">Confirmar e-mail</Label>
+        {/* Sem preenchimento automático: a ideia é digitar de novo e pegar erro de digitação. */}
+        <Input id="confirmEmail" type="email" autoComplete="off" className="mt-1.5" aria-invalid={!!errors.confirmEmail} aria-describedby="confirm-email-error" {...form.register("confirmEmail")} />
+        <FieldError id="confirm-email-error" message={errors.confirmEmail?.message} />
       </div>
       <div>
         <Label htmlFor="phone">Celular (opcional)</Label>

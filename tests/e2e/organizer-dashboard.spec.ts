@@ -9,6 +9,7 @@ test("organizador cria uma segunda organização e alterna entre elas", async ({
   await page.goto("/registrar?next=/organizador/cadastro");
   await page.getByLabel("Nome completo").fill("Organizadora E2E");
   await page.getByLabel("E-mail", { exact: true }).fill(`org-e2e+${stamp}@test.local`);
+  await page.getByLabel("Confirmar e-mail", { exact: true }).fill(`org-e2e+${stamp}@test.local`);
   await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
   await page.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
   await acceptSignupTerms(page);

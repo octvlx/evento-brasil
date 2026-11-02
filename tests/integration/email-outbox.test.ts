@@ -244,7 +244,7 @@ it("queues a hashed verification proof atomically with minimal signup", async ()
   const user = await registerUser(db, {
     name: "Pessoa Teste",
     email: "signup@test.local",
-    password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91",
+    confirmEmail: "signup@test.local", password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91",
     acceptTerms: true,
     acceptPrivacy: true,
   });

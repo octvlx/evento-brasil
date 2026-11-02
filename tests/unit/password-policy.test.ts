@@ -35,9 +35,11 @@ describe("política de senhas", () => {
   });
 
   it("cadastro e troca validam a confirmação no schema (servidor e cliente)", () => {
-    const base = { name: "Ana", email: "ana@test.local", password: "Lua-Cheia#Sobre7Mares", acceptTerms: true, acceptPrivacy: true };
+    const base = { name: "Ana", email: "ana@test.local", confirmEmail: "ana@test.local", password: "Lua-Cheia#Sobre7Mares", acceptTerms: true, acceptPrivacy: true };
     expect(registerSchema.safeParse({ ...base, confirmPassword: "outra" }).error?.issues[0]).toMatchObject({ path: ["confirmPassword"], message: PASSWORD_MESSAGES.mismatch });
     expect(registerSchema.safeParse({ ...base, confirmPassword: base.password }).success).toBe(true);
+    expect(registerSchema.safeParse({ ...base, confirmEmail: "ana@test.locla", confirmPassword: base.password }).error?.issues[0]).toMatchObject({ path: ["confirmEmail"], message: "Os e-mails não coincidem." });
+    expect(registerSchema.safeParse({ ...base, confirmEmail: " ANA@test.local ", confirmPassword: base.password }).success).toBe(true);
     expect(registerSchema.safeParse({ ...base, password: "fraca", confirmPassword: "fraca" }).success).toBe(false);
     const change = changePasswordSchema.safeParse({ currentPassword: "x", newPassword: "Lua-Cheia#Sobre7Mares", confirmPassword: "diferente" });
     expect(change.error?.issues[0].message).toBe(PASSWORD_MESSAGES.newMismatch);

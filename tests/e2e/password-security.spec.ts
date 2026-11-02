@@ -4,11 +4,13 @@ import { acceptSignupTerms } from "./helpers";
 const FIRST = "Primeira#E2e2468";
 const SECOND = "Segunda#E2e1357";
 
-test("senha: requisitos no cadastro, troca em Minha conta com senha atual e login com a nova", async ({ page }) => {
+test("cadastro: confirmação de e-mail e senha, requisitos; troca em Minha conta troca em Minha conta com senha atual e login com a nova", async ({ page }) => {
   const email = `senha-e2e+${Date.now()}@test.local`;
   await page.goto("/registrar");
   await page.getByLabel("Nome completo", { exact: true }).fill("Pessoa Senha E2E");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
+  // E-mail redigitado com erro de digitação: o cadastro não envia.
+  await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email.replace("@test.local", "@test.locla"));
 
   // Lista de requisitos atualiza enquanto digita; o botão de olho mostra a senha.
   const password = page.getByLabel("Senha", { exact: true });
@@ -25,6 +27,8 @@ test("senha: requisitos no cadastro, troca em Minha conta com senha atual e logi
   await acceptSignupTerms(page);
   await page.getByRole("button", { name: "Criar conta", exact: true }).click();
   await expect(page.getByText("As senhas não coincidem.")).toBeVisible();
+  await expect(page.getByText("Os e-mails não coincidem.")).toBeVisible();
+  await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email);
   await page.getByLabel("Confirmar senha", { exact: true }).fill(FIRST);
   await page.getByRole("button", { name: "Criar conta", exact: true }).click();
   await page.waitForURL(/\/confirmar-email/);

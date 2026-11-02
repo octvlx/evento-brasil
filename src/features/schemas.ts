@@ -24,6 +24,8 @@ export const registerSchema = z
   .object({
     name: trimmed(2, 120, "Informe seu nome"),
     email,
+    // Só confere a digitação do e-mail; nunca é gravado.
+    confirmEmail: z.string().trim().toLowerCase().min(1, "Confirme o e-mail"),
     password: newPasswordSchema,
     // Só confere a digitação; nunca é gravado.
     confirmPassword: z.string().min(1, "Confirme a senha"),
@@ -31,6 +33,7 @@ export const registerSchema = z
     acceptTerms: z.literal(true, { error: "É preciso aceitar os termos de uso" }),
     acceptPrivacy: z.literal(true, { error: "É preciso aceitar a política de privacidade" }),
   })
+  .refine((v) => v.email === v.confirmEmail, { path: ["confirmEmail"], message: "Os e-mails não coincidem." })
   .refine((v) => v.password === v.confirmPassword, { path: ["confirmPassword"], message: PASSWORD_MESSAGES.mismatch });
 export type RegisterInput = z.input<typeof registerSchema>;
 

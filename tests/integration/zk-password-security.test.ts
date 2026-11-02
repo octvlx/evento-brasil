@@ -91,13 +91,15 @@ describe("redefinição: não reutiliza a senha anterior", () => {
 });
 
 describe("cadastro valida a senha no servidor", () => {
-  const base = { name: "Bia", email: "bia@test.local", acceptTerms: true as const, acceptPrivacy: true as const };
-  it("recusa senha fraca, comum ou com confirmação diferente, mesmo sem passar pelo formulário", async () => {
+  const base = { name: "Bia", email: "bia@test.local", confirmEmail: "bia@test.local", acceptTerms: true as const, acceptPrivacy: true as const };
+  it("recusa senha fraca, comum, confirmação diferente ou e-mail redigitado diferente, mesmo sem passar pelo formulário", async () => {
     await expect(registerUser(db, { ...base, password: "12345678", confirmPassword: "12345678" })).rejects.toMatchObject({ code: "VALIDATION" });
     await expect(registerUser(db, { ...base, password: "Senha@123", confirmPassword: "Senha@123" })).rejects.toThrow(PASSWORD_MESSAGES.common);
     await expect(registerUser(db, { ...base, password: NEXT, confirmPassword: "Outra#Coisa999" })).rejects.toThrow(PASSWORD_MESSAGES.mismatch);
+    await expect(registerUser(db, { ...base, confirmEmail: "bia@test.locla", password: NEXT, confirmPassword: NEXT })).rejects.toThrow("Os e-mails não coincidem.");
     expect(await db.user.count({ where: { email: base.email } })).toBe(0);
-    await registerUser(db, { ...base, password: NEXT, confirmPassword: NEXT });
+    // Maiúsculas e espaços não contam como diferença.
+    await registerUser(db, { ...base, confirmEmail: "  BIA@test.local ", password: NEXT, confirmPassword: NEXT });
     expect(await db.user.count({ where: { email: base.email } })).toBe(1);
   });
 });
