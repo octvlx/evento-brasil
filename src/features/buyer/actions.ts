@@ -13,7 +13,7 @@ import { buyerAddressSchema, buyerPersonalSchema, type BuyerAddressInput, type B
 export async function saveBuyerPersonalAction(raw: BuyerPersonalInput) {
   const actor = await requireUser();
   return toActionResult(async () => {
-    rateLimit(`buyer-personal:${actor.id}`, 20, 60_000);
+    await rateLimit(`buyer-personal:${actor.id}`, 20, 60_000);
     const parsed = buyerPersonalSchema.safeParse(raw);
     if (!parsed.success) throw new AppError("VALIDATION", parsed.error.issues[0]?.message ?? "Confira seus dados.");
     await saveBuyerPersonalData(db, actor, parsed.data);
@@ -24,7 +24,7 @@ export async function saveBuyerPersonalAction(raw: BuyerPersonalInput) {
 export async function saveBuyerAddressAction(raw: BuyerAddressInput) {
   const actor = await requireUser();
   return toActionResult(async () => {
-    rateLimit(`buyer-address:${actor.id}`, 20, 60_000);
+    await rateLimit(`buyer-address:${actor.id}`, 20, 60_000);
     const parsed = buyerAddressSchema.safeParse(raw);
     if (!parsed.success) throw new AppError("VALIDATION", parsed.error.issues[0]?.message ?? "Confira seu endereço.");
     await saveBuyerAddress(db, actor, parsed.data);
@@ -36,7 +36,7 @@ export async function lookupPostalAddressAction(postalCode: string) {
   const actor = await requireUser();
   return toActionResult(async () => {
     const client = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-    rateLimit(`buyer-cep:${actor.id}:${client}`, 20, 60_000);
+    await rateLimit(`buyer-cep:${actor.id}:${client}`, 20, 60_000);
     return lookupPostalAddress(postalCode);
   });
 }

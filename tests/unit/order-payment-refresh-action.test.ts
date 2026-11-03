@@ -21,6 +21,17 @@ vi.mock("@/server/services/orders", () => ({}));
 vi.mock("@/server/services/refunds", () => ({}));
 vi.mock("@/server/services/terms", () => ({}));
 vi.mock("@/features/orders/limits", () => ({}));
+// O limitador real usa o banco (coberto em tests/integration/zl-rate-limit.test.ts).
+vi.mock("@/server/rate-limit", () => {
+  const counts = new Map<string, number>();
+  return {
+    rateLimit: async (key: string, limit: number) => {
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      if (count > limit) throw Object.assign(new Error("Muitas tentativas."), { code: "RATE_LIMITED" });
+    },
+  };
+});
 
 import { refreshPaymentStatusAction } from "@/features/orders/actions";
 

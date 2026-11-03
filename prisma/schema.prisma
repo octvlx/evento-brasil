@@ -1389,6 +1389,16 @@ model EmailRateLimit {
   windowStartedAt DateTime @db.Timestamptz(3)
 }
 
+/// Limite de tentativas compartilhado entre instâncias (janela fixa). `key` é o
+/// HMAC da chave lógica (ex.: "login:<ip>"), para não guardar IP/id em claro.
+model RateLimitBucket {
+  key     String   @id
+  count   Int      @default(0)
+  resetAt DateTime @db.Timestamptz(3)
+
+  @@index([resetAt])
+}
+
 model MercadoPagoOAuthState {
   id             String    @id @default(cuid())
   organizationId String

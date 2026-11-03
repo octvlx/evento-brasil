@@ -32,7 +32,7 @@ export async function requestTransferAction(ticketId: string, input: RequestTran
   const m = await requestMeta();
   const result = await toActionResult(async () => {
     // Cada pedido envia um e-mail: limite contra uso da plataforma para spam.
-    rateLimit(`transfer:request:${user.id}`, 10, 60 * 60_000);
+    await rateLimit(`transfer:request:${user.id}`, 10, 60 * 60_000);
     const { transferId, expiresAt } = await requestTransfer(db, user, ticketId, input, m);
     return { transferId, expiresAt };
   });
@@ -45,7 +45,7 @@ export async function acceptTransferAction(token: RecipientTransferRef): Promise
   if (!user) return UNAUTHENTICATED;
   const m = await requestMeta();
   const result = await toActionResult(async () => {
-    rateLimit(`transfer:respond:${user.id}`, 30, 60 * 60_000);
+    await rateLimit(`transfer:respond:${user.id}`, 30, 60 * 60_000);
     return acceptTransfer(db, user, token, m);
   });
   if (result.ok) refresh();
@@ -57,7 +57,7 @@ export async function declineTransferAction(token: RecipientTransferRef): Promis
   if (!user) return UNAUTHENTICATED;
   const m = await requestMeta();
   const result = await toActionResult(async () => {
-    rateLimit(`transfer:respond:${user.id}`, 30, 60 * 60_000);
+    await rateLimit(`transfer:respond:${user.id}`, 30, 60 * 60_000);
     await declineTransfer(db, user, token, m);
     return undefined;
   });

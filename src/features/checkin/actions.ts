@@ -10,7 +10,7 @@ export async function checkInAction(eventId: string, payload: string): Promise<A
   const user = await requireUser(`/check-in/${eventId}`);
   return toActionResult(async () => {
     // Limite generoso por operador (protege contra força bruta de tokens).
-    rateLimit(`checkin:${user.id}`, 120, 60_000);
+    await rateLimit(`checkin:${user.id}`, 120, 60_000);
     return checkInTicket(db, user, eventId, payload.slice(0, 200));
   });
 }

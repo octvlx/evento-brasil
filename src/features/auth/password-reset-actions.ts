@@ -40,7 +40,7 @@ export async function resetPasswordAction(
   confirmation: string,
 ): Promise<ActionResult<{ reset: true }>> {
   try {
-    rateLimit(`password-reset:consume:${await clientIp()}`, 20, 15 * 60_000);
+    await rateLimit(`password-reset:consume:${await clientIp()}`, 20, 15 * 60_000);
     const data = await resetPassword(db, { token, password, confirmation });
     // Aviso de segurança: entrega imediata em melhor esforço; o worker cobre falhas.
     if (process.env.NODE_ENV !== "test") void dispatchEmailOutbox(db, { limit: 5 }).catch(() => {});
