@@ -20,11 +20,12 @@ export function LogoMark({ className }: { className?: string }) {
   );
 }
 
-export function Logo({ className, inverted }: { className?: string; inverted?: boolean }) {
+/** `wordmarkClassName`: classes do texto "eventobrasil" (o header o esconde em telas muito estreitas). */
+export function Logo({ className, inverted, wordmarkClassName }: { className?: string; inverted?: boolean; wordmarkClassName?: string }) {
   return (
     <Link href="/" className={cn("flex items-center gap-2 font-display text-lg font-extrabold tracking-tight", className)} aria-label="Evento Brasil — início">
       <LogoMark />
-      <span className={inverted ? "text-white" : undefined}>
+      <span className={cn(inverted && "text-white", wordmarkClassName)}>
         evento<span className="text-accent">brasil</span>
       </span>
     </Link>

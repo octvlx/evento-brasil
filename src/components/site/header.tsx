@@ -12,8 +12,9 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 print:hidden border-b border-border/70 bg-background/85 backdrop-blur-lg">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6">
-        {/* Celular: logo e margens menores para caber lupa, Entrar e Criar conta em 360–375 px. */}
-        <Logo className="shrink-0 max-sm:text-base" />
+        {/* Celular: logo e margens menores para caber lupa, Entrar e Criar conta; abaixo de
+            370 px fica só o símbolo (o link mantém o nome acessível). */}
+        <Logo className="shrink-0 max-sm:text-base" wordmarkClassName="max-[369px]:hidden" />
         {/* useSearchParams/usePathname são dados de runtime: Suspense com Cache Components. */}
         <Suspense fallback={<div className="ml-2 hidden h-10 max-w-xl flex-1 rounded-full bg-muted/60 md:block lg:ml-6" />}>
           <HeaderSearch />
