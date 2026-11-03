@@ -17,6 +17,7 @@
     "db:reset": "node scripts/db-reset.mjs",
     "db:generate": "prisma generate",
     "cities:import": "tsx --conditions=react-server scripts/import-ibge-cities.ts",
+    "ibge:update": "tsx scripts/ibge-update.ts",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",

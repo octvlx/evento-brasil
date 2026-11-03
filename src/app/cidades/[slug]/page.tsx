@@ -9,7 +9,7 @@ import { CategoryChips } from "@/components/site/category-chips";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { EventShelf } from "@/components/site/event-shelf";
 import { db } from "@/server/db";
-import { cityShowcase, listCategories, searchEvents, type DateFilter } from "@/server/services/catalog";
+import { cityShowcase, getPublicCity, listCategories, searchEvents, type DateFilter } from "@/server/services/catalog";
 import { cn } from "@/lib/utils";
 
 type CitySearch = { categoria?: string; data?: string };
@@ -23,7 +23,8 @@ const PERIODS: [DateFilter, string][] = [
 
 export async function generateMetadata({ params }: PageProps<"/cidades/[slug]">): Promise<Metadata> {
   const { slug } = await params;
-  const city = await db.city.findUnique({ where: { slug } });
+  await connection();
+  const city = await getPublicCity(db, slug);
   if (!city) return { title: "Cidade não encontrada" };
   return {
     title: `Eventos em ${city.name} – ${city.state}`,
@@ -50,7 +51,7 @@ async function CityContent({ params, searchParams }: { params: Promise<{ slug: s
   const { slug } = await params;
   const sp = await searchParams;
   await connection();
-  const city = await db.city.findUnique({ where: { slug } });
+  const city = await getPublicCity(db, slug);
   if (!city) notFound();
   const categories = await listCategories(db);
   const categoria = categories.some((c) => c.slug === sp.categoria) ? sp.categoria : undefined;

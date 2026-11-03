@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import Link from "next/link";
 import { Suspense } from "react";
 import { ChevronDown, Search, Ticket, UserRound } from "lucide-react";
@@ -41,7 +42,9 @@ export function SiteHeader() {
 }
 
 async function HeaderCitySelect() {
-  const cities = await listCities(db, { featuredOnly: true });
+  // Lista depende de quais eventos estão no ar agora: lida a cada pedido.
+  await connection();
+  const cities = await listCities(db);
   return <CitySelect cities={cities.map((c) => ({ slug: c.slug, label: `${c.name} – ${c.state}` }))} className="hidden sm:block" />;
 }
 

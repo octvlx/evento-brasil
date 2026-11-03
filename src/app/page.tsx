@@ -7,8 +7,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { EventCard, EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { CategoryChips } from "@/components/site/category-chips";
 import { CitySelect } from "@/components/site/city-select";
+import { EventCarousel } from "@/components/site/event-carousel";
+import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
-import { eventsInCity, featuredEvents, listCategories, listCities, weekendEvents } from "@/server/services/catalog";
+import { eventsInCity, featuredEvents, getPublicCity, listCategories, listCities, weekendEvents } from "@/server/services/catalog";
 
 export default function HomePage() {
   return (
@@ -49,7 +51,7 @@ export default function HomePage() {
       </section>
 
       <Section title="Em destaque" subtitle="Seleção da curadoria Evento Brasil" href="/eventos">
-        <Suspense fallback={<EventGridSkeleton count={3} />}>
+        <Suspense fallback={<CarouselSkeleton />}>
           <Featured />
         </Suspense>
       </Section>
@@ -125,7 +127,9 @@ function Section({ title, subtitle, href, children }: { title: string; subtitle?
 }
 
 async function HeroCitySelect() {
-  const cities = await listCities(db, { featuredOnly: true });
+  // Lista depende de quais eventos estão no ar agora: lida a cada pedido.
+  await connection();
+  const cities = await listCities(db);
   return <CitySelect variant="hero" className="sm:w-56" cities={cities.map((c) => ({ slug: c.slug, label: `${c.name} – ${c.state}` }))} />;
 }
 
@@ -134,25 +138,28 @@ async function HeroCategories() {
   return <CategoryChips tone="hero" categories={categories} hrefFor={(slug) => (slug ? `/eventos?categoria=${slug}` : "/eventos")} />;
 }
 
+// Largura do card por breakpoint (1 / 2 / 3 / 4 por tela), para o srcset da capa.
+const CAROUSEL_IMAGE_SIZES = "(min-width: 1280px) 300px, (min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw";
+
 async function Featured() {
   await connection();
-  const events = await featuredEvents(db, 5);
+  // Mesmos critérios de antes: destaque, publicado, de organização aprovada e não encerrado.
+  const events = await featuredEvents(db, 12);
   if (!events.length) return <EventGrid events={[]} emptyText="Nenhum evento em destaque no momento." />;
-  const [first, ...rest] = events;
   return (
-    <div className="grid gap-5 lg:grid-cols-3">
-      <EventCard event={first} priority className="lg:col-span-2 lg:row-span-2 [&_h3]:lg:text-2xl" />
-      {rest.slice(0, 4).map((e) => (
-        <EventCard key={e.slug} event={e} />
+    <EventCarousel label="Eventos em destaque">
+      {events.map((e, i) => (
+        <EventCard key={e.slug} event={e} priority={i < 4} imageSizes={CAROUSEL_IMAGE_SIZES} className="h-full" />
       ))}
-    </div>
+    </EventCarousel>
   );
 }
 
 async function NearbySection() {
   const slug = (await cookies()).get("eb_city")?.value;
-  const city = slug ? await db.city.findUnique({ where: { slug } }) : null;
-  const target = city ?? (await db.city.findUnique({ where: { slug: "sao-paulo-sp" } }));
+  await connection();
+  const city = slug ? await getPublicCity(db, slug) : null;
+  const target = city ?? (await getPublicCity(db, "sao-paulo-sp"));
   if (!target) return null;
   const events = await eventsInCity(db, target.slug, 4);
   return (
@@ -165,4 +172,26 @@ async function NearbySection() {
 async function Weekend() {
   await connection();
   return <EventGrid events={await weekendEvents(db, 8)} emptyText="Nenhum evento neste fim de semana ainda." />;
+}
+
+/** Mesma altura do carrossel (cards + linha de controles): sem salto ao carregar. */
+function CarouselSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Carregando destaques">
+      <div className="flex gap-5 overflow-hidden pb-1">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className={cn("w-full shrink-0 overflow-hidden rounded-2xl border border-border md:w-[calc((100%-1.25rem)/2)] lg:w-[calc((100%-2.5rem)/3)] xl:w-[calc((100%-3.75rem)/4)]", ["", "hidden md:block", "hidden lg:block", "hidden xl:block"][i])}>
+            <div className="aspect-[16/10] animate-pulse bg-muted" />
+            <div className="space-y-2 p-4">
+              <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
+              <div className="h-5 w-4/5 animate-pulse rounded bg-muted" />
+              <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+              <div className="h-9" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 h-8" />
+    </div>
+  );
 }

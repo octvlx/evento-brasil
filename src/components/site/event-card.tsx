@@ -23,7 +23,8 @@ export interface EventCardData {
   availability: keyof typeof AVAILABILITY;
 }
 
-export function EventCard({ event, className, priority }: { event: EventCardData; className?: string; priority?: boolean }) {
+/** `imageSizes` liga a capa responsiva (next/image) com essa largura por breakpoint. */
+export function EventCard({ event, className, priority, imageSizes }: { event: EventCardData; className?: string; priority?: boolean; imageSizes?: string }) {
   const av = AVAILABILITY[event.availability];
   const price = priceLabel(event.minPrice);
   const place = event.isOnline ? "Online" : [event.venueName, event.cityName && `${event.cityName} – ${event.state}`].filter(Boolean).join(" · ");
@@ -36,7 +37,7 @@ export function EventCard({ event, className, priority }: { event: EventCardData
       )}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
-        <EventCover src={event.coverImageUrl} alt="" priority={priority} className="transition duration-500 group-hover:scale-105" />
+        <EventCover src={event.coverImageUrl} alt="" priority={priority} sizes={imageSizes} className="transition duration-500 group-hover:scale-105" />
         <div className="absolute left-3 top-3 flex gap-1.5">
           <Badge className="bg-black/55 text-white backdrop-blur">{event.categoryName}</Badge>
         </div>

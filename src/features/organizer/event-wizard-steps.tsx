@@ -11,6 +11,7 @@ import { Input, Label, Select, Textarea } from "@/components/ui/primitives";
 import { BR_TIMEZONES } from "@/lib/br";
 import { cn } from "@/lib/utils";
 import { uploadCoverAction } from "./actions";
+import { MunicipalityCombobox } from "./municipality-combobox";
 import type { WizardValues } from "./wizard-steps";
 
 export type Errors = Record<string, string>;
@@ -155,7 +156,7 @@ export function StepBasics({ form, errors, categories, organizationName }: { for
 }
 
 // ── Etapa 2 ──
-export function StepDateLocation({ form, errors, cities, venues }: { form: Form; errors: Errors; cities: { id: string; label: string }[]; venues: { id: string; label: string }[] }) {
+export function StepDateLocation({ form, errors, venues }: { form: Form; errors: Errors; venues: { id: string; label: string }[] }) {
   const locationType = useWatch({
     control: form.control,
     name: "locationType",
@@ -247,18 +248,7 @@ export function StepDateLocation({ form, errors, cities, venues }: { form: Form;
               <Field name="newVenue.district" label="Bairro (opcional)" error={errors["newVenue.district"]} className="sm:col-span-2">
                 {(a) => <Input {...a} {...reg(form, "newVenue.district")} />}
               </Field>
-              <Field name="newVenue.cityId" label="Cidade e estado" error={errors["newVenue.cityId"]} className="sm:col-span-4">
-                {(a) => (
-                  <Select {...a} {...reg(form, "newVenue.cityId")}>
-                    <option value="">Selecione</option>
-                    {cities.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
+              <WizardMunicipality form={form} errors={errors} />
               <p className="text-xs text-muted-foreground sm:col-span-6">Preencha o endereço completo: ele aparece na página do evento e no ingresso.</p>
             </div>
           )}
@@ -274,6 +264,25 @@ export function StepDateLocation({ form, errors, cities, venues }: { form: Form;
         </Field>
       )}
     </div>
+  );
+}
+
+function WizardMunicipality({ form, errors }: { form: Form; errors: Errors }) {
+  const [uf, ibgeCode, name] = useWatch({ control: form.control, name: ["newVenue.cityUf", "newVenue.cityIbgeCode", "newVenue.cityName"] });
+  return (
+    <MunicipalityCombobox
+      className="sm:col-span-6"
+      idPrefix={fieldId("newVenue.city")}
+      value={{ uf, ibgeCode, name }}
+      ufError={errors["newVenue.cityUf"]}
+      cityError={errors["newVenue.cityIbgeCode"] ?? errors["newVenue.cityId"]}
+      onChange={(v) => {
+        const opts = { shouldDirty: true };
+        form.setValue("newVenue.cityUf", v.uf, opts);
+        form.setValue("newVenue.cityIbgeCode", v.ibgeCode, opts);
+        form.setValue("newVenue.cityName", v.name, opts);
+      }}
+    />
   );
 }
 

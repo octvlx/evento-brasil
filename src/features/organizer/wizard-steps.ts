@@ -2,7 +2,7 @@
 // Compartilhado entre o navegador (validação ao continuar/autosave) e o servidor
 // (que SEMPRE revalida). As mensagens reaproveitam os campos de `eventInputSchema`.
 import { z } from "zod";
-import { transferPolicyFields, validateTransferPolicySettings, eventInputSchema, venueInputSchema } from "@/features/schemas";
+import { requireVenueCity, transferPolicyFields, validateTransferPolicySettings, eventInputSchema, venueInputSchema } from "@/features/schemas";
 
 export const WIZARD_STEPS = [
   {
@@ -78,6 +78,8 @@ export const wizardVenueSchema = z.object({
   complement: z.string().trim().max(60).optional(),
   district: venueInputSchema.shape.district,
   postalCode: venueInputSchema.shape.postalCode,
+  cityIbgeCode: venueInputSchema.shape.cityIbgeCode,
+  cityUf: venueInputSchema.shape.cityUf,
   cityId: venueInputSchema.shape.cityId,
 });
 export type WizardVenue = z.input<typeof wizardVenueSchema>;
@@ -133,6 +135,7 @@ export const step2Schema = z
         path: ["newVenue", "name"],
         message: "Informe o local",
       });
+    if (v.locationType === "VENUE" && v.venueMode === "new") requireVenueCity(v.newVenue, ctx);
     if (v.locationType === "ONLINE" && !v.onlineUrl)
       ctx.addIssue({
         code: "custom",
@@ -215,7 +218,10 @@ export interface WizardValues {
     complement: string;
     district: string;
     postalCode: string;
-    cityId: string;
+    cityUf: string;
+    cityIbgeCode: string;
+    /** Só para exibir no campo; o servidor usa código + UF. */
+    cityName: string;
   };
   onlineUrl: string;
   capacity: string;
