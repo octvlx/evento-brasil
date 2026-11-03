@@ -17,7 +17,7 @@ import {
 } from "@/server/services/email-verification";
 import { registerGoogleUser } from "@/server/services/google-registration";
 import { GOOGLE_PENDING_COOKIE } from "@/server/auth/google";
-import { isProduction } from "@/server/env";
+import { env, isProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { failureLimiter, rateLimit } from "@/server/rate-limit";
 import { createSession, deleteSession } from "@/server/auth/sessions";
@@ -92,7 +92,7 @@ export async function registerAction(
   return toActionResult(async () => {
     const ip = await clientKey();
     const userAgent = (await headers()).get("user-agent");
-    rateLimit(`register:${ip}`, 5, 60 * 60_000);
+    rateLimit(`register:${ip}`, env().SIGNUP_RATE_LIMIT_PER_HOUR, 60 * 60_000);
     const user = await registerUser(
       db,
       input,

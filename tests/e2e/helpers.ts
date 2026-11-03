@@ -1,5 +1,7 @@
 import "dotenv/config";
 import { expect, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import pg from "pg";
 
 export const DEMO_PASSWORD = "Demo@2026!";
@@ -73,4 +75,47 @@ export async function proceedThroughReview(page: Page) {
   await expect(confirm).toBeEnabled();
   await confirm.click();
   await page.waitForURL(url=>!url.pathname.startsWith("/checkout/revisao/"));
+}
+
+/** Link do e-mail mais recente (outbox do console da suíte isolada) para `template`. */
+export async function emailLink(email: string, template: string, route: string) {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    let link = "";
+    await expect
+      .poll(async () => {
+        const { rows } = await client.query(
+          'SELECT "providerMessageId" FROM "EmailOutbox" WHERE recipient=$1 AND template=$2 AND status=\'SENT\' ORDER BY "createdAt" DESC LIMIT 1',
+          [email, template],
+        );
+        if (!rows[0]?.providerMessageId) return false;
+        const filename =
+          rows[0].providerMessageId.replace(/^console:/, "") + ".html";
+        const html = await readFile(
+          path.resolve(".data/outbox", filename),
+          "utf8",
+        );
+        const match = html.match(
+          new RegExp('href="([^\"]*' + route + '[^\"]*)"'),
+        );
+        link = match?.[1]?.replace(/&amp;/g, "&") ?? "";
+        return !!link;
+      })
+      .toBe(true);
+    return link;
+  } finally {
+    await client.end();
+  }
+}
+
+/** Confirma o e-mail de uma conta recém-criada pelo link enviado (suíte isolada). */
+export async function confirmEmail(page: Page, email: string) {
+  const link = await emailLink(email, "EMAIL_VERIFICATION", "confirmar-email");
+  // A página já costuma estar em /confirmar-email?next=…; o link só acrescenta #token=…,
+  // o que seria uma troca de âncora e não carregaria a confirmação. Sai antes.
+  await page.goto("about:blank");
+  await page.goto(link);
+  await page.getByRole("button", { name: "Confirmar meu e-mail", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "E-mail confirmado com sucesso." })).toBeVisible();
 }

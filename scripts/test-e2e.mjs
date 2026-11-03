@@ -28,17 +28,23 @@ try {
     include: ["../next-env.d.ts", "../src/**/*.ts", "../src/**/*.tsx", "./e2e/types/**/*.ts", "./e2e/dev/types/**/*.ts"],
     exclude: ["../node_modules"],
   }, null, 2));
-  const dbPort = await freePort();
+  // CI: banco descartável já provido (serviço Postgres do runner) em E2E_DATABASE_URL.
+  // Local: PostgreSQL próprio e temporário, nunca o banco de desenvolvimento.
+  let databaseUrl = process.env.E2E_DATABASE_URL;
+  const dbPort = databaseUrl ? null : await freePort();
   let appPort = await freePort();
   while (appPort === dbPort) appPort = await freePort();
-  const password = randomBytes(24).toString("hex");
-  const cfg = { port: dbPort, user: "evento_e2e", password };
-  pg = await startLocalPostgres({ dataDir: path.join(dir, "pg"), ...cfg });
-  await ensureDatabase({ ...cfg, database: "evento_e2e" });
+  if (!databaseUrl) {
+    const password = randomBytes(24).toString("hex");
+    const cfg = { port: dbPort, user: "evento_e2e", password };
+    pg = await startLocalPostgres({ dataDir: path.join(dir, "pg"), ...cfg });
+    await ensureDatabase({ ...cfg, database: "evento_e2e" });
+    databaseUrl = `postgresql://evento_e2e:${password}@127.0.0.1:${dbPort}/evento_e2e`;
+  }
   const env = {
     ...process.env,
     NODE_ENV: "development",
-    DATABASE_URL: `postgresql://evento_e2e:${password}@127.0.0.1:${dbPort}/evento_e2e`,
+    DATABASE_URL: databaseUrl,
     APP_URL: `http://localhost:${appPort}`,
     APP_BASE_URL: `http://localhost:${appPort}`,
     E2E_BASE_URL: `http://localhost:${appPort}`,
@@ -50,6 +56,8 @@ try {
     PAYMENT_PROVIDER: "simulated",
     SIMULATED_WEBHOOK_SECRET: randomBytes(32).toString("hex"),
     EMAIL_PROVIDER: "console",
+    // A suíte inteira cria várias contas do mesmo IP local.
+    SIGNUP_RATE_LIMIT_PER_HOUR: "1000",
     STORAGE_PROVIDER: "local",
     NEXT_TELEMETRY_DISABLED: "1",
   };
