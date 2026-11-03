@@ -244,8 +244,23 @@ export async function listCategories(db: Db) {
   return db.eventCategory.findMany({ orderBy: { sortOrder: "asc" } });
 }
 
-export async function listCities(db: Db, opts: { featuredOnly?: boolean } = {}) {
-  return db.city.findMany({ where: opts.featuredOnly ? { isFeatured: true } : {}, orderBy: [{ state: "asc" }, { name: "asc" }] });
+/**
+ * Cidade com ao menos um evento público (direto ou pelo local). Rascunho, evento
+ * em análise, cancelado ou encerrado não contam: a cidade criada ao salvar um
+ * rascunho só aparece no site quando o evento for publicado.
+ */
+export const cityWithPublicEventsWhere = (now = new Date()): Prisma.CityWhereInput => ({
+  OR: [{ events: { some: publicEventWhere(now) } }, { venues: { some: { events: { some: publicEventWhere(now) } } } }],
+});
+
+/** Cidades para seletores e filtros públicos: só as com evento público. Destaques primeiro. */
+export async function listCities(db: Db, opts: { now?: Date } = {}) {
+  return db.city.findMany({ where: cityWithPublicEventsWhere(opts.now), orderBy: [{ isFeatured: "desc" }, { state: "asc" }, { name: "asc" }] });
+}
+
+/** Página pública da cidade: null se não houver evento público nela. */
+export async function getPublicCity(db: Db, slug: string, now = new Date()) {
+  return db.city.findFirst({ where: { slug, ...cityWithPublicEventsWhere(now) } });
 }
 
 export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
@@ -348,7 +363,7 @@ export async function listSitemapEntries(db: Db, now = new Date()) {
     db.event.findMany({ where: publicEventWhere(now), select: { slug: true, updatedAt: true }, orderBy: { startsAt: "asc" } }),
     // Só cidades com evento público: páginas vazias não entram no índice (a base do IBGE tem milhares).
     db.city.findMany({
-      where: { OR: [{ events: { some: publicEventWhere(now) } }, { venues: { some: { events: { some: publicEventWhere(now) } } } }] },
+      where: cityWithPublicEventsWhere(now),
       select: { slug: true },
       orderBy: { slug: "asc" },
     }),

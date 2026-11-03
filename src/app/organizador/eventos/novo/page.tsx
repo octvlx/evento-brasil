@@ -10,6 +10,7 @@ import { clampStep, DATA_STEPS, DEFAULT_REFUND_POLICY, firstIncompleteStep, spli
 import { computeFees } from "@/features/fees/policy";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
+import { cityFormValue } from "@/server/services/cities";
 import { resolveCommissionRule } from "@/server/services/commission";
 import { getWizardProgress, isWizardComplete, wizardProgressByEvent } from "@/server/services/event-wizard-progress";
 import { formatDateTimeShort, utcToZonedLocalInput } from "@/lib/datetime";
@@ -46,7 +47,9 @@ const BLANK: WizardValues = {
     complement: "",
     district: "",
     postalCode: "",
-    cityId: "",
+    cityUf: "",
+    cityIbgeCode: "",
+    cityName: "",
   },
   onlineUrl: "",
   capacity: "",
@@ -133,7 +136,7 @@ async function Content({ searchParams }: { searchParams: Search }) {
     where: { id: sp.evento, organizationId: org.id },
     include: {
       ticketTypes: { orderBy: { sortOrder: "asc" } },
-      venue: { include: { _count: { select: { events: true } } } },
+      venue: { include: { city: true, _count: { select: { events: true } } } },
     },
   });
   if (!event) notFound();
@@ -166,7 +169,7 @@ async function Content({ searchParams }: { searchParams: Search }) {
           name: ownVenue.name,
           district: ownVenue.district ?? "",
           postalCode: ownVenue.postalCode ? ownVenue.postalCode.replace(/^(\d{5})(\d{3})$/, "$1-$2") : "",
-          cityId: ownVenue.cityId,
+          ...cityFormValue(ownVenue.city),
         }
       : BLANK.newVenue,
     onlineUrl: has(2) ? (event.onlineUrl ?? "") : "",

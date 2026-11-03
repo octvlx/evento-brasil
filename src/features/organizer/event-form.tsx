@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { useForm, useWatch } from "react-hook-form";
+import { useForm, useWatch, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Alert, FieldError, Input, Label, Select, Textarea } from "@/components/
 import { eventInputSchema, type EventInput } from "@/features/schemas";
 import { BR_TIMEZONES } from "@/lib/br";
 import { saveEventAction, uploadCoverAction } from "./actions";
+import { MunicipalityCombobox } from "./municipality-combobox";
 import { CHANGE_REASON_MIN, CHANGE_REASON_REQUIRED, REFUND_WINDOW_DAYS_AFTER_CHANGE } from "./event-change-rules";
 
 /** Evento publicado com pedido pago: estado atual do que torna uma edição relevante (R8). */
@@ -24,13 +25,12 @@ interface Props {
   eventId: string | null;
   defaults: Partial<EventInput>;
   categories: { id: string; name: string }[];
-  cities: { id: string; label: string }[];
   venues: { id: string; label: string }[];
   locked?: boolean;
   relevantGuard?: RelevantChangeGuard | null;
 }
 
-export function EventForm({ eventId, defaults, categories, cities, venues, locked, relevantGuard }: Props) {
+export function EventForm({ eventId, defaults, categories, venues, locked, relevantGuard }: Props) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -211,18 +211,7 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
                   <Input id="vcep" className="mt-1.5" inputMode="numeric" placeholder="00000-000" {...form.register("newVenue.postalCode")} />
                   <FieldError message={errors.newVenue?.postalCode?.message} />
                 </div>
-                <div className="sm:col-span-2">
-                  <Label htmlFor="vcity">Cidade</Label>
-                  <Select id="vcity" className="mt-1.5" {...form.register("newVenue.cityId")}>
-                    <option value="">Selecione</option>
-                    {cities.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </Select>
-                  <FieldError message={errors.newVenue?.cityId?.message} />
-                </div>
+                <EditMunicipality form={form} cityError={errors.newVenue?.cityIbgeCode?.message ?? errors.newVenue?.cityId?.message} ufError={errors.newVenue?.cityUf?.message} />
               </div>
             )}
           </div>
@@ -357,5 +346,24 @@ export function EventForm({ eventId, defaults, categories, cities, venues, locke
         </Button>
       )}
     </form>
+  );
+}
+
+function EditMunicipality({ form, ufError, cityError }: { form: UseFormReturn<EventInput>; ufError?: string; cityError?: string }) {
+  const [uf, ibgeCode] = useWatch({ control: form.control, name: ["newVenue.cityUf", "newVenue.cityIbgeCode"] });
+  const [name, setName] = useState("");
+  return (
+    <MunicipalityCombobox
+      className="sm:col-span-2"
+      idPrefix="vcity"
+      value={{ uf: typeof uf === "string" ? uf : "", ibgeCode: typeof ibgeCode === "string" ? ibgeCode : "", name }}
+      ufError={ufError}
+      cityError={cityError}
+      onChange={(v) => {
+        setName(v.name);
+        form.setValue("newVenue.cityUf", v.uf, { shouldDirty: true });
+        form.setValue("newVenue.cityIbgeCode", v.ibgeCode, { shouldDirty: true });
+      }}
+    />
   );
 }

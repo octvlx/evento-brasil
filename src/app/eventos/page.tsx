@@ -62,6 +62,8 @@ const pick = <T extends string>(v: string | undefined, options: [T, string][]) =
 
 async function Filters({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
+  // Cidades com evento no ar agora: lidas a cada pedido.
+  await connection();
   const [cities, categories] = await Promise.all([listCities(db), listCategories(db)]);
   return (
     <form className="mt-6 grid gap-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1.3fr_1.2fr_1.1fr_1.1fr_auto]" role="search">

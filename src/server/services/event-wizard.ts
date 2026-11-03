@@ -9,6 +9,7 @@ import { audit } from "../audit";
 import { assertEventPermission, assertOrgPermission, type Actor } from "../auth/permissions";
 import { randomToken } from "../crypto";
 import { AppError, invalidState, notFound } from "../errors";
+import { resolveVenueCity } from "./cities";
 import { uniqueEventSlug } from "./events";
 import { getWizardProgress, recordWizardProgress, type WizardProgress } from "./event-wizard-progress";
 
@@ -115,8 +116,8 @@ async function wizardLocation(tx: Tx, organizationId: string, eventId: string, c
     };
   if (input.venueMode === "new" && input.newVenue) {
     const v = input.newVenue;
-    const city = await tx.city.findUnique({ where: { id: v.cityId } });
-    if (!city) throw new AppError("VALIDATION", "Cidade inválida.");
+    // Cidade criada/reaproveitada aqui, na transação da etapa (sem órfã se falhar).
+    const city = await resolveVenueCity(tx, v);
     const data = {
       cityId: city.id,
       name: v.name,

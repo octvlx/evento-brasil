@@ -12,6 +12,7 @@ import { AlertTriangle, Check, CheckCircle2, CloudOff, Eye, Loader2, Pencil } fr
 import { Button } from "@/components/ui/button";
 import { Alert, Card } from "@/components/ui/primitives";
 import { EventCover } from "@/components/site/event-cover";
+import { municipalityLabel } from "./municipality-combobox";
 import { formatBRL } from "@/lib/money";
 import { formatEventDateTime, zonedLocalToUtc } from "@/lib/datetime";
 import { TICKET_KIND } from "@/lib/labels";
@@ -29,7 +30,6 @@ interface Props {
   completed: DataStep[];
   initial: WizardValues;
   categories: { id: string; name: string }[];
-  cities: { id: string; label: string }[];
   venues: { id: string; label: string }[];
   ticketTypes: ManagedTicketType[];
   estimates: Record<string, WizardEstimate>;
@@ -357,7 +357,7 @@ export function EventWizard(props: Props) {
               <ErrorSummary errors={errors} />
             </div>
             {step === 1 && <StepBasics form={form} errors={errors} categories={props.categories} organizationName={props.organizationName} />}
-            {step === 2 && <StepDateLocation form={form} errors={errors} cities={props.cities} venues={props.venues} />}
+            {step === 2 && <StepDateLocation form={form} errors={errors} venues={props.venues} />}
             {step === 3 && <StepTicketsSettings form={form} errors={errors} />}
             {step === 4 && <StepDescription form={form} errors={errors} onError={(m) => setState({ kind: "error", message: m })} />}
             {step === 5 && <StepSettings form={form} errors={errors} />}
@@ -540,7 +540,7 @@ function Review(
     v.locationType === "ONLINE"
       ? `Online · ${v.onlineUrl}`
       : v.venueMode === "new"
-        ? `${v.newVenue.name} · ${v.newVenue.street}, ${v.newVenue.number}${v.newVenue.complement ? ` – ${v.newVenue.complement}` : ""}${v.newVenue.district ? ` · ${v.newVenue.district}` : ""} · ${props.cities.find((c) => c.id === v.newVenue.cityId)?.label ?? ""}`
+        ? `${v.newVenue.name} · ${v.newVenue.street}, ${v.newVenue.number}${v.newVenue.complement ? ` – ${v.newVenue.complement}` : ""}${v.newVenue.district ? ` · ${v.newVenue.district}` : ""} · ${v.newVenue.cityIbgeCode ? municipalityLabel(v.newVenue.cityName, v.newVenue.cityUf) : ""}`
         : (props.venues.find((x) => x.id === v.venueId)?.label ?? "—");
   const totalTickets = ticketTypes.reduce((s, t) => s + t.quantityTotal, 0);
 

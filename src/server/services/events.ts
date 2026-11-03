@@ -11,6 +11,7 @@ import { audit } from "../audit";
 import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
 import { randomToken } from "../crypto";
 import { AppError, invalidState, notFound } from "../errors";
+import { resolveVenueCity } from "./cities";
 import { resolveCommissionRule } from "./commission";
 import { getWizardProgress, isWizardComplete } from "./event-wizard-progress";
 import { recordRelevantChange } from "./event-changes";
@@ -45,12 +46,12 @@ async function resolveLocation(tx: Tx, organizationId: string, input: ReturnType
     const v = input.newVenue;
     // Reenvio do mesmo "novo local" na edição: mantém o local atual em vez de criar
     // outro igual (que contaria como troca de local, R8).
+    // Cidade criada/reaproveitada aqui, na transação do evento (sem órfã se falhar).
+    const city = await resolveVenueCity(tx, v);
     if (currentVenueId) {
-      const same = await tx.venue.findFirst({ where: { id: currentVenueId, organizationId, name: v.name, addressLine: v.addressLine, cityId: v.cityId } });
+      const same = await tx.venue.findFirst({ where: { id: currentVenueId, organizationId, name: v.name, addressLine: v.addressLine, cityId: city.id } });
       if (same) return { venueId: same.id, cityId: same.cityId, onlineUrl: null };
     }
-    const city = await tx.city.findUnique({ where: { id: v.cityId } });
-    if (!city) throw new AppError("VALIDATION", "Cidade inválida.");
     const venue = await tx.venue.create({
       data: {
         organizationId,

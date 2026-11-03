@@ -17,6 +17,7 @@ const mobile = z
   .string()
   .trim()
   .refine((v) => !v || isValidMobileBR(v), "Celular inválido. Use DDD + número, ex.: (11) 91234-5678");
+const emptyToUndefined = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (v === "" || v === null ? undefined : v), schema);
 const localDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Data/hora inválida");
 
 // ── Contas ──
@@ -95,10 +96,21 @@ export const venueInputSchema = z.object({
     .trim()
     .optional()
     .refine((v) => !v || /^\d{5}-?\d{3}$/.test(v), "CEP inválido"),
-  cityId: z.string().min(1, "Selecione a cidade"),
+  // Município da base local do IBGE (autocomplete). `cityId` (cidade já cadastrada)
+  // fica só por compatibilidade; um dos dois é exigido em `requireVenueCity`.
+  cityIbgeCode: emptyToUndefined(z.string().trim().regex(/^\d{7}$/, "Selecione a cidade na lista").optional()),
+  cityUf: emptyToUndefined(z.enum(UF_CODES, { message: "Selecione a UF" }).optional()),
+  cityId: emptyToUndefined(z.string().optional()),
   capacity: z.coerce.number().int().positive().optional(),
   accessibilityInfo: optionalText(1000),
 });
+
+/** Novo local sem município escolhido (nem cidade antiga) é recusado. */
+export function requireVenueCity(v: { cityIbgeCode?: string; cityUf?: string; cityId?: string } | undefined, ctx: z.RefinementCtx) {
+  if (!v || v.cityId) return;
+  if (!v.cityUf) ctx.addIssue({ code: "custom", path: ["newVenue", "cityUf"], message: "Selecione a UF" });
+  else if (!v.cityIbgeCode) ctx.addIssue({ code: "custom", path: ["newVenue", "cityIbgeCode"], message: "Selecione a cidade na lista" });
+}
 
 export const transferPolicyFields = {
   transferDeadlineHours: z.coerce.number({ message: "Informe as horas para transferir" }).int("Use horas inteiras").min(0, "Mínimo de 0 horas").max(8760, "Máximo de 8760 horas").default(24),
@@ -172,6 +184,7 @@ export const eventInputSchema = z
       ctx.addIssue({ code: "custom", path: ["salesEndLocal"], message: "As vendas devem terminar até o fim do evento" });
     if (v.locationType === "VENUE" && !v.venueId && !v.newVenue)
       ctx.addIssue({ code: "custom", path: ["venueId"], message: "Selecione ou cadastre o local" });
+    if (v.locationType === "VENUE" && !v.venueId) requireVenueCity(v.newVenue, ctx);
     if (v.locationType === "ONLINE" && !v.onlineUrl)
       ctx.addIssue({ code: "custom", path: ["onlineUrl"], message: "Informe o link de transmissão" });
   });
