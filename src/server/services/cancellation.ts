@@ -1,4 +1,5 @@
 import "server-only";
+import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { enqueueCancelledEventEmailsTx } from "../email/events";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
@@ -28,8 +29,10 @@ export async function cancelEvent(
   const result = await db.$transaction(async (tx) => {
     await lockEvent(tx, eventId);
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
-    assertEventTransition(event.status, "CANCELLED");
     const now = new Date();
+    // Término passado = encerrado (COMPLETED), mesmo antes do job: não cancela, não
+    // revoga ingressos usados nem reembolsa em massa um evento que já aconteceu.
+    assertEventTransition(effectiveEventStatus(event, now), "CANCELLED");
     await tx.event.update({ where: { id: eventId }, data: { status: "CANCELLED", cancelledAt: now, cancellationReason: reason } });
 
     // Vários pedidos podem ter cupons distintos: trava todos de uma vez (ordem de id).

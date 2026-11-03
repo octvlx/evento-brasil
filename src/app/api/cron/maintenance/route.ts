@@ -3,6 +3,9 @@
 // finalizados, reconcilia pagamentos/reembolsos com o provedor e verifica os
 // invariantes financeiros e, no máximo uma vez por hora, expurga dados pessoais
 // vencidos (prazos provisórios em src/server/retention.ts). Protegido por segredo no header x-cron-secret.
+// Cada etapa é idempotente e isolada: a falha de uma é registrada e não impede as
+// demais; a resposta sai com 500 para o agendador alertar. Nada aqui é a única
+// proteção: o término do evento já é reconhecido pelo relógio em todo o backend.
 import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
@@ -18,28 +21,44 @@ import { expireTicketTransfers } from "@/server/services/transfers";
 export async function POST(req: Request) {
   const secret = req.headers.get("x-cron-secret") ?? "";
   if (!safeEqual(secret, env().CRON_SECRET)) return new Response("forbidden", { status: 403 });
-  const expiredOrders = await expireStaleOrders(db);
-  const completedEvents = await completeEndedEvents(db);
-  const expiredTransfers = await expireTicketTransfers(db);
-  const reconciliation = await reconcilePayments(db, getPaymentAdapter());
-  const violations = await checkFinancialInvariants(db);
+  const failed: string[] = [];
+  // Só o nome da etapa e a mensagem do erro vão para o log (nunca headers ou segredos).
+  const step = async <T,>(name: string, run: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await run();
+    } catch (error) {
+      failed.push(name);
+      console.error(`[cron] ${JSON.stringify({ step: name, error: error instanceof Error ? error.message : String(error), at: new Date().toISOString() })}`);
+      return null;
+    }
+  };
+
+  const expiredOrders = await step("expireStaleOrders", () => expireStaleOrders(db));
+  const completedEvents = await step("completeEndedEvents", () => completeEndedEvents(db));
+  const expiredTransfers = await step("expireTicketTransfers", () => expireTicketTransfers(db));
+  const reconciliation = await step("reconcilePayments", () => reconcilePayments(db, getPaymentAdapter()));
+  const violations = (await step("checkFinancialInvariants", () => checkFinancialInvariants(db))) ?? [];
   if (violations.length) {
     // Incidente: nunca corrigir automaticamente — registrar para análise humana.
     console.error("[financeiro] violações de invariantes:", JSON.stringify(violations));
   }
-  for (const e of reconciliation.errors) {
+  for (const e of reconciliation?.errors ?? []) {
     financeLog("error", `reconciliation.${e.kind}_failed`, { orderId: e.orderId }, { entityId: e.id, message: e.message });
   }
-  const emailDelivery = await dispatchEmailOutbox(db);
-  const retention = await runRetentionPurgeIfDue(db);
-  return Response.json({
-    emailDelivery,
-    expiredOrders,
-    completedEvents,
-    expiredTransfers,
-    reconciliation: { ...reconciliation, errors: reconciliation.errors.length },
-    retention,
-    invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
-    at: new Date().toISOString(),
-  });
+  const emailDelivery = await step("dispatchEmailOutbox", () => dispatchEmailOutbox(db));
+  const retention = await step("runRetentionPurgeIfDue", () => runRetentionPurgeIfDue(db));
+  return Response.json(
+    {
+      emailDelivery,
+      expiredOrders,
+      completedEvents,
+      expiredTransfers,
+      reconciliation: reconciliation && { ...reconciliation, errors: reconciliation.errors.length },
+      retention,
+      invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
+      failedSteps: failed,
+      at: new Date().toISOString(),
+    },
+    { status: failed.length ? 500 : 200 },
+  );
 }

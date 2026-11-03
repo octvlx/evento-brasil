@@ -9,6 +9,7 @@ import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { formatEventDateTime } from "@/lib/datetime";
 import { EVENT_STATUS } from "@/lib/labels";
+import { effectiveEventStatus } from "@/lib/event-lifecycle";
 
 export const metadata: Metadata = { title: "Eventos — admin", robots: { index: false } };
 
@@ -29,12 +30,14 @@ async function Content() {
   });
   const queue = events.filter((e) => e.status === "PENDING_REVIEW");
   const Row = ({ e }: { e: (typeof events)[number] }) => {
-    const st = EVENT_STATUS[e.status];
+    // Término passado: Encerrado, sem destacar nem cancelar, mesmo antes do job.
+    const status = effectiveEventStatus(e);
+    const st = EVENT_STATUS[status];
     return (
       <li className="flex flex-wrap items-start justify-between gap-3 p-4">
         <div>
           <p className="font-semibold">
-            {e.status === "PUBLISHED" ? (
+            {status === "PUBLISHED" || status === "COMPLETED" ? (
               <Link href={`/eventos/${e.slug}`} className="hover:underline">
                 {e.title}
               </Link>
@@ -55,7 +58,7 @@ async function Content() {
               <AdminActionButton label="Devolver" askReason="O que precisa ser ajustado?" reasonRequired action={moderateEventAction.bind(null, e.id, "REJECT")} />
             </>
           )}
-          {e.status === "PUBLISHED" && (
+          {status === "PUBLISHED" && (
             <>
               <AdminActionButton label={e.isFeatured ? "Remover destaque" : "Destacar"} action={featureEventAction.bind(null, e.id, !e.isFeatured)} />
               <AdminActionButton

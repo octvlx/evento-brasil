@@ -4,6 +4,7 @@ import { eventInputSchema, ticketTypeInputSchema, type EventInput, type TicketTy
 import { onlyDigits } from "@/lib/br";
 import { commissionPerUnit } from "@/features/fees/policy";
 import { zonedLocalToUtc } from "@/lib/datetime";
+import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { formatBRL } from "@/lib/money";
 import { slugify } from "@/lib/utils";
 import type { Db, Tx } from "../db";
@@ -157,7 +158,8 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
       transferMaxTransfers: raw.transferMaxTransfers === undefined ? current.transferMaxTransfers : raw.transferMaxTransfers,
       transferAllowReturn: raw.transferAllowReturn === undefined ? current.transferAllowReturn : raw.transferAllowReturn,
     });
-    if (!EDITABLE.includes(current.status)) throw invalidState("Este evento não pode mais ser editado.");
+    // Término passado conta como encerrado mesmo antes do job gravar COMPLETED.
+    if (!EDITABLE.includes(effectiveEventStatus(current))) throw invalidState("Este evento não pode mais ser editado.");
     const sold = await tx.ticketType.aggregate({ where: { eventId }, _sum: { quantitySold: true, quantityReserved: true } });
     const committed = (sold._sum.quantitySold ?? 0) + (sold._sum.quantityReserved ?? 0);
     // Clientes antigos podem omitir os campos: mantenha a política já oferecida.
@@ -234,7 +236,7 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
-    if (!EDITABLE.includes(event.status)) throw invalidState("Este evento não pode mais ser editado.");
+    if (!EDITABLE.includes(effectiveEventStatus(event))) throw invalidState("Este evento não pode mais ser editado.");
     const tz = event.timezone;
     const data = {
       name: input.name,
@@ -347,16 +349,21 @@ export async function setEventFeatured(db: Db, admin: Actor, eventId: string, fe
   await audit(db, { actorUserId: admin.id, action: "event.featured", entityType: "Event", entityId: eventId, metadata: { featured } });
 }
 
-/** Job: eventos publicados que já terminaram passam a COMPLETED. */
+/**
+ * Job: eventos publicados cujo término chegou passam a COMPLETED. Um UPDATE só,
+ * condicionado ao status: repetir (ou rodar em paralelo) não tem efeito extra, e
+ * cancelados, rascunhos e já encerrados ficam como estão. Mexe apenas no status do
+ * evento: pedidos, ingressos, QR Codes, check-ins e o razão continuam intactos.
+ */
 export async function completeEndedEvents(db: Db, now = new Date()) {
-  const { count } = await db.event.updateMany({ where: { status: "PUBLISHED", endsAt: { lt: now } }, data: { status: "COMPLETED" } });
+  const { count } = await db.event.updateMany({ where: { status: "PUBLISHED", endsAt: { lte: now } }, data: { status: "COMPLETED" } });
   return count;
 }
 
 export async function archiveEvent(db: Db, actor: Actor, eventId: string) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
   const event = await db.event.findUniqueOrThrow({ where: { id: eventId } });
-  assertEventTransition(event.status, "ARCHIVED");
+  assertEventTransition(effectiveEventStatus(event), "ARCHIVED");
   await db.event.update({ where: { id: eventId }, data: { status: "ARCHIVED" } });
   await audit(db, { actorUserId: actor.id, organizationId, action: "event.archived", entityType: "Event", entityId: eventId });
 }

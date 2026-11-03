@@ -8,6 +8,7 @@ import { db } from "@/server/db";
 import { getActiveMembership, requireUser } from "@/server/auth/current";
 import { roleHas } from "@/server/auth/permissions";
 import { formatEventDateTime } from "@/lib/datetime";
+import { CHECKIN_GRACE_MS } from "@/lib/event-lifecycle";
 
 export const metadata: Metadata = { title: "Check-in", robots: { index: false } };
 
@@ -28,7 +29,7 @@ async function checkinEvents(userId: string) {
   return db.event.findMany({
     where: {
       status: { in: ["PUBLISHED", "COMPLETED"] },
-      endsAt: { gt: new Date(Date.now() - 12 * 3_600_000) },
+      endsAt: { gt: new Date(Date.now() - CHECKIN_GRACE_MS) },
       OR: [{ organizationId: { in: fullAccessOrgs } }, { staffAssignments: { some: { userId } } }],
     },
     orderBy: { startsAt: "asc" },

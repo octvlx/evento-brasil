@@ -8,7 +8,9 @@
 - **Banco:** PostgreSQL 15+ gerenciado, com backups automáticos e PITR.
   Aplicar migrações no deploy: `npm run db:deploy` (nunca `migrate dev`).
 - **Cron:** chamar `POST /api/cron/maintenance` a cada minuto com o header
-  `x-cron-secret: $CRON_SECRET` (expira reservas e encerra eventos).
+  `x-cron-secret: $CRON_SECRET` (expira reservas e encerra eventos; ver
+  `docs/encerramento-de-eventos.md`). O término do evento já vale pelo relógio
+  mesmo se o cron falhar.
 - **Webhooks:** expor `POST /api/webhooks/<provedor>` publicamente.
 - **Imagens:** `STORAGE_PROVIDER=s3` + bucket público/CDN (`OBJECT_STORAGE_*`).
 - **E-mail:** `EMAIL_PROVIDER=resend` (adaptador implementado, **não verificado**

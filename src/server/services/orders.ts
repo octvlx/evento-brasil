@@ -16,6 +16,7 @@ import { createOrderSchema, type CreateOrderInput } from "@/features/schemas";
 import { discountPerUnit, undercutHalfPrice } from "@/features/fees/discount";
 import { computeFees, lineWithNegativePayout } from "@/features/fees/policy";
 import { onlyDigits } from "@/lib/br";
+import { hasEventEnded } from "@/lib/event-lifecycle";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
@@ -125,11 +126,12 @@ export async function finalizePaidOrderTx(tx: Tx, order: OrderWithItems, now = n
 
 /**
  * Pagamento confirmado após a reserva expirar: tenta recuperar estoque.
- * Pré-condição: trava do evento. Retorna false se não há mais disponibilidade.
+ * Pré-condição: trava do evento. Retorna false se não há mais disponibilidade
+ * ou se o evento já terminou (pelo relógio, com ou sem o job ter rodado).
  */
 export async function acquireLateInventoryTx(tx: Tx, order: OrderWithItems, now = new Date()): Promise<boolean> {
   const event = await tx.event.findUniqueOrThrow({ where: { id: order.eventId }, include: { ticketTypes: true } });
-  if (event.status !== "PUBLISHED") return false;
+  if (event.status !== "PUBLISHED" || hasEventEnded(event, now)) return false;
   const byId = new Map(event.ticketTypes.map((t) => [t.id, t]));
   const committed = event.ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
   const requested = order.items.reduce((s, i) => s + i.quantity, 0);

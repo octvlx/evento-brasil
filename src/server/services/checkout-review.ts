@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { createOrderSchema, type CreateOrderInput } from "@/features/schemas";
+import { hasEventEnded } from "@/lib/event-lifecycle";
 import type { CheckoutDraft, Prisma } from "@/generated/prisma/client";
 import type { Actor } from "../auth/permissions";
 import { assertActive } from "../auth/permissions";
@@ -50,8 +51,10 @@ export async function createCheckoutDraft(db: Db, raw: CreateOrderInput, actor?:
     if (existing.expiresAt <= new Date()) throw new AppError("SALES_CLOSED", "Este carrinho expirou. Inicie outra seleção de ingressos.");
     return { draftId: existing.id, token };
   }
-  const event = await db.event.findFirst({ where: { id: input.eventId, status: "PUBLISHED", organization: { status: "APPROVED" } }, select: { id: true } });
+  const event = await db.event.findFirst({ where: { id: input.eventId, status: "PUBLISHED", organization: { status: "APPROVED" } }, select: { id: true, endsAt: true } });
   if (!event) throw notFound("Evento indisponível.");
+  // Pelo relógio, não pelo status: o job pode ainda não ter marcado COMPLETED.
+  if (hasEventEnded(event)) throw new AppError("SALES_CLOSED", "Este evento já foi encerrado.");
   try {
     const draft = await db.checkoutDraft.create({ data: { idempotencyKey: input.idempotencyKey, tokenHash: hashToken(token), userId: actor?.id ?? null, eventId: input.eventId, selection: input as Prisma.InputJsonValue, expiresAt: new Date(Date.now() + 24 * 60 * 60_000) } });
     return { draftId: draft.id, token };
@@ -154,6 +157,7 @@ export async function confirmCheckoutReview(db: Db, actor: Actor, draftId: strin
     if (order.status === "PAID" && draft.confirmedAt) return { orderId: order.id, changed: false, paid: true, notify: false };
     if (order.status !== "PENDING_PAYMENT" || order.expiresAt <= new Date()) throw new AppError("SALES_CLOSED", "A reserva expirou. Revise a compra novamente.");
     if (order.event.status !== "PUBLISHED" || order.event.organization.status !== "APPROVED") throw new AppError("SALES_CLOSED", "O evento não está mais disponível.");
+    if (hasEventEnded(order.event)) throw new AppError("SALES_CLOSED", "Este evento já foi encerrado.");
     const reservations = await tx.ticketInventoryReservation.findMany({ where: { orderId: order.id, status: "ACTIVE", expiresAt: { gt: new Date() } } });
     if (reservations.reduce((sum, row) => sum + row.quantity, 0) !== order.items.reduce((sum, row) => sum + row.quantity, 0)) throw new AppError("SOLD_OUT", "A reserva não está mais disponível.");
     const pendingTerms = await checkoutTermsGate(tx, actor.id, opts.acceptTerms);
