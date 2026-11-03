@@ -1,9 +1,10 @@
 import "server-only";
 import { z } from "zod";
 import { UF_CODES } from "@/lib/br";
+import { findMunicipalityByName, validateMunicipality } from "@/lib/municipalities";
 import { AppError } from "../errors";
 
-const responseSchema = z.object({ cep: z.string(), logradouro: z.string(), bairro: z.string(), localidade: z.string().min(1), uf: z.enum(UF_CODES) });
+const responseSchema = z.object({ cep: z.string(), logradouro: z.string(), bairro: z.string(), localidade: z.string().min(1), uf: z.enum(UF_CODES), ibge: z.string().optional() });
 
 /** CEP is the only data sent to ViaCEP. Users can complete or correct its suggestions manually. */
 export async function lookupPostalAddress(raw: string) {
@@ -16,7 +17,11 @@ export async function lookupPostalAddress(raw: string) {
     if (data && typeof data === "object" && "erro" in data && data.erro) throw new AppError("NOT_FOUND", "CEP não encontrado. Confira o número ou preencha o endereço manualmente.");
     const parsed = responseSchema.safeParse(data);
     if (!parsed.success || parsed.data.cep.replace(/\D/g, "") !== postalCode) throw new Error("invalid postal response");
-    return { postalCode, street: parsed.data.logradouro, district: parsed.data.bairro, city: parsed.data.localidade, state: parsed.data.uf };
+    // Município conferido na base local do IBGE (código + UF; sem código, nome + UF).
+    // Sem correspondência, `ibgeCode` fica null e a cidade é escolhida à mão.
+    const { logradouro, bairro, localidade, uf, ibge } = parsed.data;
+    const municipality = (ibge && validateMunicipality(ibge, uf)) || findMunicipalityByName(localidade, uf);
+    return { postalCode, street: logradouro, district: bairro, city: municipality?.nome ?? localidade, state: uf, ibgeCode: municipality ? String(municipality.id) : null };
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError("PROVIDER_ERROR", "Não foi possível consultar o CEP. Preencha o endereço manualmente.");
