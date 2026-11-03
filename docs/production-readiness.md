@@ -31,7 +31,7 @@
 - [ ] Verificação de e-mail no cadastro e recuperação de senha.
 - [ ] 2FA para administradores e responsáveis por organizações.
 - [ ] Limitação de taxa distribuída (hoje em memória, por processo).
-- [ ] Cabeçalhos de segurança (CSP, HSTS, Permissions-Policy) via `next.config`/proxy.
+- [x] Cabeçalhos de segurança (CSP sem nonce, HSTS fora do dev, `frame-ancestors`/`X-Frame-Options`, `Permissions-Policy`) em `next.config.ts`. CSP com nonce exigiria renderização dinâmica e é incompatível com o pré-render parcial.
 - [ ] Revisão de dependências (`npm audit`) e varredura de segredos no CI.
 - [ ] Observabilidade: logs estruturados, rastreamento de erros, alertas para
       webhooks não processados e reembolsos com falha.
