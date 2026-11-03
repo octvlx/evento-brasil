@@ -2,7 +2,7 @@
 
 // Campos de cada etapa do assistente de evento (apresentação). Estado,
 // navegação e salvamento ficam em `event-wizard.tsx`.
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useWatch, type UseFormReturn } from "react-hook-form";
 import Link from "next/link";
 import { ImagePlus, Lightbulb } from "lucide-react";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/primitives";
 import { BR_TIMEZONES } from "@/lib/br";
 import { cn } from "@/lib/utils";
-import { uploadCoverAction } from "./actions";
+import { lookupVenuePostalCodeAction, uploadCoverAction } from "./actions";
 import { MunicipalityCombobox } from "./municipality-combobox";
 import type { WizardValues } from "./wizard-steps";
 
@@ -233,9 +233,7 @@ export function StepDateLocation({ form, errors, venues }: { form: Form; errors:
               <Field name="newVenue.name" label="Nome do local" error={errors["newVenue.name"]} help="Ex.: Teatro Municipal, Arena Central." className="sm:col-span-6">
                 {(a) => <Input {...a} {...reg(form, "newVenue.name")} />}
               </Field>
-              <Field name="newVenue.postalCode" label="CEP" error={errors["newVenue.postalCode"]} className="sm:col-span-2">
-                {(a) => <Input {...a} inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" {...reg(form, "newVenue.postalCode")} />}
-              </Field>
+              <WizardPostalCode form={form} errors={errors} />
               <Field name="newVenue.street" label="Rua / avenida" error={errors["newVenue.street"]} className="sm:col-span-4">
                 {(a) => <Input {...a} autoComplete="address-line1" {...reg(form, "newVenue.street")} />}
               </Field>
@@ -262,6 +260,103 @@ export function StepDateLocation({ form, errors, venues }: { form: Form; errors:
         >
           {(a) => <Input {...a} type="url" placeholder="https://" {...reg(form, "onlineUrl")} />}
         </Field>
+      )}
+    </div>
+  );
+}
+
+/**
+ * CEP do novo local com busca no ViaCEP (pelo servidor). Ao sair do campo, só
+ * preenche o que estiver vazio; o botão "Buscar CEP" sobrescreve rua, bairro e
+ * cidade. Número e complemento ficam sempre com o organizador.
+ */
+function WizardPostalCode({ form, errors }: { form: Form; errors: Errors }) {
+  const [state, setState] = useState<{ tone: "info" | "error"; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const revision = useRef(0);
+  const last = useRef<string | null>(null);
+  const field = reg(form, "newVenue.postalCode");
+
+  async function lookup(force: boolean) {
+    const digits = (form.getValues("newVenue.postalCode") ?? "").replace(/\D/g, "");
+    if (!/^\d{8}$/.test(digits)) {
+      if (force) setState({ tone: "error", text: "Informe um CEP de 8 dígitos." });
+      return;
+    }
+    if (!force && last.current === digits) return;
+    const mine = ++revision.current;
+    last.current = digits;
+    setBusy(true);
+    setState({ tone: "info", text: "Buscando endereço…" });
+    const res = await lookupVenuePostalCodeAction(digits);
+    // Outra busca começou (ou o CEP mudou) enquanto esta respondia: descarta.
+    if (mine !== revision.current) return;
+    setBusy(false);
+    if (!res.ok) return setState({ tone: "error", text: `${res.error.replace(/\s*Preencha o endereço manualmente\.?$/, "")} Você pode preencher o endereço manualmente.` });
+    const a = res.data;
+    const opts = { shouldDirty: true };
+    const put = (name: "newVenue.street" | "newVenue.district", value: string) => {
+      if (value && (force || !form.getValues(name)?.trim())) form.setValue(name, value, opts);
+    };
+    form.setValue("newVenue.postalCode", `${digits.slice(0, 5)}-${digits.slice(5)}`, opts);
+    put("newVenue.street", a.street);
+    put("newVenue.district", a.district);
+    if (a.ibgeCode && (force || !form.getValues("newVenue.cityIbgeCode"))) {
+      form.setValue("newVenue.cityUf", a.state, opts);
+      form.setValue("newVenue.cityIbgeCode", a.ibgeCode, opts);
+      form.setValue("newVenue.cityName", a.city, opts);
+    }
+    const tips = [!a.street && "informe a rua (CEP geral da cidade)", !a.ibgeCode && `escolha a cidade na lista (${a.city} – ${a.state} não foi encontrada na base do IBGE)`, "confira o número"].filter(Boolean);
+    setState({ tone: "info", text: `Endereço localizado: ${[a.street, a.district, `${a.city} — ${a.state}`].filter(Boolean).join(", ")}. Agora ${tips.join(" e ")}.` });
+  }
+
+  const id = fieldId("newVenue.postalCode");
+  const error = errors["newVenue.postalCode"];
+  return (
+    <div className="sm:col-span-6">
+      <Label htmlFor={id}>CEP</Label>
+      <div className="mt-1.5 flex max-w-sm gap-2">
+        <Input
+          {...field}
+          id={id}
+          data-field="newVenue.postalCode"
+          aria-invalid={!!error}
+          aria-describedby={[`${id}-status`, error && `${id}-error`].filter(Boolean).join(" ")}
+          inputMode="numeric"
+          autoComplete="postal-code"
+          placeholder="00000-000"
+          maxLength={9}
+          onChange={(e) => {
+            revision.current++;
+            setBusy(false);
+            setState(null);
+            return field.onChange(e);
+          }}
+          onBlur={(e) => {
+            void lookup(false);
+            return field.onBlur(e);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void lookup(true);
+            }
+          }}
+        />
+        {/* Nunca desabilitado: o clique chega logo depois do blur (que já começou uma busca
+            sem sobrescrever) e precisa valer, recomeçando a busca forçada. */}
+        <Button type="button" variant="outline" className="shrink-0" onClick={() => void lookup(true)} aria-busy={busy}>
+          {busy ? "Buscando…" : "Buscar CEP"}
+        </Button>
+      </div>
+      <p id={`${id}-status`} role="status" className={cn("mt-1.5 text-xs", state?.tone === "error" ? "font-medium text-destructive" : "text-muted-foreground")}>
+        {state?.text ?? "Digite o CEP para preencher rua, bairro e cidade."}
+      </p>
+      {error && (
+        <p id={`${id}-error`} className="mt-1.5 text-xs font-medium text-destructive">
+          <span aria-hidden>⚠ </span>
+          {error}
+        </p>
       )}
     </div>
   );

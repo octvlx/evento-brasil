@@ -22,6 +22,7 @@ import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, 
 import { extendEventChangeWindow } from "@/server/services/event-changes";
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
+import { lookupPostalAddress } from "@/server/services/postal-address";
 import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
 import {
   acceptInvitation,
@@ -118,6 +119,17 @@ export async function startEventDraftAction(input: { draftKey: string } & Record
     await rateLimit(`event-draft:${user.id}`, 30, 60 * 60_000);
     const { event } = await startEventDraft(db, user, await activeOrgId(user.id), input);
     return { id: event.id };
+  });
+}
+
+/** Endereço do novo local pelo CEP (ViaCEP no servidor; o navegador só fala com o próprio site). */
+export async function lookupVenuePostalCodeAction(postalCode: string) {
+  const user = await requireUser("/organizador/eventos/novo");
+  return toActionResult(async () => {
+    await assertOrgPermission(db, user, await activeOrgId(user.id), "event:write");
+    const client = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    await rateLimit(`organizer-cep:${user.id}:${client}`, 30, 60_000);
+    return lookupPostalAddress(postalCode);
   });
 }
 
