@@ -1,33 +1,25 @@
-import { connection } from "next/server";
 import Link from "next/link";
 import { Suspense } from "react";
-import { ChevronDown, Search, Ticket, UserRound } from "lucide-react";
+import { ChevronDown, Ticket, UserRound } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { db } from "@/server/db";
+import { cn } from "@/lib/utils";
 import { getActiveMembership, getCurrentUser } from "@/server/auth/current";
-import { listCities } from "@/server/services/catalog";
 import { logoutAction } from "@/features/auth/actions";
 import { Logo } from "./logo";
-import { CitySelect } from "./city-select";
+import { HeaderSearch, HeaderSearchMobile } from "./header-search";
 
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 print:hidden border-b border-border/70 bg-background/85 backdrop-blur-lg">
-      <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6">
+      <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:gap-3 sm:px-6">
         <Logo />
-        <form action="/eventos" role="search" className="relative ml-4 hidden max-w-sm flex-1 md:block">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <input
-            name="q"
-            type="search"
-            placeholder="Buscar eventos, artistas, locais"
-            aria-label="Buscar eventos"
-            className="h-10 w-full rounded-full border border-input bg-muted/60 pl-9 pr-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </form>
-        <div className="ml-auto flex items-center gap-2">
-          <Suspense fallback={<div className="hidden h-10 w-36 rounded-full bg-muted sm:block" />}>
-            <HeaderCitySelect />
+        {/* useSearchParams/usePathname são dados de runtime: Suspense com Cache Components. */}
+        <Suspense fallback={<div className="ml-2 hidden h-10 max-w-xl flex-1 rounded-full bg-muted/60 md:block lg:ml-6" />}>
+          <HeaderSearch />
+        </Suspense>
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
+          <Suspense fallback={null}>
+            <HeaderSearchMobile />
           </Suspense>
           <Link href="/organizador" className="hidden text-sm font-semibold text-muted-foreground hover:text-foreground lg:block">
             Para organizadores
@@ -41,22 +33,15 @@ export function SiteHeader() {
   );
 }
 
-async function HeaderCitySelect() {
-  // Lista depende de quais eventos estão no ar agora: lida a cada pedido.
-  await connection();
-  const cities = await listCities(db);
-  return <CitySelect cities={cities.map((c) => ({ slug: c.slug, label: `${c.name} – ${c.state}` }))} className="hidden sm:block" />;
-}
-
 async function UserMenu() {
   const user = await getCurrentUser();
   if (!user) {
     return (
-      <div className="flex items-center gap-2">
-        <Link href="/entrar" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+      <div className="flex items-center gap-1 sm:gap-2">
+        <Link href="/entrar" className={buttonVariants({ variant: "ghost", size: "sm", className: "max-sm:px-2.5" })}>
           Entrar
         </Link>
-        <Link href="/registrar" className={buttonVariants({ variant: "default", size: "sm", className: "hidden sm:inline-flex" })}>
+        <Link href="/registrar" className={buttonVariants({ variant: "default", size: "sm", className: "max-sm:px-2.5" })}>
           Criar conta
         </Link>
       </div>
@@ -67,7 +52,8 @@ async function UserMenu() {
   const isStaff = memberships.length > 0;
   return (
     <div className="flex items-center gap-1">
-      <Link href="/meus-ingressos" className={buttonVariants({ variant: "ghost", size: "sm", className: "hidden sm:inline-flex" })}>
+      {/* cn (twMerge): sem ele o inline-flex da base vence o hidden e o link aparecia no celular. */}
+      <Link href="/meus-ingressos" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "hidden sm:inline-flex")}>
         <Ticket aria-hidden /> Meus ingressos
       </Link>
       <details className="group relative">

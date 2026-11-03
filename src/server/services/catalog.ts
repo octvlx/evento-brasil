@@ -7,6 +7,7 @@ import { localDayRange, weekendRange } from "@/lib/datetime";
 import type { PriceQuote } from "@/lib/price-display";
 import type { Db } from "../db";
 import { resolveCommissionRule, resolveCommissionRules } from "./commission";
+import { rankPublicEvents } from "./search-ranking";
 
 export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
@@ -133,7 +134,10 @@ export type DateFilter = "hoje" | "amanha" | "fim-de-semana" | "7-dias" | "30-di
 export type PriceFilter = "gratis" | "ate-50" | "50-150" | "150-mais";
 
 export interface SearchParams {
+  /** Texto livre (já sem a localização interpretada; ver services/search.ts). */
   q?: string;
+  /** Categoria reconhecida no texto ("teatro"): também conta como correspondência. */
+  matchCategoryId?: string;
   citySlug?: string;
   categorySlug?: string;
   date?: DateFilter;
@@ -146,17 +150,10 @@ export const PAGE_SIZE = 12;
 export async function searchEvents(db: Db, params: SearchParams, now = new Date()) {
   const and: Prisma.EventWhereInput[] = [publicEventWhere(now)];
   const tz = "America/Sao_Paulo";
-  if (params.q?.trim()) {
-    const q = params.q.trim().slice(0, 80);
-    and.push({
-      OR: [
-        { title: { contains: q, mode: "insensitive" } },
-        { summary: { contains: q, mode: "insensitive" } },
-        { venue: { name: { contains: q, mode: "insensitive" } } },
-        { organization: { name: { contains: q, mode: "insensitive" } } },
-      ],
-    });
-  }
+  // Texto: relevância e acentos no banco (search-ranking.ts); a ordem vem do ranking.
+  const q = params.q?.trim().slice(0, 80) ?? "";
+  const ranked = q || params.matchCategoryId ? await rankPublicEvents(db, q, { citySlug: params.citySlug, categoryId: params.matchCategoryId, now }) : null;
+  if (ranked) and.push({ id: { in: ranked.map((r) => r.id) } });
   if (params.citySlug) and.push({ OR: [{ city: { slug: params.citySlug } }, { venue: { city: { slug: params.citySlug } } }] });
   if (params.categorySlug) and.push({ category: { slug: params.categorySlug } });
   if (params.date) {
@@ -179,6 +176,14 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
   const where = { AND: and };
   const requestedPage = params.page ?? 1;
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 && (requestedPage - 1) * PAGE_SIZE <= 2_147_483_647 ? requestedPage : 1;
+  if (ranked) {
+    // Ordem de relevância: filtra (data, preço, categoria…) pelos ids e pagina na ordem do ranking.
+    const order = new Map(ranked.map((r, i) => [r.id, i]));
+    const ids = (await db.event.findMany({ where, select: { id: true } })).map((r) => r.id).sort((a, b) => order.get(a)! - order.get(b)!);
+    const pageIds = ids.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const rows = (await db.event.findMany({ where: { id: { in: pageIds } }, select: cardSelect })).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    return { total: ids.length, page, pageCount: Math.max(1, Math.ceil(ids.length / PAGE_SIZE)), events: await toCards(db, rows, now) };
+  }
   const [total, rows] = await Promise.all([
     db.event.count({ where }),
     db.event.findMany({ where, select: cardSelect, orderBy: [{ startsAt: "asc" }, { id: "asc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
