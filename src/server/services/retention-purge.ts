@@ -24,6 +24,7 @@ export interface RetentionPurgeResult {
   checkins: number;
   orders: number;
   tickets: number;
+  rateLimits: number;
 }
 
 const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
@@ -54,6 +55,7 @@ export async function runRetentionPurge(db: Db, now = new Date()): Promise<Reten
     db.emailVerificationToken.deleteMany({ where: { expiresAt: { lt: tokenCutoff } } }),
   ]);
   const checkoutDrafts = await db.checkoutDraft.deleteMany({ where: { orderId: null, expiresAt: { lt: tokenCutoff } } });
+  const rateLimits = await db.rateLimitBucket.deleteMany({ where: { resetAt: { lt: now } } });
 
   const invitationCutoff = daysAgo(now, RETENTION.invitationDays);
   const invitations = await db.organizationInvitation.deleteMany({
@@ -132,5 +134,6 @@ export async function runRetentionPurge(db: Db, now = new Date()): Promise<Reten
     checkins: checkins.count,
     orders,
     tickets: oldTickets.length,
+    rateLimits: rateLimits.count,
   };
 }

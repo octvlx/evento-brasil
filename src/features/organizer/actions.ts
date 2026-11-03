@@ -59,7 +59,7 @@ async function recordOrganizerTerms(userId: string, organizationId: string) {
 export async function createOrganizationAction(input: OrganizerApplicationInput): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser("/organizador/organizacoes/nova");
   return toActionResult(async () => {
-    rateLimit(`org-create:${user.id}`, 5, 60 * 60_000);
+    await rateLimit(`org-create:${user.id}`, 5, 60 * 60_000);
     const org = await submitOrganizerApplication(db, user, input);
     await recordOrganizerTerms(user.id, org.id);
     await setActiveOrg(org.id);
@@ -115,7 +115,7 @@ export async function extendEventChangeAction(changeId: string, refundUntilLocal
 export async function startEventDraftAction(input: { draftKey: string } & Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   const user = await requireUser("/organizador/eventos/novo");
   return toActionResult(async () => {
-    rateLimit(`event-draft:${user.id}`, 30, 60 * 60_000);
+    await rateLimit(`event-draft:${user.id}`, 30, 60 * 60_000);
     const { event } = await startEventDraft(db, user, await activeOrgId(user.id), input);
     return { id: event.id };
   });
@@ -242,7 +242,7 @@ export async function inviteMemberAction(_prev: ActionResult<{ link: string }> |
 export async function resendInvitationAction(invitationId: string): Promise<ActionResult<{ link: string }>> {
   const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
-    rateLimit(`invite-resend:${user.id}`, 20, 60 * 60_000);
+    await rateLimit(`invite-resend:${user.id}`, 20, 60 * 60_000);
     const orgId = await activeOrgId(user.id);
     const { invitation, token } = await resendInvitation(db, user, orgId, invitationId);
     return { link: await sendInvitationEmail(orgId, invitation.email, token) };

@@ -105,9 +105,11 @@ fora do inventário, com essa ressalva.
   provedor de e-mail (adaptador Resend em `src/server/email/index.ts`). Em
   desenvolvimento as mensagens e anexos são gravados em `.data/outbox` e o
   console registra `para=<e-mail>`.
-- **Rate limit:** em memória (`src/server/rate-limit.ts`), chaves com IP no
-  cadastro (`register:<ip>`, `src/features/auth/actions.ts:15`) e id de usuário
-  nas demais; nada persiste.
+- **Rate limit:** tabela `RateLimitBucket` (`src/server/rate-limit.ts`). As
+  chaves lógicas têm IP e e-mail (login), IP (cadastro, início do Google) ou id
+  de usuário, mas o banco só guarda o **HMAC** da chave, um contador e o fim da
+  janela. O registro é apagado no expurgo programado logo depois que a janela
+  vence (no máximo algumas horas).
 - **IP:** o banco **não guarda IP** em sessão, pedido nem auditoria. Ver §2,
   "registros de acesso".
 

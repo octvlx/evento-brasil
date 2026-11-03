@@ -23,21 +23,21 @@ export const ORDER_RATE_LIMITS = {
 
 type LimitedAction = keyof typeof ORDER_RATE_LIMITS;
 
-function enforce(action: LimitedAction, userId: string, clientKey: string) {
+async function enforce(action: LimitedAction, userId: string, clientKey: string) {
   const cfg = ORDER_RATE_LIMITS[action];
   try {
-    rateLimit(`${action}:user:${userId}`, cfg.perUser.limit, cfg.perUser.windowMs);
-    rateLimit(`${action}:client:${clientKey}`, cfg.perClient.limit, cfg.perClient.windowMs);
+    await rateLimit(`${action}:user:${userId}`, cfg.perUser.limit, cfg.perUser.windowMs);
+    await rateLimit(`${action}:client:${clientKey}`, cfg.perClient.limit, cfg.perClient.windowMs);
   } catch (err) {
     if (err instanceof AppError && err.code === "RATE_LIMITED") throw new AppError("RATE_LIMITED", cfg.message);
     throw err;
   }
 }
 
-export function assertCanCreateOrder(userId: string, clientKey: string) {
-  enforce("createOrder", userId, clientKey);
+export async function assertCanCreateOrder(userId: string, clientKey: string) {
+  await enforce("createOrder", userId, clientKey);
 }
 
-export function assertCanStartPayment(userId: string, clientKey: string) {
-  enforce("startPayment", userId, clientKey);
+export async function assertCanStartPayment(userId: string, clientKey: string) {
+  await enforce("startPayment", userId, clientKey);
 }

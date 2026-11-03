@@ -22,7 +22,7 @@ async function draftToken(draftId: string) {
 export async function startCheckoutDraftAction(input: CreateOrderInput) {
   return toActionResult(async () => {
     const actor = await getCurrentUser(); const client = await requestClient();
-    rateLimit(`checkout-draft:${actor?.id ?? client.ip}`, 20, 60_000);
+    await rateLimit(`checkout-draft:${actor?.id ?? client.ip}`, 20, 60_000);
     const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
     const draft = await createCheckoutDraft(db, { ...input, attribution }, actor);
     (await cookies()).set(`eb_checkout_${draft.draftId}`, draft.token, { httpOnly: true, secure: env().NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 24 * 60 * 60 });
@@ -33,7 +33,7 @@ export async function startCheckoutDraftAction(input: CreateOrderInput) {
 export async function prepareCheckoutReviewAction(draftId: string) {
   const actor = await requireUser(`/checkout/revisao/${draftId}`);
   return toActionResult(async () => {
-    rateLimit(`checkout-prepare:${actor.id}`, 20, 60_000);
+    await rateLimit(`checkout-prepare:${actor.id}`, 20, 60_000);
     await prepareCheckoutReview(db, actor, draftId, await draftToken(draftId));
     refresh();
   });
@@ -42,7 +42,7 @@ export async function prepareCheckoutReviewAction(draftId: string) {
 export async function updateCheckoutDraftAction(draftId: string, input: CreateOrderInput) {
   const actor = await requireUser(`/checkout/revisao/${draftId}`);
   return toActionResult(async () => {
-    rateLimit(`checkout-edit:${actor.id}`, 20, 60_000);
+    await rateLimit(`checkout-edit:${actor.id}`, 20, 60_000);
     const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
     await updateCheckoutDraft(db, actor, draftId, { ...input, attribution }, await draftToken(draftId));
     refresh();
@@ -52,7 +52,7 @@ export async function updateCheckoutDraftAction(draftId: string, input: CreateOr
 export async function confirmCheckoutReviewAction(draftId: string, reviewHash: string, acceptTerms?: boolean) {
   const actor = await requireUser(`/checkout/revisao/${draftId}`);
   return toActionResult(async () => {
-    rateLimit(`checkout-confirm:${actor.id}`, 20, 60_000);
+    await rateLimit(`checkout-confirm:${actor.id}`, 20, 60_000);
     const client = await requestClient();
     const result = await confirmCheckoutReview(db, actor, draftId, reviewHash, await draftToken(draftId), { acceptTerms, ...client });
     refresh();

@@ -12,7 +12,7 @@ export async function GET() {
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || null;
   try {
-    rateLimit(`data-export:${user.id}`, 5, 60 * 60_000);
+    await rateLimit(`data-export:${user.id}`, 5, 60 * 60_000);
     const data = await exportUserDataAudited(db, user, { ip });
     return new Response(JSON.stringify(data, null, 2), {
       headers: {

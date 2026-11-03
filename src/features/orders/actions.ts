@@ -42,7 +42,7 @@ export async function createOrderAction(input: CreateOrderInput, opts: { acceptT
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
   const client = await clientKey();
   return toActionResult(async () => {
-    assertCanCreateOrder(user.id, client);
+    await assertCanCreateOrder(user.id, client);
     const { readiness } = await checkoutReadiness(db, user.id);
     if (!readiness.email || !readiness.profile || !readiness.address) throw new AppError("VALIDATION", "Confirme seu e-mail e complete CPF, nascimento e endereço no checkout.");
     const pendingTerms = await checkoutTermsGate(db, user.id, opts.acceptTerms);
@@ -67,7 +67,7 @@ export async function startPaymentAction(orderId: string, method: "PIX" | "CREDI
   const user = await requireUser(`/checkout/${orderId}`);
   const client = await clientKey();
   const result = await toActionResult(async () => {
-    assertCanStartPayment(user.id, client);
+    await assertCanStartPayment(user.id, client);
     // Versão nova publicada depois da reserva: aceite antes de cobrar.
     const pendingTerms = await checkoutTermsGate(db, user.id, acceptTerms);
     if (pendingTerms.length) {
@@ -116,7 +116,7 @@ export async function refreshPaymentStatusAction(orderId: string, returnedPaymen
   const order = await db.order.findUnique({ where: { id: orderId }, select: { userId: true } });
   if (!order || order.userId !== user.id) return "forbidden";
   try {
-    rateLimit(`order-payment-check:${user.id}:${orderId}`, 10, 60_000);
+    await rateLimit(`order-payment-check:${user.id}:${orderId}`, 10, 60_000);
   } catch {
     return "rate_limited";
   }

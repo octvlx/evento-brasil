@@ -286,7 +286,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
 
   const couponCode = input.couponCode?.trim().toUpperCase() || null;
   // Contra força bruta de códigos: conta toda tentativa com cupom.
-  if (couponCode) rateLimit(`coupon:${actor.id}`, COUPON_ATTEMPTS_PER_WINDOW, COUPON_ATTEMPT_WINDOW_MS);
+  if (couponCode) await rateLimit(`coupon:${actor.id}`, COUPON_ATTEMPTS_PER_WINDOW, COUPON_ATTEMPT_WINDOW_MS, db);
 
   try {
     const create = async (tx: Tx) => {

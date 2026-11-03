@@ -60,7 +60,7 @@ export async function loginAction(
   const key = `login:${await clientKey()}:${parsed.data.email}`;
   const WINDOW = 15 * 60_000;
   try {
-    failureLimiter.assert(key, 8, WINDOW);
+    await failureLimiter.assert(key, 8, WINDOW);
     const user = await authenticate(
       db,
       parsed.data.email,
@@ -68,10 +68,10 @@ export async function loginAction(
       { production: isProduction() },
     );
     if (!user) {
-      failureLimiter.fail(key, WINDOW);
+      await failureLimiter.fail(key, WINDOW);
       return { error: "E-mail ou senha incorretos." };
     }
-    failureLimiter.reset(key);
+    await failureLimiter.reset(key);
     const { token, expiresAt } = await createSession(
       db,
       user.id,
@@ -92,7 +92,7 @@ export async function registerAction(
   return toActionResult(async () => {
     const ip = await clientKey();
     const userAgent = (await headers()).get("user-agent");
-    rateLimit(`register:${ip}`, env().SIGNUP_RATE_LIMIT_PER_HOUR, 60 * 60_000);
+    await rateLimit(`register:${ip}`, env().SIGNUP_RATE_LIMIT_PER_HOUR, 60 * 60_000);
     const user = await registerUser(
       db,
       input,
@@ -161,7 +161,7 @@ export async function deleteAccountAction(
   const key = `delete-account:${user.id}`;
   const WINDOW = 15 * 60_000;
   try {
-    failureLimiter.assert(key, 5, WINDOW);
+    await failureLimiter.assert(key, 5, WINDOW);
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
     throw err;
@@ -173,7 +173,7 @@ export async function deleteAccountAction(
     }),
   );
   if (!result.ok) {
-    if (result.code === "VALIDATION") failureLimiter.fail(key, WINDOW);
+    if (result.code === "VALIDATION") await failureLimiter.fail(key, WINDOW);
     return { error: result.error };
   }
   await clearSessionCookie();
@@ -191,7 +191,7 @@ export async function changePasswordAction(
   const key = `change-password:${user.id}`;
   const WINDOW = 15 * 60_000;
   try {
-    failureLimiter.assert(key, 5, WINDOW);
+    await failureLimiter.assert(key, 5, WINDOW);
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
     throw err;
@@ -205,12 +205,12 @@ export async function changePasswordAction(
   const result = await toActionResult(() => changePassword(db, user, input, token));
   if (!result.ok) {
     if (result.error === "A senha atual está incorreta.") {
-      failureLimiter.fail(key, WINDOW);
+      await failureLimiter.fail(key, WINDOW);
       return { error: result.error, field: "currentPassword" };
     }
     return { error: result.error };
   }
-  failureLimiter.reset(key);
+  await failureLimiter.reset(key);
   if (process.env.NODE_ENV !== "test") void dispatchEmailOutbox(db, { limit: 5 }).catch(() => {});
   return { ok: true };
 }
