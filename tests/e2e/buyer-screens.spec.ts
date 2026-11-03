@@ -2,7 +2,7 @@
 // transferência, reembolso pela janela de alteração e pedido de cancelamento.
 import pg from "pg";
 import { expect, test } from "@playwright/test";
-import { login, qrPayloadFor, USERS } from "./helpers";
+import { login, nextScan, openScanner, qrPayloadFor, USERS } from "./helpers";
 
 const FRIEND = "amiga@demo.eventobrasil.test";
 
@@ -73,13 +73,13 @@ test("transferência: envia em Meus ingressos → outra conta aceita → QR anti
   const after = await qrPayloadFor(code);
   expect(after.payload).not.toBe(before.payload);
   const staff = await (await browser.newContext()).newPage();
-  await login(staff, USERS.producer, `/check-in/${before.eventId}`);
+  await openScanner(staff, USERS.producer, before.eventId);
   const input = staff.getByPlaceholder(/Colar conteúdo do QR/);
   const result = (text: string | RegExp) => staff.getByRole("alert").filter({ hasText: text });
   await input.fill(before.payload);
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("QR SUBSTITUÍDO")).toBeVisible();
-  await staff.waitForTimeout(2600);
+  await nextScan(staff);
   await input.fill(after.payload);
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Entrada liberada")).toContainText(code);

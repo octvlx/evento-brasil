@@ -1,6 +1,6 @@
 import { proceedThroughReview } from "./helpers";
 import { expect, test } from "@playwright/test";
-import { login, qrPayloadFor, USERS } from "./helpers";
+import { login, nextScan, openScanner, qrPayloadFor, USERS } from "./helpers";
 
 test("compra com PIX simulado → ingresso com QR → check-in → leitura duplicada recusada", async ({ browser }) => {
   // Comprador
@@ -51,7 +51,7 @@ test("compra com PIX simulado → ingresso com QR → check-in → leitura dupli
   // Organizador valida na entrada
   const staff = await (await browser.newContext()).newPage();
   const { payload, eventId } = await qrPayloadFor(code);
-  await login(staff, USERS.producer, `/check-in/${eventId}`);
+  await openScanner(staff, USERS.producer, eventId);
   await expect(staff).toHaveURL(new RegExp(`/check-in/${eventId}`));
   const input = staff.getByPlaceholder(/Colar conteúdo do QR/);
   await input.fill(payload);
@@ -60,7 +60,7 @@ test("compra com PIX simulado → ingresso com QR → check-in → leitura dupli
   const result = (text: string) => staff.getByRole("alert").filter({ hasText: text });
   await expect(result("Entrada liberada")).toBeVisible();
   await expect(result("Entrada liberada")).toContainText(code);
-  await staff.waitForTimeout(2600);
+  await nextScan(staff);
   await input.fill(payload);
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Ingresso JÁ UTILIZADO")).toBeVisible();
@@ -85,13 +85,13 @@ test("meia-entrada: a portaria vê o aviso para exigir o documento, também no d
 
   const staff = await (await browser.newContext()).newPage();
   const { payload, eventId } = await qrPayloadFor(code);
-  await login(staff, USERS.producer, `/check-in/${eventId}`);
+  await openScanner(staff, USERS.producer, eventId);
   const input = staff.getByPlaceholder(/Colar conteúdo do QR/);
   const result = (text: string) => staff.getByRole("alert").filter({ hasText: text });
   await input.fill(payload);
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Entrada liberada")).toContainText("Meia-entrada — exigir documento comprobatório");
-  await staff.waitForTimeout(2600);
+  await nextScan(staff);
   await input.fill(payload);
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Ingresso JÁ UTILIZADO")).toContainText("Meia-entrada — exigir documento comprobatório");

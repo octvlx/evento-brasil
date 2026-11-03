@@ -19,6 +19,22 @@ export async function login(page: Page, email: string, next = "/") {
   await page.waitForURL((url) => !url.pathname.startsWith("/entrar"));
 }
 
+/**
+ * Abre o leitor da portaria com o relógio da página parado. O leitor mostra cada
+ * resultado por 1,5–2,2 s e depois limpa a tela; no CI lento a conferência podia
+ * chegar depois disso. Parado, o resultado fica até `nextScan` avançar o tempo.
+ */
+export async function openScanner(page: Page, email: string, eventId: string) {
+  await page.clock.install();
+  await login(page, email, `/check-in/${eventId}`);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+}
+
+/** Deixa o resultado atual sair da tela e libera o leitor para a próxima leitura. */
+export async function nextScan(page: Page) {
+  await page.clock.runFor(2600);
+}
+
 /** Marca os dois aceites do cadastro (termos de uso e política de privacidade, R10). */
 export async function acceptSignupTerms(page: Page) {
   await page.getByRole("checkbox", { name: /termos de uso/ }).check();
