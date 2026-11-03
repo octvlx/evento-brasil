@@ -28,7 +28,7 @@ export function HeaderSearchMobile() {
     <>
       <button
         type="button"
-        className="grid size-10 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
+        className="grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
         aria-label={open ? "Fechar busca" : "Abrir busca"}
         aria-expanded={open}
         aria-controls="busca-mobile"

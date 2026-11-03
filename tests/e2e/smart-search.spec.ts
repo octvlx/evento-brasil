@@ -124,7 +124,12 @@ test("celular: lupa abre a busca, Entrar e Criar conta continuam, sem rolagem ho
   await expect(headerSearch(page)).toBeHidden();
   await expect(page.locator("header").getByRole("link", { name: "Entrar" })).toBeVisible();
   await expect(page.locator("header").getByRole("link", { name: "Criar conta" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(await overflow()).toBeLessThanOrEqual(0);
+  // Folga para fontes de outros sistemas (o CI roda em Linux): cabe também em 360 px.
+  await page.setViewportSize({ width: 360, height: 800 });
+  expect(await overflow()).toBeLessThanOrEqual(0);
+  await page.setViewportSize({ width: 375, height: 800 });
 
   await page.getByRole("button", { name: "Abrir busca" }).click();
   const input = page.locator("#busca-mobile").getByRole("combobox", { name: "Buscar eventos" });
