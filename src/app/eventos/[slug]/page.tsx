@@ -26,7 +26,7 @@ import { whatsappShareUrl } from "@/lib/utils";
 export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">): Promise<Metadata> {
   const { slug } = await params;
   const e = await db.event.findFirst({
-    where: { slug, status: "PUBLISHED" },
+    where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] } },
     select: { title: true, summary: true, coverImageUrl: true, city: { select: { name: true, state: true } } },
   });
   if (!e) return { title: "Evento não encontrado" };
@@ -61,7 +61,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   await connection();
   const data = await getPublicEvent(db, slug);
   if (!data) notFound();
-  const { event, organizer, prices, buyerPaysFee, availability, capacityLeft, halfPriceLeft } = data;
+  const { event, organizer, prices, buyerPaysFee, ended, availability, capacityLeft, halfPriceLeft } = data;
   const user = await getCurrentUser();
   // Cupom pré-aplicado pelo link rastreado desta visita (cookie eb_attr), se for deste evento.
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
@@ -102,7 +102,8 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
         : { "@type": "Place", name: event.venue?.name, address: { "@type": "PostalAddress", addressLocality: city?.name, addressRegion: city?.state, addressCountry: "BR" } },
     organizer: { "@type": "Organization", name: event.organization.name },
     // Preço total por ingresso (com a taxa do comprador), o mesmo exibido e cobrado.
-    offers: event.ticketTypes.map((t) => ({ "@type": "Offer", name: t.name, price: (prices[t.id].totalCents / 100).toFixed(2), priceCurrency: "BRL", url })),
+    // Encerrado: nenhuma oferta à venda.
+    ...(ended ? {} : { offers: event.ticketTypes.map((t) => ({ "@type": "Offer", name: t.name, price: (prices[t.id].totalCents / 100).toFixed(2), priceCurrency: "BRL", url })) }),
   };
 
   // Trilha: Início › cidade › categoria na cidade (ou na busca, para eventos online).
@@ -143,7 +144,13 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
           <div className="mb-3 flex flex-wrap gap-2">
             <Badge className="bg-white/15 text-white backdrop-blur">{event.category.name}</Badge>
             {event.ageRestriction > 0 ? <Badge variant="accent">{event.ageRestriction}+</Badge> : <Badge className="bg-white/15 text-white">Livre</Badge>}
-            {availability !== "AVAILABLE" && <Badge variant={av.tone === "danger" ? "danger" : "warning"}>{av.label}</Badge>}
+            {ended ? (
+              <Badge className="bg-zinc-900/80 text-white" data-testid="event-ended">
+                Evento encerrado
+              </Badge>
+            ) : (
+              availability !== "AVAILABLE" && <Badge variant={av.tone === "danger" ? "danger" : "warning"}>{av.label}</Badge>
+            )}
           </div>
           <h1 className="max-w-4xl font-display text-3xl font-extrabold leading-tight tracking-tight sm:text-5xl">{event.title}</h1>
         </div>
@@ -228,6 +235,18 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
         <aside className="lg:sticky lg:top-24 lg:self-start">
           <Card className="p-5">
             <h2 className="mb-4 font-display text-xl font-bold">Ingressos</h2>
+            {ended ? (
+              <div role="status" className="rounded-xl bg-muted p-4 text-sm">
+                <p className="font-semibold">Evento encerrado</p>
+                <p className="mt-1 text-muted-foreground">
+                  Este evento terminou em {formatDateLong(event.endsAt, tz)}, às {formatTime(event.endsAt, tz)}. As vendas estão encerradas; quem comprou continua com os ingressos em{" "}
+                  <Link href="/meus-ingressos" className="text-secondary hover:underline">
+                    Meus ingressos
+                  </Link>
+                  .
+                </p>
+              </div>
+            ) : (
             <TicketSelector
               eventId={event.id}
               eventSlug={event.slug}
@@ -238,6 +257,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               initialCouponCode={linkCoupon}
               paymentsAvailable={getPaymentAdapter().supportedMethods.length > 0}
             />
+            )}
             <UtmCapture />
           </Card>
         </aside>

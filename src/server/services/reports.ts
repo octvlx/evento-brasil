@@ -3,6 +3,7 @@ import "server-only";
 import type { LedgerAccount } from "@/generated/prisma/client";
 import type { Db } from "../db";
 import { formatDateTimeShort } from "@/lib/datetime";
+import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, roleHas, type Actor } from "../auth/permissions";
 
 export async function organizerOverview(db: Db, actor: Actor, organizationId: string) {
@@ -49,7 +50,8 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
   const [org, upcoming, pastCount, pendingReviewCount, invitesPending, pendingTransfers, openWindows] = await Promise.all([
     db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { status: true, statusReason: true, paymentAccountStatus: true } }),
     db.event.findMany({
-      where: { organizationId, endsAt: { gte: now }, status: { in: ["DRAFT", "PENDING_REVIEW", "PUBLISHED"] } },
+      // Só os que ainda não terminaram (pelo relógio, mesmo se o job atrasar).
+      where: { organizationId, endsAt: { gt: now }, status: { in: ["DRAFT", "PENDING_REVIEW", "PUBLISHED"] } },
       orderBy: { startsAt: "asc" },
       take: 6,
       select: {
@@ -64,7 +66,7 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
         _count: { select: { ticketTypes: true, staffAssignments: true } },
       },
     }),
-    db.event.count({ where: { organizationId, endsAt: { lt: now } } }),
+    db.event.count({ where: { organizationId, endsAt: { lte: now } } }),
     db.event.count({ where: { organizationId, status: "PENDING_REVIEW" } }),
     canMembers
       ? db.organizationInvitation.count({ where: { organizationId, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } } })
@@ -154,7 +156,7 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
       where: { organizationId, status: { in: ["PUBLISHED", "COMPLETED", "CANCELLED"] } },
       orderBy: { startsAt: "desc" },
       take: 8,
-      select: { id: true, title: true, status: true, capacity: true },
+      select: { id: true, title: true, status: true, endsAt: true, capacity: true },
     }),
   ]);
   const soldRows = recentEvents.length
@@ -164,7 +166,7 @@ export async function organizerDashboard(db: Db, actor: Actor, organizationId: s
   const eventPerformance = recentEvents.map((e) => ({
     id: e.id,
     title: e.title,
-    status: e.status,
+    status: effectiveEventStatus(e, now),
     capacity: e.capacity,
     sold: soldRows.find((r) => r.eventId === e.id)?._count ?? 0,
     grossCents: revenue.get(e.id)?.gross ?? 0,

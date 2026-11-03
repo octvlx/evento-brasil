@@ -11,6 +11,7 @@ import { isWizardComplete, wizardProgressByEvent } from "@/server/services/event
 import { firstIncompleteStep } from "@/features/organizer/wizard-steps";
 import { formatEventDateTime } from "@/lib/datetime";
 import { EVENT_STATUS } from "@/lib/labels";
+import { effectiveEventStatus } from "@/lib/event-lifecycle";
 
 export const metadata: Metadata = { title: "Eventos — organizador", robots: { index: false } };
 
@@ -61,7 +62,8 @@ async function Content() {
             <tbody>
               {events.map((e) => {
                 const sold = e.ticketTypes.reduce((s, t) => s + t.quantitySold, 0);
-                const st = EVENT_STATUS[e.status];
+                // Término passado aparece como Encerrado mesmo antes do job.
+                const st = EVENT_STATUS[effectiveEventStatus(e)];
                 const p = progress.get(e.id);
                 const resumeStep = p && !isWizardComplete(p) ? firstIncompleteStep(p.completed) : null;
                 return (

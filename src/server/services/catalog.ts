@@ -4,6 +4,7 @@ import "server-only";
 import type { CommissionRule, Prisma } from "@/generated/prisma/client";
 import { computeFees } from "@/features/fees/policy";
 import { localDayRange, weekendRange } from "@/lib/datetime";
+import { hasEventEnded } from "@/lib/event-lifecycle";
 import type { PriceQuote } from "@/lib/price-display";
 import type { Db } from "../db";
 import { resolveCommissionRule, resolveCommissionRules } from "./commission";
@@ -268,9 +269,13 @@ export async function getPublicCity(db: Db, slug: string, now = new Date()) {
   return db.city.findFirst({ where: { slug, ...cityWithPublicEventsWhere(now) } });
 }
 
+/**
+ * Página do evento. Diferente das listagens, continua acessível depois do término
+ * (com `ended` e sem venda): quem tem ingresso ou um link antigo ainda a consulta.
+ */
 export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
   const event = await db.event.findFirst({
-    where: { slug, ...publicEventWhere(now) },
+    where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] }, organization: { status: "APPROVED" } },
     include: {
       organization: { select: { name: true, slug: true, description: true } },
       category: true,
@@ -281,6 +286,7 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
     },
   });
   if (!event) return null;
+  const ended = hasEventEnded(event, now);
   const halfUsed = event.ticketTypes.filter((t) => t.kind === "HALF_PRICE").reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
   const halfQuota = event.halfPriceQuotaBps === null ? null : Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000);
   const committed = event.ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
@@ -292,7 +298,9 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
     /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
     prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule)])) as Record<string, PriceQuote>,
     buyerPaysFee: rule.bearer === "BUYER",
-    availability: availabilityOf(event, event.ticketTypes, now),
+    /** Término passado (pelo relógio, mesmo com o status ainda PUBLISHED): sem venda. */
+    ended,
+    availability: ended ? ("CLOSED" as const) : availabilityOf(event, event.ticketTypes, now),
     capacityLeft: Math.max(0, event.capacity - committed),
     halfPriceLeft: halfQuota === null ? null : Math.max(0, halfQuota - halfUsed),
   };

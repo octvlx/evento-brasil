@@ -1,5 +1,6 @@
 import "server-only";
 import type { CheckinResult, EventStatus, TicketKind } from "@/generated/prisma/client";
+import { checkinWindowOpen } from "@/lib/event-lifecycle";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
 import { hashToken } from "../crypto";
@@ -83,8 +84,9 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
 
       // 1. Evento (trava compartilhada) e janela de check-in.
       const event = await lockEventForCheckin(tx, eventId);
-      const lateWindowOk = event.status === "COMPLETED" && now.getTime() - event.endsAt.getTime() < 12 * 3_600_000;
-      if (event.status !== "PUBLISHED" && !lateWindowOk) {
+      // Pelo relógio: encerrado comercialmente (com ou sem o job) ainda aceita entrada
+      // por 12 h; depois disso, fecha mesmo que o status no banco siga PUBLISHED.
+      if (!checkinWindowOpen(event, now)) {
         await record("EVENT_NOT_ACTIVE", null);
         return { result: "EVENT_NOT_ACTIVE" };
       }

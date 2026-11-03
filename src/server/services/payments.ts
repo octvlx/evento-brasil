@@ -3,6 +3,7 @@
 // pagamento; só `getPayment` no provedor, após webhook verificado ou consulta.
 import "server-only";
 import type { Payment, Prisma } from "@/generated/prisma/client";
+import { hasEventEnded } from "@/lib/event-lifecycle";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor } from "../auth/permissions";
@@ -33,10 +34,13 @@ export async function startPayment(
     if (!exists) throw notFound("Pedido não encontrado.");
     if (exists.userId !== actor.id) throw forbidden();
     await lockOrder(tx, orderId);
-    const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { event: { select: { title: true } }, organization: true } });
+    const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { event: { select: { title: true, endsAt: true } }, organization: true } });
     await assertCheckoutReviewed(tx, order);
     if (order.status !== "PENDING_PAYMENT") throw invalidState("Este pedido não está aguardando pagamento.");
     if (order.expiresAt <= new Date()) throw new AppError("SALES_CLOSED", "A reserva expirou. Faça um novo pedido.");
+    // Nenhuma cobrança nova (nem reexibir PIX) depois do término. Um pagamento já
+    // iniciado que for confirmado depois segue o fluxo normal do webhook.
+    if (hasEventEnded(order.event)) throw new AppError("SALES_CLOSED", "Este evento já foi encerrado.");
     if (order.totalCents === 0) throw invalidState("Pedido gratuito não requer pagamento.");
     if (order.isSimulated !== adapter.isSimulated) throw invalidState("Pedido criado com outro provedor de pagamento.");
 
@@ -374,7 +378,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
               amountCents: order.totalCents,
               reason: "LATE_PAYMENT_NO_INVENTORY",
               idempotencyKey: `refund:${order.id}:late-payment`,
-              note: "Pagamento confirmado após expiração da reserva, sem estoque disponível.",
+              note: "Pagamento confirmado após expiração da reserva, sem estoque disponível ou com o evento já encerrado.",
             },
             update: {},
           });

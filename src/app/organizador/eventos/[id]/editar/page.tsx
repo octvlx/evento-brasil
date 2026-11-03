@@ -24,6 +24,7 @@ import { getWizardProgress, isWizardComplete } from "@/server/services/event-wiz
 import { firstIncompleteStep } from "@/features/organizer/wizard-steps";
 import { formatDateTimeShort, utcToZonedLocalInput } from "@/lib/datetime";
 import { EVENT_STATUS } from "@/lib/labels";
+import { effectiveEventStatus } from "@/lib/event-lifecycle";
 
 export const metadata: Metadata = { title: "Gerenciar evento", robots: { index: false } };
 
@@ -49,8 +50,10 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   const options = await eventFormOptions(db, org.id);
   const paidOrders = await db.order.count({ where: { eventId: id, status: "PAID" } });
   const tz = event.timezone;
-  const locked = !["DRAFT", "PENDING_REVIEW", "PUBLISHED"].includes(event.status) || !can("event:write");
-  const st = EVENT_STATUS[event.status];
+  // Status efetivo: terminado conta como encerrado (sem edição), mesmo antes do job.
+  const status = effectiveEventStatus(event);
+  const locked = !["DRAFT", "PENDING_REVIEW", "PUBLISHED"].includes(status) || !can("event:write");
+  const st = EVENT_STATUS[status];
   const canWrite = can("event:write");
   const changes = await listEventChanges(db, user, id);
   const openWindows = changes.filter((c) => c.windowOpen);
@@ -63,7 +66,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
         subtitle={undefined}
         actions={
           <div className="flex flex-wrap gap-2">
-            {event.status === "PUBLISHED" && (
+            {(status === "PUBLISHED" || status === "COMPLETED") && (
               <Link href={`/eventos/${event.slug}`} className={buttonVariants({ variant: "outline", size: "sm" })} target="_blank">
                 <ExternalLink aria-hidden /> Ver página
               </Link>
@@ -98,7 +101,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
 
       <Card className="mb-6 p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Publicação</h2>
-        <EventStatusActions eventId={event.id} status={event.status} canPublish={can("event:publish")} canCancel={can("event:cancel")} paidOrders={paidOrders} />
+        <EventStatusActions eventId={event.id} status={status} canPublish={can("event:publish")} canCancel={can("event:cancel")} paidOrders={paidOrders} />
       </Card>
 
       <Card className="mb-6 p-6">
