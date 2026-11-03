@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Bricolage_Grotesque, Plus_Jakarta_Sans } from "next/font/google";
 import { SiteFooter } from "@/components/site/footer";
 import { SiteHeader } from "@/components/site/header";
+import { NavigationTracker } from "@/components/site/back-button";
 import { MobileNav } from "@/components/site/mobile-nav";
 import { ServiceWorkerRegister } from "@/components/site/sw-register";
 import "./globals.css";
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         {/* usePathname é dado de runtime: precisa de Suspense com Cache Components. */}
         <Suspense fallback={null}>
           <MobileNav />
+          <NavigationTracker />
         </Suspense>
         <ServiceWorkerRegister />
       </body>

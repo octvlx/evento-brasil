@@ -152,22 +152,25 @@ export function EventCarousel({ label, children }: { label: string; children: Re
         </CarouselButton>
       </div>
 
-      <div className={cn("mt-4 flex items-center justify-center gap-3", !overflowing && "invisible")} aria-hidden={!overflowing}>
-        {!reducedMotion && (
-          <button
-            type="button"
-            onClick={() => setStopped((s) => !s)}
-            className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={stopped ? "Retomar passagem automática" : "Pausar passagem automática"}
-            data-testid="carousel-toggle"
-          >
-            {stopped ? <Play className="size-3.5" aria-hidden /> : <Pause className="size-3.5" aria-hidden />}
-          </button>
-        )}
-        <p className="text-xs font-semibold tabular-nums text-muted-foreground" data-testid="carousel-position">
-          {Math.min(current + 1, slides.length)} / {slides.length}
-        </p>
-      </div>
+      {/* Um card só nunca rola: sem a linha. Com vários, ela fica reservada (sem salto). */}
+      {slides.length > 1 && (
+        <div className={cn("mt-4 flex items-center justify-center gap-3", !overflowing && "invisible")} aria-hidden={!overflowing}>
+          {!reducedMotion && (
+            <button
+              type="button"
+              onClick={() => setStopped((s) => !s)}
+              className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={stopped ? "Retomar passagem automática" : "Pausar passagem automática"}
+              data-testid="carousel-toggle"
+            >
+              {stopped ? <Play className="size-3.5" aria-hidden /> : <Pause className="size-3.5" aria-hidden />}
+            </button>
+          )}
+          <p className="text-xs font-semibold tabular-nums text-muted-foreground" data-testid="carousel-position">
+            {Math.min(current + 1, slides.length)} / {slides.length}
+          </p>
+        </div>
+      )}
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>

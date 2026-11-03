@@ -2,59 +2,55 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { ArrowRight, BadgePercent, QrCode, Search, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { ArrowRight, BadgePercent, QrCode, ShieldCheck, Zap } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCard, EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { CategoryChips } from "@/components/site/category-chips";
-import { CitySelect } from "@/components/site/city-select";
+import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
 import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
-import { eventsInCity, featuredEvents, getPublicCity, listCategories, listCities, weekendEvents } from "@/server/services/catalog";
+import { eventsInCity, featuredEvents, getPublicCity, listCategories, weekendEvents } from "@/server/services/catalog";
 
 export default function HomePage() {
   return (
     <>
-      <section className="bg-hero relative overflow-hidden text-white">
-        <div className="mx-auto max-w-7xl px-4 pb-14 pt-12 sm:px-6 md:pb-20 md:pt-20">
-          <p className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold ring-1 ring-white/20 backdrop-blur">
-            <Sparkles className="size-3.5" aria-hidden /> Shows, festas, teatro, esportes e muito mais
-          </p>
-          <h1 className="max-w-3xl font-display text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
-            O que você vai <span className="text-gradient">viver</span> neste fim de semana?
-          </h1>
-          <p className="mt-4 max-w-xl text-base text-white/80 sm:text-lg">Descubra eventos em todo o Brasil e garanta seu ingresso com PIX ou cartão, em poucos toques.</p>
+      {/* 1. Destaques logo abaixo do header, com uma introdução de uma linha. */}
+      <section aria-labelledby="destaques-titulo" className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 sm:pt-8">
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <h1 className="font-display text-xl font-extrabold leading-tight tracking-tight sm:text-3xl">
+              O que você vai <span className="text-secondary">viver</span> neste fim de semana?
+            </h1>
+            <h2 id="destaques-titulo" className="mt-1 text-sm font-semibold text-muted-foreground">
+              Em destaque <span className="font-normal">· seleção da curadoria Evento Brasil</span>
+            </h2>
+          </div>
+          <Link href="/eventos" className="flex shrink-0 items-center gap-1 text-sm font-semibold text-secondary hover:underline">
+            Ver todos <ArrowRight className="size-4" aria-hidden />
+          </Link>
+        </div>
+        <Suspense fallback={<CarouselSkeleton />}>
+          <Featured />
+        </Suspense>
+      </section>
 
-          <form action="/eventos" role="search" className="mt-8 grid max-w-3xl gap-2 rounded-2xl bg-white/10 p-2 ring-1 ring-white/20 backdrop-blur sm:grid-cols-[1fr_auto_auto]">
-            <label className="relative">
-              <span className="sr-only">O que você procura?</span>
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-white/70" aria-hidden />
-              <input
-                name="q"
-                type="search"
-                placeholder="Artista, evento ou local"
-                className="h-12 w-full rounded-xl bg-transparent pl-11 pr-3 text-base text-white placeholder:text-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-              />
-            </label>
-            <Suspense fallback={<div className="h-12 w-full rounded-full bg-white/10 sm:w-56" />}>
-              <HeroCitySelect />
-            </Suspense>
-            <button className="h-12 rounded-xl bg-accent px-6 font-bold text-accent-foreground transition hover:brightness-110">Buscar</button>
-          </form>
-
-          <div className="mt-6">
+      {/* 2. Busca compacta: um campo só (artista, evento, cidade, local ou "Rock em São Paulo"). */}
+      <section aria-labelledby="busca-titulo" className="mx-auto mt-6 max-w-7xl px-4 sm:px-6">
+        <div className="bg-hero rounded-2xl px-3 py-3 sm:px-5 sm:py-4">
+          <h2 id="busca-titulo" className="sr-only">
+            Buscar eventos
+          </h2>
+          <Suspense fallback={<div className="mx-auto h-12 max-w-3xl rounded-xl bg-white/15" />}>
+            <SmartEventSearch variant="page" label="Buscar eventos, artistas, cidades ou locais" className="mx-auto max-w-3xl" />
+          </Suspense>
+          <div className="mx-auto mt-3 max-w-3xl">
             <Suspense fallback={<div className="h-9" />}>
               <HeroCategories />
             </Suspense>
           </div>
         </div>
       </section>
-
-      <Section title="Em destaque" subtitle="Seleção da curadoria Evento Brasil" href="/eventos">
-        <Suspense fallback={<CarouselSkeleton />}>
-          <Featured />
-        </Suspense>
-      </Section>
 
       <Suspense fallback={null}>
         <NearbySection />
@@ -126,16 +122,9 @@ function Section({ title, subtitle, href, children }: { title: string; subtitle?
   );
 }
 
-async function HeroCitySelect() {
-  // Lista depende de quais eventos estão no ar agora: lida a cada pedido.
-  await connection();
-  const cities = await listCities(db);
-  return <CitySelect variant="hero" className="sm:w-56" cities={cities.map((c) => ({ slug: c.slug, label: `${c.name} – ${c.state}` }))} />;
-}
-
 async function HeroCategories() {
   const categories = await listCategories(db);
-  return <CategoryChips tone="hero" categories={categories} hrefFor={(slug) => (slug ? `/eventos?categoria=${slug}` : "/eventos")} />;
+  return <CategoryChips tone="hero" compact categories={categories} hrefFor={(slug) => (slug ? `/eventos?categoria=${slug}` : "/eventos")} />;
 }
 
 // Largura do card por breakpoint (1 / 2 / 3 / 4 por tela), para o srcset da capa.
