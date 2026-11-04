@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "../db";
+import { MFA_SETUP_PATH, needsMfaEnrollment } from "./mfa-policy";
 import { resolveSession } from "./sessions";
 
 export const SESSION_COOKIE = "eb_session";
@@ -19,14 +20,28 @@ export type CurrentUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>
 
 export async function requireUser(next?: string): Promise<CurrentUser> {
   const user = await getCurrentUser();
-  if (!user) redirect(`/entrar${next ? `?next=${encodeURIComponent(next)}` : ""}`);
+  if (!user) {
+    const query = next ? `?next=${encodeURIComponent(next)}` : "";
+    // Senha já conferida, falta o código de duas etapas.
+    if (await getPendingMfaSession()) redirect(`/entrar/verificacao${query}`);
+    redirect(`/entrar${query}`);
+  }
   return user;
 }
 
 export async function requireAdmin(): Promise<CurrentUser> {
   const user = await requireUser("/admin");
   if (user.platformRole !== "ADMIN") redirect("/");
+  if (needsMfaEnrollment(user)) redirect(`${MFA_SETUP_PATH}?exigido=1`);
   return user;
+}
+
+/** Sessão à espera do código de duas etapas (só para a tela /entrar/verificacao). */
+export async function getPendingMfaSession() {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const session = await resolveSession(db, token, { allowMfaPending: true });
+  return session?.mfaPending ? { token, session } : null;
 }
 
 export async function setSessionCookie(token: string, expiresAt: Date) {

@@ -30,7 +30,7 @@ async function Content() {
   const user = await requireUser("/minha-conta");
   const [blockers, account] = await Promise.all([
     accountDeletionBlockers(db, user.id),
-    db.user.findUniqueOrThrow({ where: { id: user.id }, select: { googleSubject: true } }),
+    db.user.findUniqueOrThrow({ where: { id: user.id }, select: { googleSubject: true, totpEnabledAt: true } }),
   ]);
   return (
     <div className="mt-6 space-y-6">
@@ -50,6 +50,13 @@ async function Content() {
             <p className="text-xs text-muted-foreground">Ao alterar a senha, as sessões abertas em outros dispositivos são encerradas.</p>
           </>
         )}
+        <h3 className="pt-2 font-semibold">Verificação em duas etapas</h3>
+        <p className="text-sm text-muted-foreground">
+          {account.totpEnabledAt ? "Ativa: o login pede também um código do aplicativo autenticador." : "Desativada. Proteja sua conta com um código do celular além da senha."}
+        </p>
+        <Link href="/minha-conta/seguranca" className={buttonVariants({ variant: "outline", size: "sm" })}>
+          {account.totpEnabledAt ? "Gerenciar verificação em duas etapas" : "Ativar verificação em duas etapas"}
+        </Link>
       </Card>
       <Card className="space-y-3 p-6">
         <h2 className="font-display text-lg font-bold">Privacidade (LGPD)</h2>
