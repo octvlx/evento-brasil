@@ -3,7 +3,7 @@
 // pelo relógio em todo lugar; `recordHalfPriceReleases` (cron) só registra.
 import "server-only";
 import type { HalfPriceRegime, Prisma } from "@/generated/prisma/client";
-import { computeHalfPriceState, type HalfPriceEventInput, type HalfPriceState, type HalfPriceTypeInput } from "@/features/half-price/quota";
+import { computeHalfPriceState, releaseAtOf, type HalfPriceEventInput, type HalfPriceState, type HalfPriceTypeInput } from "@/features/half-price/quota";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertPlatformAdmin, type Actor } from "../auth/permissions";
@@ -108,11 +108,15 @@ const RELEASE_LOOKAHEAD_MS = 72 * 3_600_000;
 export async function recordHalfPriceReleases(db: Db, now = new Date()): Promise<number> {
   const candidates = await db.event.findMany({
     where: { status: "PUBLISHED", halfPriceRegime: "FEDERAL", startsAt: { lte: new Date(now.getTime() + RELEASE_LOOKAHEAD_MS) }, endsAt: { gt: now } },
-    select: { id: true },
+    select: { id: true, capacity: true, startsAt: true, locationType: true, venue: { select: { capacity: true } }, halfPriceReleaseAuditedFor: true },
     take: 500,
   });
   let recorded = 0;
-  for (const { id } of candidates) {
+  for (const c of candidates) {
+    // Filtro sem trava (a cada minuto): só trava o evento cujo prazo passou e ainda não foi registrado.
+    const { releaseAt } = releaseAtOf({ startsAt: c.startsAt, capacity: c.capacity, venueCapacity: c.locationType === "ONLINE" ? null : (c.venue?.capacity ?? null) });
+    if (releaseAt > now || c.halfPriceReleaseAuditedFor?.getTime() === releaseAt.getTime()) continue;
+    const { id } = c;
     recorded += await db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${id} FOR UPDATE`;
       const { event, state } = await loadHalfPriceStateTx(tx, id, now);
