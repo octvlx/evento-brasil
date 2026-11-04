@@ -197,6 +197,19 @@ cancelamento aberto. Na exclusão, numa transação:
   (`user.anonymized` sem dado pessoal no `metadata`) e textos livres já gravados em
   pedidos de cancelamento e reembolsos.
 
+### Exclusão pelo superadmin
+
+`/admin/usuarios` › "Excluir conta definitivamente" (`adminDeleteAccount`, mesma
+anonimização acima). Além dos bloqueios do titular, impede a exclusão quando a conta é
+a única proprietária de uma organização com equipe, eventos ativos, ingressos válidos
+para eventos futuros, pedidos ou reembolsos em aberto, repasse pendente ou pedido de
+cancelamento aberto. Organização que fica sem membros é suspensa e mantém os registros.
+Contas de admin da plataforma não são excluídas por aqui. Os dados de contato e de
+verificação da organização (`contactEmail`, `contactPhone`, `OrganizerVerification`)
+ficam: são do organizador responsável perante os compradores, e o expurgo deles segue
+pendente (seção 3). Auditoria: `user.deleted_by_admin`, `user.deletion_blocked`,
+`user.deletion_failed`, sem dado pessoal além do motivo escrito pelo admin.
+
 ## 3. O que falta para os direitos do titular e o expurgo (proposta para a Fase 2)
 
 Proposta original (2026-10-27). A exclusão, o expurgo e os campos `anonymizedAt`/

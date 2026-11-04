@@ -169,7 +169,7 @@ export async function completeMfaLogin(db: Db, sessionToken: string, code: strin
 }
 
 /** Confere um código TOTP da conta já ativa (para ações sensíveis da própria conta). */
-async function assertCurrentTotp(db: Db, userId: string, code: string, now: Date) {
+export async function assertCurrentTotp(db: Db, userId: string, code: string, now: Date) {
   const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { totpSecretEncrypted: true, totpEnabledAt: true, totpLastStep: true } });
   if (!user.totpEnabledAt || !user.totpSecretEncrypted) throw invalidState("A verificação em duas etapas não está ativa.");
   const step = verifyTotp(decryptPII(user.totpSecretEncrypted), code, now, user.totpLastStep);

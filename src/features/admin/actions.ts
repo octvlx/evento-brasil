@@ -13,6 +13,7 @@ import { reviewOrganization, setAutoPublish, setOrganizationSuspended } from "@/
 import { adminRefundOrder, processRefund } from "@/server/services/refunds";
 import { setAdminRoles, setUserSuspended } from "@/server/services/users";
 import { adminResetTwoFactor } from "@/server/services/two-factor";
+import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { rateLimit } from "@/server/rate-limit";
 
 async function run(fn: (admin: Awaited<ReturnType<typeof requireAdmin>>) => Promise<unknown>): Promise<ActionResult> {
@@ -41,7 +42,12 @@ export const resetUserTwoFactorAction = async (id: string, adminCode: string, re
     await rateLimit(`mfa-admin-reset:${a.id}`, 10, 15 * 60_000);
     await adminResetTwoFactor(db, a, id, { adminCode, reason });
   });
-export const adminRefundAction = async (orderId: string, note?: string) => run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, note ?? ""));
+export const deleteUserAccountAction = async (id: string, confirmEmail: string, reason: string, adminCode: string) =>
+  run(async (a) => {
+    await rateLimit(`account-admin-delete:${a.id}`, 10, 15 * 60_000);
+    await adminDeleteAccount(db, a, id, { confirmEmail: String(confirmEmail), reason: String(reason), adminCode: String(adminCode) });
+  });
+export const adminRefundAction =async (orderId: string, note?: string) => run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, note ?? ""));
 export const retryRefundAction = async (refundId: string) => run(() => processRefund(db, getPaymentAdapter(), refundId));
 
 export async function saveCommissionRuleAction(_prev: ActionResult | undefined, formData: FormData): Promise<ActionResult> {

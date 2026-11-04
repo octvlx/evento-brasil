@@ -132,7 +132,7 @@ o que cada admin da plataforma pode fazer. O mapa fica em
 
 | Papel | Permissões |
 |---|---|
-| Super admin | todas, inclusive `admins:manage` (papéis de outros admins) e `audit:read` |
+| Super admin | todas, inclusive `admins:manage` (papéis de outros admins), `users:delete` (exclusão definitiva de conta) e `audit:read` |
 | Financeiro | `finance:commissions`, `finance:refunds`, `cancellations:decide` |
 | Moderação | `organizers:review`, `events:moderate`, `events:cancel`, `transfers:read` |
 | Suporte | `users:manage` (suspender, redefinir 2FA), `transfers:read`, `cancellations:decide` |
@@ -153,4 +153,36 @@ o que cada admin da plataforma pode fazer. O mapa fica em
 - **Fora do escopo:** promover um cliente a admin, o que continua sendo feito pelo
   banco ou pelo seed.
 - **Seed:** `suporte@demo.eventobrasil.test` é um admin só de suporte.
+
+## Exclusão definitiva de conta pelo superadmin
+
+`/admin/usuarios` › "Excluir conta definitivamente" (só com `users:delete`, ou seja,
+super admin). Serviço: `adminDeleteAccount` em
+`src/server/services/account-deletion.ts`, que reaproveita a mesma anonimização da
+exclusão pelo titular (detalhes em `docs/dados-pessoais-e-retencao.md`). Sem mudança
+de schema.
+
+- **Quem:** contas de clientes e organizadores. Contas de admin da plataforma
+  (inclusive outros super admins) e a própria conta são recusadas no servidor.
+- **Confirmação:** o painel mostra nome, e-mail e consequências; exige o e-mail da
+  conta digitado, o motivo e o código do autenticador do super admin (2FA ativo é
+  obrigatório). Limite de 10 tentativas a cada 15 minutos por admin.
+- **Bloqueios** (nada muda e o motivo aparece no painel): os do titular (pedido em
+  aberto, ingresso válido para evento futuro, transferência pendente, pedido de
+  cancelamento aberto) e, para cada organização em que a conta é a **única
+  proprietária**: outros membros na equipe, eventos publicados ou em análise que não
+  terminaram, ingressos válidos para eventos futuros, pedidos em aberto, reembolsos
+  pendentes ou com falha, repasse pendente/em trânsito/com falha e pedidos de
+  cancelamento abertos. São conferidos antes do código (um impedimento não gasta o
+  código) e de novo dentro da transação, com a linha do usuário travada.
+- **Organizações:** se há outro proprietário, só o vínculo da pessoa sai. Se a
+  organização fica sem nenhum membro, ela é suspensa ("Conta do responsável excluída
+  pela plataforma"); eventos, pedidos, ingressos dos compradores e razão ficam.
+- **Atomicidade e repetição:** tudo numa transação; uma falha desfaz tudo. Repetir ou
+  excluir ao mesmo tempo em duas abas resulta em uma exclusão e "Esta conta já foi
+  excluída." na outra.
+- **Auditoria** (sem nome, e-mail ou documento): `user.deleted_by_admin` (super admin,
+  conta, motivo, contagens, organizações suspensas), `organization.suspended` para
+  cada organização órfã, `user.deletion_blocked` com os códigos dos impedimentos e
+  `user.deletion_failed` quando a transação falha. A data é o `createdAt` do registro.
 

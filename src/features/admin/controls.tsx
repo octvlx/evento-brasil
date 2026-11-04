@@ -125,6 +125,98 @@ export function ResetTwoFactorButton({ action }: { action: (adminCode: string, r
   );
 }
 
+/**
+ * Exclusão definitiva (superadmin). A confirmação identifica a conta, explica as consequências
+ * e exige o e-mail digitado, o motivo e o código do autenticador do superadmin.
+ */
+export function DeleteAccountButton({
+  account,
+  action,
+}: {
+  account: { name: string; email: string; orders: number; organizations: string[] };
+  action: (confirmEmail: string, reason: string, adminCode: string) => Promise<ActionResult>;
+}) {
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [reason, setReason] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  if (!open)
+    return (
+      <Button size="sm" variant="destructive" onClick={() => setOpen(true)}>
+        Excluir conta definitivamente
+      </Button>
+    );
+  const emailMatches = email.trim().toLowerCase() === account.email.toLowerCase();
+  return (
+    <form
+      role="group"
+      aria-label={`Excluir definitivamente a conta de ${account.name}`}
+      className="flex w-full max-w-md flex-col gap-1.5 rounded-xl border border-destructive/60 p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await action(email, reason, code);
+          if (!r.ok) setError(r.error);
+          else {
+            setOpen(false);
+            setError(null);
+          }
+        });
+      }}
+    >
+      <p className="text-sm font-semibold">
+        Excluir definitivamente a conta de {account.name} ({account.email})?
+      </p>
+      <ul className="list-disc space-y-0.5 pl-4 text-xs">
+        <li>Não dá para desfazer. A pessoa perde o acesso na hora: sessões encerradas e nenhum login novo, nem com o Google.</li>
+        <li>Nome, e-mail, celular, CPF, data de nascimento, endereço e 2FA são apagados ou trocados por um marcador.</li>
+        <li>
+          Pedidos ({account.orders}), pagamentos, reembolsos e a auditoria ficam, anonimizados, pelo prazo de guarda legal.
+        </li>
+        {account.organizations.length > 0 && (
+          <li>
+            Sai das organizações: {account.organizations.join(", ")}. Organização que ficar sem nenhum membro é suspensa; os eventos e pedidos dela ficam.
+          </li>
+        )}
+        <li>Havendo impedimento (ingressos válidos, pedidos ou reembolsos em aberto, eventos ativos…), nada é alterado e o motivo aparece aqui.</li>
+      </ul>
+      <Input
+        placeholder={`Digite ${account.email} para confirmar`}
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        autoComplete="off"
+        className="h-9 text-xs"
+        aria-label="E-mail da conta, para confirmar"
+      />
+      <Input placeholder="Motivo (sem dados pessoais; ex.: pedido do titular pelo SAC)" value={reason} onChange={(e) => setReason(e.target.value)} className="h-9 text-xs" aria-label="Motivo da exclusão" />
+      <Input
+        placeholder="Seu código de 6 dígitos"
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, "").slice(0, 7))}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        className="h-9 font-mono text-xs"
+        aria-label="Seu código do aplicativo autenticador"
+      />
+      <div className="flex gap-1">
+        <Button size="sm" variant="destructive" disabled={pending || !emailMatches || reason.trim().length < 5 || code.replace(/\s/g, "").length !== 6}>
+          {pending ? "…" : "Excluir definitivamente"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Voltar
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="whitespace-pre-line text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
 /** Botão de ação administrativa com motivo opcional/obrigatório e confirmação. */
 export function AdminActionButton({
   label,
