@@ -11,6 +11,9 @@ import { assertActive } from "./permissions";
 
 const keys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"), { timeoutDuration: 5000 });
 const unavailable = () => new AppError("PROVIDER_ERROR", "Não foi possível entrar com Google. Tente novamente ou use e-mail e senha.");
+// Relógio do servidor alguns segundos atrás do Google fazia o "iat" parecer futuro e o
+// login falhar (visto com 0,1–0,5 s de diferença). Margem usual para iat/exp.
+const GOOGLE_CLOCK_TOLERANCE = 60;
 export const GOOGLE_FLOW_COOKIE = "eb_google_flow";
 export const GOOGLE_PENDING_COOKIE = "eb_google_pending";
 export const googleIdentitySchema = z.object({ subject: z.string().min(1).max(255), email: z.string().email().max(200).transform(v => v.toLowerCase()), name: z.string().trim().min(2).max(120), next: z.string() });
@@ -34,7 +37,7 @@ export function beginGoogleLogin(next?: string | null) {
 }
 export async function validateGoogleIdToken(idToken: string, nonce: string, audience = env().GOOGLE_CLIENT_ID!, resolver: JWTVerifyGetKey = keys) {
   try {
-    const { payload } = await jwtVerify(idToken, resolver, { issuer: ["https://accounts.google.com", "accounts.google.com"], audience, algorithms: ["RS256"], requiredClaims: ["sub", "email", "email_verified", "nonce", "iat", "exp"], maxTokenAge: "10m" });
+    const { payload } = await jwtVerify(idToken, resolver, { issuer: ["https://accounts.google.com", "accounts.google.com"], audience, algorithms: ["RS256"], requiredClaims: ["sub", "email", "email_verified", "nonce", "iat", "exp"], maxTokenAge: "10m", clockTolerance: GOOGLE_CLOCK_TOLERANCE });
     if (payload.nonce !== nonce || payload.email_verified !== true || (payload.azp && payload.azp !== audience)) throw unavailable();
     return googleIdentitySchema.omit({ next: true }).parse({ subject: payload.sub, email: payload.email, name: typeof payload.name === "string" ? payload.name : "Pessoa Google" });
   } catch { throw unavailable(); }
