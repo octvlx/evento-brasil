@@ -22,7 +22,7 @@ export default function AdminEvents() {
 }
 
 async function Content() {
-  await requireAdmin();
+  await requireAdmin("events:moderate");
   const events = await db.event.findMany({
     include: { organization: { select: { name: true } }, city: true, ticketTypes: { select: { quantitySold: true } } },
     orderBy: [{ status: "asc" }, { startsAt: "asc" }],

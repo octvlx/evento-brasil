@@ -19,6 +19,14 @@ enum PlatformRole {
   ADMIN
 }
 
+/// Sub-papéis do admin (T6). SUPER_ADMIN pode tudo, inclusive gerenciar papéis.
+enum AdminRole {
+  SUPER_ADMIN
+  FINANCE
+  MODERATION
+  SUPPORT
+}
+
 enum UserStatus {
   ACTIVE
   SUSPENDED
@@ -38,6 +46,8 @@ model User {
   birthDate       DateTime?    @db.Date
   googleSubject   String?      @unique
   platformRole    PlatformRole @default(USER)
+  // Sub-papéis do admin da plataforma (T6); só valem com platformRole ADMIN.
+  adminRoles      AdminRole[]  @default([])
   status          UserStatus   @default(ACTIVE)
   suspendedReason String?
   // Contas de demonstração do seed: bloqueadas em produção.

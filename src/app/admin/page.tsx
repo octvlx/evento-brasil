@@ -7,25 +7,36 @@ import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { adminQueueCounts } from "@/server/services/admin-oversight";
 import { adminStats } from "@/server/services/reports";
+import { ADMIN_ROLE_LABELS } from "@/server/auth/admin-roles";
 import { formatBRL } from "@/lib/money";
 
 export const metadata: Metadata = { title: "Administração", robots: { index: false } };
 
-export default function AdminHome() {
+export default function AdminHome({ searchParams }: PageProps<"/admin">) {
   return (
     <Suspense fallback={<Skeleton className="h-[500px]" />}>
-      <Content />
+      <Content searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function Content() {
+async function Content({ searchParams }: { searchParams: PageProps<"/admin">["searchParams"] }) {
   const admin = await requireAdmin();
+  const { semPermissao } = await searchParams;
+  const roles = admin.adminRoles.map((r) => ADMIN_ROLE_LABELS[r].name).join(", ");
   const [s, q] = await Promise.all([adminStats(db, admin), adminQueueCounts(db, admin)]);
   const paidOrders = (s.orders.PAID ?? 0) + (s.orders.REFUNDED ?? 0) + (s.orders.REFUND_PENDING ?? 0) + (s.orders.DISPUTED ?? 0);
   return (
     <>
       <PageTitle title="Visão geral do marketplace" subtitle="Valores do razão interno e dos pedidos." />
+      {semPermissao && (
+        <Alert variant="warning" className="mb-4" role="alert">
+          Seu papel de administrador não dá acesso àquela área. Peça a um super admin se precisar.
+        </Alert>
+      )}
+      <p className="mb-4 text-sm text-muted-foreground" data-testid="admin-roles">
+        Seu papel: <strong>{roles || "nenhum (só a visão geral)"}</strong>
+      </p>
       {s.balances.includesSimulated && <Alert variant="warning" className="mb-4">Os totais incluem pagamentos simulados de desenvolvimento.</Alert>}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Vendas brutas (GMV)" value={formatBRL(s.balances.grossCents)} />

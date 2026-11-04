@@ -119,7 +119,9 @@ async function main() {
   const user = (email: string, name: string, extra: object = {}) =>
     db.user.create({ data: { email, name, passwordHash, isDemoAccount: true, emailVerifiedAt: new Date(), ...extra } });
 
-  const admin = await user(DEMO_ADMIN_EMAIL, "Admin Demonstração", { platformRole: "ADMIN" });
+  const admin = await user(DEMO_ADMIN_EMAIL, "Admin Demonstração", { platformRole: "ADMIN", adminRoles: ["SUPER_ADMIN"] });
+  // Admin só de suporte (T6): vê clientes, transferências e cancelamentos; não mexe em comissões nem reembolsos.
+  const supportAdmin = await user("suporte@demo.eventobrasil.test", "Sofia Suporte (demo)", { platformRole: "ADMIN", adminRoles: ["SUPPORT"] });
   const producer = await user("produtora@demo.eventobrasil.test", "Paula Produtora (demo)", { phone: "11912345678" });
   const producer2 = await user("coletivo@demo.eventobrasil.test", "Caio Coletivo (demo)");
   const pendingOwner = await user("novo.organizador@demo.eventobrasil.test", "Nina Nova (demo)");
@@ -193,7 +195,7 @@ async function main() {
   ) as Record<(typeof DEMO_TERMS)[number]["kind"], { id: string }>;
   await db.termsAcceptance.createMany({
     data: [
-      ...[admin, producer, producer2, pendingOwner, staff, customer, friend].flatMap((u) => [
+      ...[admin, supportAdmin, producer, producer2, pendingOwner, staff, customer, friend].flatMap((u) => [
         { userId: u.id, termsVersionId: terms.BUYER.id, context: "SIGNUP" as const },
         { userId: u.id, termsVersionId: terms.PRIVACY.id, context: "SIGNUP" as const },
       ]),

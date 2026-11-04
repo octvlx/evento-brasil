@@ -17,12 +17,9 @@ import type { Db } from "../db";
 import { audit } from "../audit";
 import { DUMMY_HASH, hashPassword, verifyPassword } from "../auth/password";
 import { assertAcceptableNewPassword } from "../auth/breached-password";
-import {
-  assertActive,
-  assertPlatformAdmin,
-  type Actor,
-} from "../auth/permissions";
+import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
 import { revokeAllSessions } from "../auth/sessions";
+import { ADMIN_ROLES } from "../auth/admin-roles";
 import { AppError } from "../errors";
 import { BUYER_KINDS, recordAcceptanceTx } from "./terms";
 
@@ -120,7 +117,7 @@ export async function setUserSuspended(
   suspended: boolean,
   reason?: string,
 ) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "users:manage");
   if (userId === admin.id)
     throw new AppError(
       "VALIDATION",
@@ -194,5 +191,32 @@ export async function changePassword(db: Db, actor: Actor, raw: unknown, current
       metadata: { otherSessionsRevoked: sessions.count },
     });
     return { otherSessionsRevoked: sessions.count };
+  });
+}
+
+/**
+ * Papéis de um admin da plataforma (T6). Só SUPER_ADMIN altera; ninguém altera os
+ * próprios papéis (o que também garante que sempre sobra um super admin: quem
+ * altera). Vale na próxima requisição da pessoa (a sessão lê os papéis a cada vez).
+ */
+export async function setAdminRoles(db: Db, admin: Actor, userId: string, roles: readonly string[]) {
+  assertAdminPermission(admin, "admins:manage");
+  if (userId === admin.id) throw new AppError("VALIDATION", "Você não pode alterar os próprios papéis.");
+  const next = ADMIN_ROLES.filter((r) => roles.includes(r));
+  if (next.length !== new Set(roles).size) throw new AppError("VALIDATION", "Papel de administrador inválido.");
+  if (!next.length) throw new AppError("VALIDATION", "Escolha ao menos um papel.");
+  return db.$transaction(async (tx) => {
+    const target = await tx.user.findUnique({ where: { id: userId }, select: { platformRole: true, adminRoles: true, anonymizedAt: true } });
+    if (!target) throw new AppError("NOT_FOUND", "Usuário não encontrado.");
+    if (target.platformRole !== "ADMIN" || target.anonymizedAt) throw new AppError("INVALID_STATE", "Esta conta não é de administrador.");
+    await tx.user.update({ where: { id: userId }, data: { adminRoles: next } });
+    await audit(tx, {
+      actorUserId: admin.id,
+      action: "admin.roles_changed",
+      entityType: "User",
+      entityId: userId,
+      metadata: { before: target.adminRoles, after: next },
+    });
+    return next;
   });
 }

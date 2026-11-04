@@ -1,7 +1,8 @@
 import "server-only";
-import type { OrgRole, PlatformRole, UserStatus } from "@/generated/prisma/client";
+import type { AdminRole, OrgRole, PlatformRole, UserStatus } from "@/generated/prisma/client";
 import type { Db, Tx } from "../db";
 import { AppError, forbidden } from "../errors";
+import { adminHas, type AdminPermission } from "./admin-roles";
 import { MFA_REQUIRED_MESSAGE, needsMfaEnrollment } from "./mfa-policy";
 
 export interface Actor {
@@ -10,6 +11,8 @@ export interface Actor {
   status: UserStatus;
   /** Verificação em duas etapas ativa (vem da sessão); exigida de admin e dono de organização. */
   totpEnabledAt?: Date | null;
+  /** Sub-papéis do admin (T6); vêm da sessão. */
+  adminRoles?: AdminRole[];
 }
 
 export type OrgPermission =
@@ -46,10 +49,17 @@ function assertMfaEnrolled(actor: Actor): void {
   if (needsMfaEnrollment(actor)) throw new AppError("MFA_REQUIRED", MFA_REQUIRED_MESSAGE);
 }
 
+/** Qualquer admin da plataforma (visão geral). Ações específicas usam assertAdminPermission. */
 export function assertPlatformAdmin(actor: Actor): void {
   assertActive(actor);
   if (actor.platformRole !== "ADMIN") throw forbidden();
   assertMfaEnrolled(actor);
+}
+
+/** Admin com o sub-papel que dá esta permissão (T6). */
+export function assertAdminPermission(actor: Actor, perm: AdminPermission): void {
+  assertPlatformAdmin(actor);
+  if (!adminHas(actor.adminRoles, perm)) throw forbidden("Seu papel de administrador não permite esta ação.");
 }
 
 /** Garante que o ator é membro da organização com a permissão exigida. */

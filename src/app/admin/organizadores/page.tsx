@@ -20,7 +20,7 @@ export default function AdminOrganizers() {
 }
 
 async function Content() {
-  await requireAdmin();
+  await requireAdmin("organizers:review");
   const orgs = await db.organization.findMany({
     include: {
       city: true,

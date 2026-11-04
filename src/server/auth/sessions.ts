@@ -25,7 +25,7 @@ export async function createSession(db: Db, userId: string, userAgent?: string |
 export async function resolveSession(db: Db, token: string, opts: { allowMfaPending?: boolean } = {}) {
   const session = await db.session.findUnique({
     where: { tokenHash: hashToken(token) },
-    include: { user: { select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, platformRole: true, status: true, isDemoAccount: true, totpEnabledAt: true } } },
+    include: { user: { select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, platformRole: true, adminRoles: true, status: true, isDemoAccount: true, totpEnabledAt: true } } },
   });
   if (!session) return null;
   // Sessão à espera do código de duas etapas: só a tela de verificação a enxerga.

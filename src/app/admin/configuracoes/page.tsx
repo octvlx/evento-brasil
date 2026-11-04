@@ -18,7 +18,7 @@ export default function AdminSettings() {
 }
 
 async function Content() {
-  await requireAdmin();
+  await requireAdmin("finance:commissions");
   const [rules, orgs, events] = await Promise.all([
     db.commissionRule.findMany({ include: { organization: { select: { name: true } }, event: { select: { title: true } } }, orderBy: { createdAt: "desc" } }),
     db.organization.findMany({ where: { status: "APPROVED" }, select: { id: true, name: true }, orderBy: { name: "asc" } }),

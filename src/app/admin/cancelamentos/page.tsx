@@ -26,7 +26,7 @@ export default function AdminCancellations({ searchParams }: PageProps<"/admin/c
 }
 
 async function Content({ searchParams }: { searchParams: Promise<Search> }) {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin("cancellations:decide");
   const sp = await searchParams;
   const overdueOnly = sp.vencidos === "1";
   const queue = await listCancellationQueue(db, admin, { status: parseCancellationStatus(sp.status), overdueOnly, page: parsePage(sp.pagina) });

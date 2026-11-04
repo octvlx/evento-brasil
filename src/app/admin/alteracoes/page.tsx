@@ -23,7 +23,7 @@ export default function AdminEventChanges({ searchParams }: PageProps<"/admin/al
 }
 
 async function Content({ searchParams }: { searchParams: Promise<Search> }) {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin("events:moderate");
   const sp = await searchParams;
   const result = await listOpenChangeWindows(db, admin, { page: parsePage(sp.pagina) });
   return (

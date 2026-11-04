@@ -111,7 +111,7 @@ novas; admin aprova o protocolo do seed com motivo e duplo clique).
 3. **Colunas de auditoria:** `previousStatus`/`newStatus`/`reason`/correlation id
    vivem em `metadata` (JSON). Propor colunas próprias ao `banco-de-dados` se a
    tela de auditoria precisar filtrar por elas.
-4. Sub-papéis de admin e permissões (migração).
+4. ~~Sub-papéis de admin e permissões~~ — feito (T6), ver "Papéis de administrador" abaixo.
 5. Páginas de detalhe com histórico; casos de moderação/denúncias.
 6. Suspensão de evento distinta do cancelamento (sem reembolso) — com
    `pagamentos-financeiro`.
@@ -123,3 +123,34 @@ novas; admin aprova o protocolo do seed com motivo e duplo clique).
    (`assignedToId` existe no schema, sem serviço); exportação CSV das filas;
    limiares do relatório de transferências configuráveis; `/admin/pagamentos`
    ainda lista pedidos/reembolsos/webhooks sem paginação (take fixo).
+
+## Papéis de administrador (T6)
+
+`User.adminRoles` (enum `AdminRole`; migração `20261105120000_admin_roles`) define
+o que cada admin da plataforma pode fazer. O mapa fica em
+`src/server/auth/admin-roles.ts`.
+
+| Papel | Permissões |
+|---|---|
+| Super admin | todas, inclusive `admins:manage` (papéis de outros admins) e `audit:read` |
+| Financeiro | `finance:commissions`, `finance:refunds`, `cancellations:decide` |
+| Moderação | `organizers:review`, `events:moderate`, `events:cancel`, `transfers:read` |
+| Suporte | `users:manage` (suspender, redefinir 2FA), `transfers:read`, `cancellations:decide` |
+
+- **Serviços:** cada serviço administrativo chama
+  `assertAdminPermission(actor, perm)`. Só a visão geral (`adminStats`,
+  `adminQueueCounts`) aceita qualquer admin.
+- **Páginas:** cada página chama `requireAdmin(perm)`; sem a permissão, volta para
+  `/admin?semPermissao=1` com aviso.
+- **Menu:** mostra só o que o papel permite.
+- **Papéis somam:** um admin pode ter vários. Admin sem papel só vê a visão geral.
+- **Banco:** um `CHECK` impede papel em conta que não é admin. A migração deixou os
+  admins que já existiam como super admin.
+- **Gerenciar papéis:** só o super admin altera, em `/admin/usuarios` › "Papéis"
+  (`setAdminRoles`). Ninguém altera os próprios papéis, o que garante que sempre
+  sobra um super admin. A mudança vale na próxima requisição da pessoa e é auditada
+  como `admin.roles_changed`, com antes e depois.
+- **Fora do escopo:** promover um cliente a admin, o que continua sendo feito pelo
+  banco ou pelo seed.
+- **Seed:** `suporte@demo.eventobrasil.test` é um admin só de suporte.
+

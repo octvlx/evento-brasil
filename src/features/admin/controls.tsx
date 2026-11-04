@@ -6,6 +6,70 @@ import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import type { ActionResult } from "@/server/errors";
 import { saveCommissionRuleAction } from "./actions";
 
+/** Papéis de um admin (T6): só aparece para super admin, nunca na própria conta. */
+export function AdminRolesEditor({
+  current,
+  roles,
+  action,
+}: {
+  current: string[];
+  roles: { value: string; name: string; description: string }[];
+  action: (roles: string[]) => Promise<ActionResult>;
+}) {
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<string[]>(current);
+  const [error, setError] = useState<string | null>(null);
+  if (!open)
+    return (
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Papéis
+      </Button>
+    );
+  return (
+    <form
+      className="flex max-w-xs flex-col gap-2 rounded-xl border border-border p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await action(selected);
+          if (!r.ok) setError(r.error);
+          else {
+            setOpen(false);
+            setError(null);
+          }
+        });
+      }}
+    >
+      <fieldset className="space-y-1.5">
+        <legend className="mb-1 text-xs font-semibold">Papéis de administrador</legend>
+        {roles.map((r) => (
+          <label key={r.value} className="flex items-start gap-2 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={selected.includes(r.value)}
+              onChange={(e) => setSelected((s) => (e.target.checked ? [...s, r.value] : s.filter((x) => x !== r.value)))}
+            />
+            <span>
+              <strong>{r.name}</strong> — {r.description}
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <div className="flex gap-1">
+        <Button size="sm" disabled={pending || selected.length === 0}>
+          {pending ? "…" : "Salvar papéis"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Voltar
+        </Button>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </form>
+  );
+}
+
 /**
  * Redefinir o 2FA de outra pessoa (suporte): pede o motivo e o código do
  * aplicativo do próprio admin. O servidor revalida tudo.

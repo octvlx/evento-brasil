@@ -10,7 +10,7 @@ import type { CancellationRequestStatus } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
-import { assertActive, assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
 import { randomCode } from "../crypto";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import type { PaymentProviderAdapter } from "../payments/types";
@@ -101,7 +101,7 @@ export async function listMyCancellationRequests(db: Db, actor: Actor) {
 
 /** Fila do admin: por padrão os abertos, do prazo mais curto para o mais longo. */
 export async function listCancellationRequestsForAdmin(db: Db, admin: Actor, opts: { status?: CancellationRequestStatus; take?: number } = {}) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "cancellations:decide");
   const status = opts.status ?? "OPEN";
   return db.cancellationRequest.findMany({
     where: { status },
@@ -156,7 +156,7 @@ export async function decideCancellationRequest(
   input: CancellationDecision,
   now = new Date(),
 ) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "cancellations:decide");
   const note = input.note?.trim() ?? "";
   if (input.decision === "REJECT" && !note) throw new AppError("VALIDATION", "Informe o motivo da recusa: ele é enviado ao comprador.");
   if (note.length > NOTE_MAX) throw new AppError("VALIDATION", `A justificativa pode ter até ${NOTE_MAX} caracteres.`);

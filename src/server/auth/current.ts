@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "../db";
+import { adminHas, type AdminPermission } from "./admin-roles";
 import { MFA_SETUP_PATH, needsMfaEnrollment } from "./mfa-policy";
 import { resolveSession } from "./sessions";
 
@@ -29,10 +30,12 @@ export async function requireUser(next?: string): Promise<CurrentUser> {
   return user;
 }
 
-export async function requireAdmin(): Promise<CurrentUser> {
+/** Admin da plataforma; com `perm`, também o sub-papel que a concede (T6). */
+export async function requireAdmin(perm?: AdminPermission): Promise<CurrentUser> {
   const user = await requireUser("/admin");
   if (user.platformRole !== "ADMIN") redirect("/");
   if (needsMfaEnrollment(user)) redirect(`${MFA_SETUP_PATH}?exigido=1`);
+  if (perm && !adminHas(user.adminRoles, perm)) redirect("/admin?semPermissao=1");
   return user;
 }
 
