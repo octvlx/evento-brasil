@@ -145,7 +145,16 @@ export const eventInputSchema = z
     salesEndLocal: localDateTime,
     ageRestriction: z.coerce.number().int().min(0).max(21),
     capacity: z.coerce.number().int().positive("Capacidade deve ser positiva").max(1_000_000),
-    halfPriceQuotaPercent: z.coerce.number().min(0).max(100).optional(),
+    // L7c: limite de meia oferecido (% do estoque elegível). Vazio = sem limite além da cota legal;
+    // abaixo do mínimo legal de 40% é recusado (a reserva de 40% é automática e não se desliga).
+    halfPriceQuotaPercent: z.preprocess(
+      (v) => (v === "" || v === null ? undefined : v),
+      z.coerce
+        .number({ message: "Informe um percentual" })
+        .min(40, "O limite de meia-entrada não pode ser menor que o mínimo legal de 40%. Deixe em branco para não limitar além da cota legal.")
+        .max(100, "O limite de meia-entrada não pode passar de 100%")
+        .optional(),
+    ),
     // R4: vazio = sem limite. Com vendas, o servidor recusa valor abaixo do que uma conta já tem.
     maxTicketsPerAccount: z.preprocess(
       (v) => (v === "" || v === null ? undefined : v),
