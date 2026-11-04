@@ -2,6 +2,9 @@
 //
 // - Comissão por unidade = round_half_up(preço × bps / 10000) + fixo.
 // - Ingressos gratuitos (preço 0) nunca geram comissão.
+// - Meia-entrada (decisão D4): a taxa é proporcional ao valor da meia. A parte
+//   percentual já acompanha o preço; a parte fixa cai à metade, como o preço
+//   (meia = 50% da inteira, Lei 12.933/2013).
 // - Cupom (ADR 0002): "preço" acima é o preço LÍQUIDO (tabela − desconto);
 //   um cupom de 100% gera ingresso gratuito, sem comissão.
 // - bearer ORGANIZER: comprador paga o valor de face; comissão é descontada
@@ -29,6 +32,8 @@ export interface FeeLineInput {
   quantity: number;
   /** Desconto de cupom por unidade (ADR 0002), 0 ≤ desconto ≤ preço. */
   discountPerUnitCents?: number;
+  /** Tipo HALF_PRICE: parte fixa da comissão proporcional (D4). */
+  halfPrice?: boolean;
 }
 
 export interface FeeLine {
@@ -58,9 +63,13 @@ export interface FeeBreakdown {
   organizerShareCents: number;
 }
 
-export function commissionPerUnit(unitPriceCents: number, rule: Pick<FeeRule, "percentBps" | "fixedCentsPerTicket">): number {
+/** Fração da parte fixa da comissão cobrada na meia-entrada (D4): a mesma do preço. */
+export const HALF_PRICE_FIXED_FEE_BPS = 5_000;
+
+export function commissionPerUnit(unitPriceCents: number, rule: Pick<FeeRule, "percentBps" | "fixedCentsPerTicket">, halfPrice = false): number {
   if (unitPriceCents === 0) return 0;
-  return applyBps(unitPriceCents, rule.percentBps) + rule.fixedCentsPerTicket;
+  const fixed = halfPrice ? applyBps(rule.fixedCentsPerTicket, HALF_PRICE_FIXED_FEE_BPS) : rule.fixedCentsPerTicket;
+  return applyBps(unitPriceCents, rule.percentBps) + fixed;
 }
 
 /**
@@ -82,7 +91,7 @@ export function computeFees(lines: FeeLineInput[], rule: FeeRule): FeeBreakdown 
     const discount = l.discountPerUnitCents ?? 0;
     if (!Number.isSafeInteger(discount) || discount < 0 || discount > l.unitPriceCents) throw new RangeError("Desconto inválido");
     const net = l.unitPriceCents - discount;
-    const commission = commissionPerUnit(net, rule);
+    const commission = commissionPerUnit(net, rule, l.halfPrice);
     const serviceFee = rule.bearer === "BUYER" ? commission : 0;
     return {
       ticketTypeId: l.ticketTypeId,

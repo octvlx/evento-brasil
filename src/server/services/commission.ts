@@ -55,8 +55,12 @@ export interface BuyerPricePreview {
  * (coberto por tests/integration/r-price-preview.test.ts). A regra vem de
  * `resolveCommissionRule` para o evento.
  */
-export function buyerPricePreview(rule: Pick<CommissionRule, "percentBps" | "fixedCentsPerTicket" | "bearer">, priceCents: number): BuyerPricePreview {
-  const [line] = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1 }], { ...rule, policyVersion: "preview" }).lines;
+export function buyerPricePreview(
+  rule: Pick<CommissionRule, "percentBps" | "fixedCentsPerTicket" | "bearer">,
+  priceCents: number,
+  halfPrice = false,
+): BuyerPricePreview {
+  const [line] = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1, halfPrice }], { ...rule, policyVersion: "preview" }).lines;
   return { priceCents, serviceFeeCents: line.serviceFeePerUnitCents, totalCents: priceCents + line.serviceFeePerUnitCents };
 }
 
