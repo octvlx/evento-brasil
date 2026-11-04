@@ -388,8 +388,8 @@ export function StepTicketsSettings({ form, errors }: { form: Form; errors: Erro
       <Field name="capacity" label="Capacidade total" error={errors.capacity} help="Quantas pessoas cabem no evento, somando todos os ingressos.">
         {(a) => <Input {...a} type="number" min={1} inputMode="numeric" {...reg(form, "capacity")} />}
       </Field>
-      <Field name="halfPriceQuotaPercent" label="Cota de meia-entrada (% da capacidade)" error={errors.halfPriceQuotaPercent} help="Ex.: 40. Configure conforme orientação jurídica para o seu evento.">
-        {(a) => <Input {...a} type="number" min={0} max={100} step="1" inputMode="numeric" {...reg(form, "halfPriceQuotaPercent")} />}
+      <Field name="halfPriceQuotaPercent" label="Limite de meia-entrada (mínimo legal 40%)" error={errors.halfPriceQuotaPercent} help="A reserva de 40% dos ingressos para meia-entrada, até 48 h antes do início (72 h se o local tiver mais de 10.000 lugares), é automática e não pode ser desligada. Este campo só define até quanto você oferece de meia; deixe vazio para não limitar além dos 40%.">
+        {(a) => <Input {...a} type="number" min={40} max={100} step="1" inputMode="numeric" placeholder="Sem limite" {...reg(form, "halfPriceQuotaPercent")} />}
       </Field>
       <Field name="maxTicketsPerAccount" label="Limite de ingressos por conta (opcional)" error={errors.maxTicketsPerAccount} help="Soma de todos os pedidos de uma mesma conta neste evento. Deixe vazio para não limitar.">
         {(a) => <Input {...a} type="number" min={1} max={1000} step="1" inputMode="numeric" placeholder="Sem limite" {...reg(form, "maxTicketsPerAccount")} />}

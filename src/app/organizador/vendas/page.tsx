@@ -7,7 +7,7 @@ import { PageTitle, StatCard } from "@/components/site/panel-shell";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { requireOrganizer } from "@/server/auth/organizer-context";
-import { couponUsage, organizerFinancials, salesBySource } from "@/server/services/reports";
+import { couponUsage, organizerFinancials, organizerHalfPriceSummary, salesBySource } from "@/server/services/reports";
 import { formatDateShort, formatDateTimeShort } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { ORDER_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
@@ -26,18 +26,14 @@ async function Content() {
   const { user, org, can } = await requireOrganizer("/organizador/vendas");
   if (!can("finance:read")) redirect("/organizador");
   const fin = await organizerFinancials(db, user, org.id);
-  const [orders, events, sources, coupons] = await Promise.all([
+  const [orders, halfEvents, sources, coupons] = await Promise.all([
     db.order.findMany({
       where: { organizationId: org.id, status: { notIn: ["PENDING_PAYMENT", "EXPIRED", "CANCELLED"] } },
       include: { event: { select: { title: true } }, payments: { select: { method: true, status: true, processingFeeCents: true } } },
       orderBy: { createdAt: "desc" },
       take: 100,
     }),
-    db.event.findMany({
-      where: { organizationId: org.id },
-      include: { ticketTypes: { select: { kind: true, quantitySold: true, quantityReserved: true, quantityRefunded: true } } },
-      orderBy: { startsAt: "desc" },
-    }),
+    organizerHalfPriceSummary(db, user, org.id),
     salesBySource(db, user, org.id),
     couponUsage(db, user, org.id),
   ]);
@@ -153,29 +149,28 @@ async function Content() {
 
       <section className="mt-8">
         <h2 className="mb-1 font-display text-lg font-bold">Meia-entrada por evento</h2>
-        <p className="mb-3 text-sm text-muted-foreground">O CSV traz cota, vendas, reembolsos, cancelamentos, check-ins e vendas por dia — sem dados pessoais. Cada exportação fica registrada.</p>
+        <p className="mb-3 text-sm text-muted-foreground">O CSV traz cota legal, saldo, prazo da reserva, vendas, reembolsos, cancelamentos, check-ins e vendas por dia — sem dados pessoais. Cada exportação fica registrada.</p>
         <div className="overflow-x-auto rounded-2xl border border-border">
-          <table className="w-full min-w-[620px] text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="p-3">Evento</th>
-                <th className="p-3 text-right">Cota</th>
+                <th className="p-3 text-right">Cota legal</th>
                 <th className="p-3 text-right">Meias vendidas/reservadas</th>
+                <th className="p-3 text-right">Saldo da cota</th>
                 <th className="p-3 text-right">Total vendido</th>
                 <th className="p-3 text-right">Relatório</th>
               </tr>
             </thead>
             <tbody>
-              {events.map((e) => {
-                const half = e.ticketTypes.filter((t) => t.kind === "HALF_PRICE").reduce((s, t) => s + t.quantitySold + t.quantityReserved, 0);
-                const sold = e.ticketTypes.reduce((s, t) => s + t.quantitySold, 0);
-                const quota = e.halfPriceQuotaBps === null ? null : Math.floor((e.capacity * e.halfPriceQuotaBps) / 10_000);
+              {halfEvents.map((e) => {
                 return (
                   <tr key={e.id} className="border-t border-border">
                     <td className="p-3">{e.title}</td>
-                    <td className="p-3 text-right tabular-nums">{quota ?? "—"}</td>
-                    <td className="p-3 text-right tabular-nums">{half}</td>
-                    <td className="p-3 text-right tabular-nums">{sold}</td>
+                    <td className="p-3 text-right tabular-nums">{e.quota ?? "—"}</td>
+                    <td className="p-3 text-right tabular-nums">{e.halfCommitted}</td>
+                    <td className="p-3 text-right tabular-nums">{e.balance ?? "—"}</td>
+                    <td className="p-3 text-right tabular-nums">{e.totalSold}</td>
                     <td className="p-3 text-right">
                       <a href={`/api/organizador/eventos/${e.id}/meia-entrada`} className={buttonVariants({ variant: "outline", size: "sm" })} aria-label={`Baixar CSV de meia-entrada de ${e.title}`}>
                         CSV

@@ -253,9 +253,10 @@ export function EventForm({ eventId, defaults, categories, venues, locked, relev
           </div>
         ))}
         <div>
-          <Label htmlFor="halfPriceQuotaPercent">Cota de meia-entrada (% da capacidade)</Label>
-          <Input id="halfPriceQuotaPercent" type="number" min={0} max={100} step="1" className="mt-1.5" placeholder="Ex.: 40" {...form.register("halfPriceQuotaPercent", { setValueAs: (v) => (v === "" || v === null ? undefined : Number(v)) })} />
-          <p className="mt-1 text-xs text-muted-foreground">Configure conforme orientação jurídica para o seu evento.</p>
+          <Label htmlFor="halfPriceQuotaPercent">Limite de meia-entrada (mínimo legal 40%)</Label>
+          <Input id="halfPriceQuotaPercent" type="number" min={40} max={100} step="1" className="mt-1.5" placeholder="Ex.: 40" aria-describedby="halfPriceQuotaHelp" {...form.register("halfPriceQuotaPercent", { setValueAs: (v) => (v === "" || v === null ? undefined : Number(v)) })} />
+          <p id="halfPriceQuotaHelp" className="mt-1 text-xs text-muted-foreground">A reserva de 40% dos ingressos para meia-entrada, até 48 h antes do início (72 h se o local tiver mais de 10.000 lugares), é automática e não pode ser desligada. Este campo só define até quanto você oferece de meia; deixe vazio para não limitar além dos 40%.</p>
+          <FieldError message={errors.halfPriceQuotaPercent?.message} />
         </div>
         <div>
           <Label htmlFor="maxTicketsPerAccount">Limite de ingressos por conta (opcional)</Label>
