@@ -41,7 +41,8 @@ describe("R — preço total com taxa desde a oferta", () => {
     const data = (await getPublicEvent(db, event.slug))!;
     expect(data.buyerPaysFee).toBe(true);
     expect(data.prices[full.id]).toEqual({ priceCents: 10000, serviceFeeCents: 1150, totalCents: 11150 });
-    expect(data.prices[half.id]).toEqual({ priceCents: 5000, serviceFeeCents: 650, totalCents: 5650 });
+    // D4: na meia a parte fixa também cai à metade (10% de 50,00 + 0,75).
+    expect(data.prices[half.id]).toEqual({ priceCents: 5000, serviceFeeCents: 575, totalCents: 5575 });
     expect(data.prices[free.id]).toEqual({ priceCents: 0, serviceFeeCents: 0, totalCents: 0 });
 
     const buyer = await makeUser();
@@ -62,7 +63,7 @@ describe("R — preço total com taxa desde a oferta", () => {
     for (const it of items) {
       expect(it.unitPriceCents + it.serviceFeePerUnitCents).toBe(data.prices[it.ticketTypeId].totalCents);
     }
-    expect(order.serviceFeeCents).toBe(2 * 1150 + 650);
+    expect(order.serviceFeeCents).toBe(2 * 1150 + 575);
     expect(order.totalCents).toBe(2 * data.prices[full.id].totalCents + data.prices[half.id].totalCents);
   });
 

@@ -34,7 +34,7 @@ const cardSelect = {
   venue: { select: { name: true, city: { select: { name: true, state: true, slug: true } } } },
   category: { select: { name: true, slug: true } },
   ticketTypes: {
-    select: { isHidden: true, priceCents: true, quantityTotal: true, quantityReserved: true, quantitySold: true, salesStartAt: true, salesEndAt: true },
+    select: { isHidden: true, kind: true, priceCents: true, quantityTotal: true, quantityReserved: true, quantitySold: true, salesStartAt: true, salesEndAt: true },
   },
 } satisfies Prisma.EventSelect;
 
@@ -46,15 +46,19 @@ export type { PriceQuote };
  * Prévia do preço unitário com a MESMA regra e o MESMO cálculo do pedido
  * (`resolveCommissionRule` + `computeFees`): o valor ofertado é o cobrado.
  */
-export function quoteUnitPrice(priceCents: number, rule: Pick<CommissionRule, "policyVersion" | "percentBps" | "fixedCentsPerTicket" | "bearer">): PriceQuote {
-  const fees = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1 }], rule);
+export function quoteUnitPrice(
+  priceCents: number,
+  rule: Pick<CommissionRule, "policyVersion" | "percentBps" | "fixedCentsPerTicket" | "bearer">,
+  halfPrice = false,
+): PriceQuote {
+  const fees = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1, halfPrice }], rule);
   return { priceCents, serviceFeeCents: fees.serviceFeeCents, totalCents: fees.totalCents };
 }
 
 /** Menor total por ingresso entre os tipos visíveis (null sem ingressos). */
-export function minPriceQuote(prices: number[], rule: Parameters<typeof quoteUnitPrice>[1]): PriceQuote | null {
-  if (!prices.length) return null;
-  return prices.map((p) => quoteUnitPrice(p, rule)).reduce((min, q) => (q.totalCents < min.totalCents ? q : min));
+export function minPriceQuote(types: { priceCents: number; kind: string }[], rule: Parameters<typeof quoteUnitPrice>[1]): PriceQuote | null {
+  if (!types.length) return null;
+  return types.map((t) => quoteUnitPrice(t.priceCents, rule, t.kind === "HALF_PRICE")).reduce((min, q) => (q.totalCents < min.totalCents ? q : min));
 }
 
 /** Regra de comissão vigente, sem consultas repetidas por evento. */
@@ -126,7 +130,7 @@ function toCard(e: CardRow, rule: CommissionRule, now: Date): EventCard {
     categoryName: e.category.name,
     categorySlug: e.category.slug,
     minPriceCents: visibleTypes.length ? Math.min(...visibleTypes.map((t) => t.priceCents)) : null,
-    minPrice: minPriceQuote(visibleTypes.map((t) => t.priceCents), rule),
+    minPrice: minPriceQuote(visibleTypes, rule),
     availability: availabilityOf(e, e.ticketTypes, now),
   };
 }
@@ -296,7 +300,7 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
     /** Identificação do organizador responsável (L10b); null sem verificação aprovada. */
     organizer,
     /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
-    prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule)])) as Record<string, PriceQuote>,
+    prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule, t.kind === "HALF_PRICE")])) as Record<string, PriceQuote>,
     buyerPaysFee: rule.bearer === "BUYER",
     /** Término passado (pelo relógio, mesmo com o status ainda PUBLISHED): sem venda. */
     ended,

@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { commissionPerUnit } from "@/features/fees/policy";
 import { buyerPricePreview, resolveCommissionRule, setCommissionRule, type NewRuleInput } from "@/server/services/commission";
 import { startPayment } from "@/server/services/payments";
-import { adapter, buy, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { createOrder } from "@/server/services/orders";
+import { adapter, db, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -17,13 +18,14 @@ async function setRule(rule: Rule) {
 }
 
 /** Prévia como a página do evento calcula: regra do evento + preço de cada tipo. */
-async function previewFor(event: { id: string; organizationId: string; ticketTypes: { id: string; priceCents: number }[] }) {
+async function previewFor(event: { id: string; organizationId: string; ticketTypes: { id: string; priceCents: number; kind: string }[] }) {
   const rule = await resolveCommissionRule(db, event.organizationId, event.id);
   return new Map(
     event.ticketTypes.map((t) => {
-      const p = buyerPricePreview(rule, t.priceCents);
+      const half = t.kind === "HALF_PRICE";
+      const p = buyerPricePreview(rule, t.priceCents, half);
       // Mesma conta feita direto com commissionPerUnit (fórmula usada nas páginas públicas).
-      const direct = rule.bearer === "BUYER" ? commissionPerUnit(t.priceCents, rule) : 0;
+      const direct = rule.bearer === "BUYER" ? commissionPerUnit(t.priceCents, rule, half) : 0;
       expect(p.serviceFeeCents).toBe(direct);
       return [t.id, p];
     }),
@@ -35,7 +37,8 @@ async function expectChargedEqualsPreview(event: Parameters<typeof previewFor>[0
   const preview = await previewFor(event);
   const customer = await makeUser();
   const items = event.ticketTypes.map((t, i) => ({ ticketTypeId: t.id, quantity: i + 1 }));
-  const order = await buy(customer, event.id, items);
+  // Declaração da meia sempre marcada: alguns cenários incluem HALF_PRICE.
+  const order = await createOrder(db, customer, orderInput(event.id, items, { halfPriceDeclaration: true }), { providerIsSimulated: true });
   const saved = await db.order.findUniqueOrThrow({ where: { id: order.id }, include: { items: true } });
   for (const item of saved.items) {
     const p = preview.get(item.ticketTypeId)!;
@@ -113,5 +116,33 @@ describe("R — prévia de preço ao comprador = valor cobrado", () => {
     const po = await expectChargedEqualsPreview(other);
     expect(pe.preview.get(event.ticketTypes[0].id)).toEqual({ priceCents: 10000, serviceFeeCents: 1299, totalCents: 11299 });
     expect(po.preview.get(other.ticketTypes[0].id)).toEqual({ priceCents: 10000, serviceFeeCents: 500, totalCents: 10500 });
+  });
+
+  // D4: a taxa da meia-entrada é proporcional ao valor da meia (parte fixa pela metade).
+  const HALF = [
+    { priceCents: 10000, quantityTotal: 50 },
+    { priceCents: 5000, quantityTotal: 50, kind: "HALF_PRICE" as const },
+  ];
+
+  it("meia-entrada com taxa do comprador: parte fixa pela metade, prévia = cobrado", async () => {
+    await setRule({ scope: "PLATFORM", percentBps: 1000, fixedCentsPerTicket: 150, bearer: "BUYER" });
+    const { event } = await setup(HALF);
+    const { preview, order } = await expectChargedEqualsPreview(event);
+    expect(preview.get(event.ticketTypes[0].id)).toEqual({ priceCents: 10000, serviceFeeCents: 1150, totalCents: 11150 });
+    // 10% de 50,00 + 0,75 (metade de 1,50) = 5,75: exatamente metade da taxa da inteira, arredondada.
+    expect(preview.get(event.ticketTypes[1].id)).toEqual({ priceCents: 5000, serviceFeeCents: 575, totalCents: 5575 });
+    const half = order.items.find((i) => i.ticketTypeId === event.ticketTypes[1].id)!;
+    expect(half.commissionPerUnitCents).toBe(575);
+  });
+
+  it("meia-entrada com taxa do organizador: comissão proporcional sai do repasse", async () => {
+    await setRule({ scope: "PLATFORM", percentBps: 700, fixedCentsPerTicket: 99, bearer: "ORGANIZER" });
+    const { event } = await setup(HALF);
+    const { order } = await expectChargedEqualsPreview(event);
+    const byType = new Map(order.items.map((i) => [i.ticketTypeId, i]));
+    expect(byType.get(event.ticketTypes[0].id)!.commissionPerUnitCents).toBe(799);
+    // 7% de 50,00 + 0,50 (metade de 0,99, arredondada para cima).
+    expect(byType.get(event.ticketTypes[1].id)!.commissionPerUnitCents).toBe(400);
+    expect(order.commissionCents).toBe(799 * 1 + 400 * 2);
   });
 });

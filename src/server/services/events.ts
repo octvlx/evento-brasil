@@ -217,11 +217,11 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
  * comissão por unidade daria repasse negativo e o ingresso nunca poderia ser
  * vendido (createOrder recusa). Avisa já no cadastro. Gratuito (0) é sempre válido.
  */
-async function assertPriceCoversCommission(tx: Tx, organizationId: string, eventId: string, priceCents: number) {
+async function assertPriceCoversCommission(tx: Tx, organizationId: string, eventId: string, priceCents: number, halfPrice: boolean) {
   if (priceCents === 0) return;
   const rule = await resolveCommissionRule(tx, organizationId, eventId);
   if (rule.bearer !== "ORGANIZER") return;
-  const commission = commissionPerUnit(priceCents, rule);
+  const commission = commissionPerUnit(priceCents, rule, halfPrice);
   if (commission > priceCents) {
     throw new AppError(
       "VALIDATION",
@@ -255,13 +255,14 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
     if (input.id) {
       const tt = await tx.ticketType.findFirst({ where: { id: input.id, eventId } });
       if (!tt) throw notFound("Tipo de ingresso não encontrado.");
-      if (tt.priceCents !== input.priceCents) await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
+      if (tt.priceCents !== input.priceCents || tt.kind !== input.kind)
+        await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents, input.kind === "HALF_PRICE");
       if (input.quantityTotal < tt.quantitySold + tt.quantityReserved)
         throw new AppError("VALIDATION", `Quantidade mínima: ${tt.quantitySold + tt.quantityReserved} (vendidos + reservados).`);
       if (tt.quantitySold > 0 && tt.kind !== input.kind) throw new AppError("VALIDATION", "Não é possível mudar o tipo após vendas.");
       result = await tx.ticketType.update({ where: { id: tt.id }, data });
     } else {
-      await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
+      await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents, input.kind === "HALF_PRICE");
       const count = await tx.ticketType.count({ where: { eventId } });
       result = await tx.ticketType.create({ data: { ...data, eventId, sortOrder: count } });
     }
