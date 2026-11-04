@@ -21,7 +21,7 @@ const adminWith = (roles: AdminRole[]) =>
 const commission = { scope: "PLATFORM" as const, percentBps: 800, fixedCentsPerTicket: 0, bearer: "ORGANIZER" as const, processingFeeBearer: "ORGANIZER" as const, refundCommissionOnRefund: true };
 
 describe("mapa de permissões", () => {
-  const ALL: AdminPermission[] = ["organizers:review", "events:moderate", "events:cancel", "finance:commissions", "finance:refunds", "cancellations:decide", "transfers:read", "users:manage", "audit:read", "admins:manage"];
+  const ALL: AdminPermission[] = ["organizers:review", "events:moderate", "events:cancel", "finance:commissions", "finance:refunds", "cancellations:decide", "transfers:read", "users:manage", "audit:read", "admins:manage", "users:delete"];
   const expected: Record<AdminRole, AdminPermission[]> = {
     SUPER_ADMIN: ALL,
     FINANCE: ["finance:commissions", "finance:refunds", "cancellations:decide"],

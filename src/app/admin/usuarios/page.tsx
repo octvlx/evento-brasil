@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
-import { AdminActionButton, AdminRolesEditor, ResetTwoFactorButton } from "@/features/admin/controls";
-import { resetUserTwoFactorAction, setAdminRolesAction, suspendUserAction } from "@/features/admin/actions";
+import { AdminActionButton, AdminRolesEditor, DeleteAccountButton, ResetTwoFactorButton } from "@/features/admin/controls";
+import { deleteUserAccountAction, resetUserTwoFactorAction, setAdminRolesAction, suspendUserAction } from "@/features/admin/actions";
 import { ADMIN_ROLE_LABELS, ADMIN_ROLES, adminHas } from "@/server/auth/admin-roles";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
@@ -24,11 +24,12 @@ async function Content({ searchParams }: { searchParams: Promise<{ q?: string }>
   const { q } = await searchParams;
   const users = await db.user.findMany({
     where: q ? { OR: [{ email: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }] } : {},
-    include: { _count: { select: { orders: true, tickets: true } } },
+    include: { _count: { select: { orders: true, tickets: true } }, memberships: { select: { organization: { select: { name: true } } } } },
     orderBy: { createdAt: "desc" },
     take: 100,
   });
   const canManageAdmins = adminHas(admin.adminRoles, "admins:manage");
+  const canDelete = adminHas(admin.adminRoles, "users:delete");
   const roleOptions = ADMIN_ROLES.map((r) => ({ value: r, ...ADMIN_ROLE_LABELS[r] }));
   return (
     <>
@@ -58,6 +59,12 @@ async function Content({ searchParams }: { searchParams: Promise<{ q?: string }>
                   <AdminActionButton label="Suspender" variant="destructive" askReason="Motivo" reasonRequired action={suspendUserAction.bind(null, u.id, true)} />
                 ) : (
                   <AdminActionButton label="Reativar" action={suspendUserAction.bind(null, u.id, false)} />
+                )}
+                {canDelete && u.platformRole !== "ADMIN" && (
+                  <DeleteAccountButton
+                    account={{ name: u.name, email: u.email, orders: u._count.orders, organizations: u.memberships.map((m) => m.organization.name) }}
+                    action={deleteUserAccountAction.bind(null, u.id)}
+                  />
                 )}
               </div>
             )}
