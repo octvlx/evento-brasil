@@ -7,7 +7,11 @@ import { audit } from "../audit";
 import { decryptPII, encryptPII, hashToken } from "../crypto";
 import { AppError, forbidden, invalidState } from "../errors";
 import { verifyPassword } from "../auth/password";
-import { mfaEnforced } from "../auth/mfa-policy";
+import { MFA_SETUP_PATH, mfaEnforced } from "../auth/mfa-policy";
+import { assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { enqueueEmail } from "../email/outbox";
+import { twoFactorResetEmail } from "../email/templates";
+import { authAppUrl } from "./email-verification";
 import { SESSION_TTL_MS } from "../auth/sessions";
 import { base32Encode, generateTotpSecret, otpauthUri, verifyTotp } from "../auth/totp";
 
@@ -201,5 +205,54 @@ export async function disableTotp(db: Db, userId: string, input: { code: string;
     });
     await tx.totpRecoveryCode.deleteMany({ where: { userId } });
     await audit(tx, { actorUserId: userId, action: "mfa.disabled", entityType: "User", entityId: userId });
+  }, TX_OPTIONS);
+}
+
+/**
+ * Suporte: um admin redefine o 2FA de quem perdeu o celular e os códigos de
+ * recuperação. Exige o código do aplicativo do próprio admin (que precisa ter 2FA
+ * ativo) e um motivo. Apaga segredo e códigos, encerra todas as sessões da pessoa,
+ * avisa por e-mail e audita. No próximo acesso a pessoa ativa de novo (obrigatório
+ * para admin e dono quando mfaEnforced()). Não vale para a própria conta.
+ */
+export async function adminResetTwoFactor(db: Db, admin: Actor, targetUserId: string, input: { adminCode: string; reason: string }, now = new Date()) {
+  assertPlatformAdmin(admin);
+  if (targetUserId === admin.id)
+    throw new AppError("VALIDATION", "Para a sua própria conta, use Minha conta › Segurança.");
+  const reason = input.reason.trim();
+  if (reason.length < 5) throw new AppError("VALIDATION", "Descreva o motivo da redefinição (mínimo de 5 caracteres).");
+  const target = await db.user.findUnique({ where: { id: targetUserId }, select: { email: true, totpEnabledAt: true, anonymizedAt: true } });
+  if (!target) throw new AppError("NOT_FOUND", "Usuário não encontrado.");
+  if (target.anonymizedAt) throw invalidState("Esta conta foi excluída pelo titular.");
+  if (!target.totpEnabledAt) throw invalidState("Esta conta não tem verificação em duas etapas ativa.");
+
+  const adminAccount = await db.user.findUniqueOrThrow({ where: { id: admin.id }, select: { totpEnabledAt: true } });
+  if (!adminAccount.totpEnabledAt)
+    throw forbidden("Ative a sua verificação em duas etapas antes de redefinir a de outra pessoa.");
+  await assertCurrentTotp(db, admin.id, input.adminCode, now);
+
+  return db.$transaction(async (tx) => {
+    // Condicional: duas redefinições simultâneas não duplicam e-mail nem auditoria.
+    const cleared = await tx.user.updateMany({
+      where: { id: targetUserId, totpEnabledAt: { not: null } },
+      data: { totpSecretEncrypted: null, totpEnabledAt: null, totpLastStep: null, totpPendingSecretEncrypted: null, totpPendingAt: null },
+    });
+    if (cleared.count !== 1) throw invalidState("Esta conta não tem verificação em duas etapas ativa.");
+    await tx.totpRecoveryCode.deleteMany({ where: { userId: targetUserId } });
+    const sessions = await tx.session.deleteMany({ where: { userId: targetUserId } });
+    await enqueueEmail(tx, {
+      dedupeKey: `mfa-reset:${targetUserId}:${now.getTime()}`,
+      template: "MFA_RESET",
+      recipient: target.email,
+      message: twoFactorResetEmail(new URL(MFA_SETUP_PATH, authAppUrl()).toString()),
+    });
+    await audit(tx, {
+      actorUserId: admin.id,
+      action: "mfa.reset_by_admin",
+      entityType: "User",
+      entityId: targetUserId,
+      metadata: { reason, sessionsRevoked: sessions.count },
+    });
+    return { sessionsRevoked: sessions.count };
   }, TX_OPTIONS);
 }

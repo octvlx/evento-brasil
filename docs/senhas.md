@@ -95,5 +95,13 @@ Qualquer outra conta pode ativar por conta própria.
   `mfa.recovery_codes_regenerated`);
 - a exclusão da conta (L9b) apaga o segredo e os códigos.
 
-**Pendente:** um admin redefinir o 2FA de quem perdeu o celular e os códigos de
-recuperação. Até lá, isso é feito pelo suporte direto no banco, com auditoria manual.
+**Perdeu o celular e os códigos de recuperação:** um admin redefine em
+`/admin/usuarios` › "Redefinir 2FA" (`adminResetTwoFactor`):
+- exige o motivo e o código do aplicativo do **próprio admin**, que precisa ter 2FA
+  ativo; não vale para a própria conta;
+- apaga o segredo e os códigos, encerra todas as sessões da pessoa, envia o e-mail
+  `MFA_RESET` e grava `mfa.reset_by_admin` (motivo e autor);
+- no próximo acesso a pessoa ativa de novo (obrigatório para admin e dono).
+
+Confirme a identidade da pessoa antes, por exemplo pelo e-mail da conta, e registre
+como confirmou no motivo.

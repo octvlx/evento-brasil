@@ -8,6 +8,7 @@ import { createSession, resolveSession, SESSION_TTL_MS } from "@/server/auth/ses
 import { totpCode, totpStep } from "@/server/auth/totp";
 import { hashToken } from "@/server/crypto";
 import {
+  adminResetTwoFactor,
   completeMfaLogin,
   confirmTotpEnrollment,
   disableTotp,
@@ -196,5 +197,66 @@ describe("exigência para admin e dono de organização (MFA_REQUIRED)", () => {
     const s = await createSession(db, user.id);
     await expect(completeMfaLogin(db, s.token, recoveryCodes[0], later(61))).rejects.toMatchObject({ code: "VALIDATION" });
     await completeMfaLogin(db, s.token, fresh[0], later(62));
+  });
+});
+
+describe("redefinição do 2FA pelo admin (perdeu celular e códigos)", () => {
+  const reason = "Perdeu o celular; identidade confirmada por e-mail";
+
+  it("apaga 2FA e códigos, encerra as sessões, avisa por e-mail e audita com o motivo", async () => {
+    vi.stubEnv("MFA_REQUIRED", "true");
+    const admin = await enrolled({ admin: true });
+    const target = await enrolled();
+    const s1 = await createSession(db, target.user.id);
+    const s2 = await createSession(db, target.user.id);
+    const when = later(60);
+    const result = await adminResetTwoFactor(db, admin.user, target.user.id, { adminCode: codeAt(admin.secret, when), reason }, when);
+    expect(result.sessionsRevoked).toBe(2);
+
+    const after = await db.user.findUniqueOrThrow({ where: { id: target.user.id } });
+    expect(after).toMatchObject({ totpEnabledAt: null, totpSecretEncrypted: null, totpLastStep: null });
+    expect(await db.totpRecoveryCode.count({ where: { userId: target.user.id } })).toBe(0);
+    expect(await db.session.count({ where: { tokenHash: { in: [hashToken(s1.token), hashToken(s2.token)] } } })).toBe(0);
+    const mail = await db.emailOutbox.findFirstOrThrow({ where: { template: "MFA_RESET" } });
+    expect(mail.recipient).toBe(target.user.email);
+    const log = await db.auditLog.findFirstOrThrow({ where: { action: "mfa.reset_by_admin", entityId: target.user.id } });
+    expect(log.actorUserId).toBe(admin.user.id);
+    expect(log.metadata).toMatchObject({ reason, sessionsRevoked: 2 });
+
+    // A pessoa entra só com a senha (sessão normal) e ativa de novo no próximo acesso.
+    const fresh = await createSession(db, target.user.id);
+    expect(fresh.mfaPending).toBe(false);
+    const { secret } = await startTotpEnrollment(db, target.user.id, later(120));
+    await confirmTotpEnrollment(db, target.user.id, codeAt(secret, later(120)), fresh.token, later(120));
+    expect((await twoFactorStatus(db, target.user.id)).enabled).toBe(true);
+  });
+
+  it("exige o código do próprio admin, válido e não reutilizado", async () => {
+    const admin = await enrolled({ admin: true });
+    const target = await enrolled();
+    await expect(adminResetTwoFactor(db, admin.user, target.user.id, { adminCode: "000000", reason }, later(60))).rejects.toMatchObject({ code: "VALIDATION" });
+    // Código da ativação do admin (passo já usado) não vale de novo.
+    await expect(adminResetTwoFactor(db, admin.user, target.user.id, { adminCode: codeAt(admin.secret, T0), reason }, T0)).rejects.toMatchObject({ code: "VALIDATION" });
+    expect((await twoFactorStatus(db, target.user.id)).enabled).toBe(true);
+  });
+
+  it("recusa: admin sem 2FA, não admin, a própria conta, sem motivo, alvo sem 2FA, conta excluída", async () => {
+    const target = await enrolled();
+    const adminNo2fa = await makeUser({ admin: true });
+    await expect(adminResetTwoFactor(db, adminNo2fa, target.user.id, { adminCode: "123456", reason })).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const notAdmin = await enrolled();
+    await expect(adminResetTwoFactor(db, notAdmin.user, target.user.id, { adminCode: codeAt(notAdmin.secret, later(60)), reason }, later(60))).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const admin = await enrolled({ admin: true });
+    await expect(adminResetTwoFactor(db, admin.user, admin.user.id, { adminCode: codeAt(admin.secret, later(60)), reason }, later(60))).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(adminResetTwoFactor(db, admin.user, target.user.id, { adminCode: codeAt(admin.secret, later(60)), reason: "  " }, later(60))).rejects.toMatchObject({ code: "VALIDATION" });
+
+    const plain = await makeUser();
+    await expect(adminResetTwoFactor(db, admin.user, plain.id, { adminCode: codeAt(admin.secret, later(90)), reason }, later(90))).rejects.toMatchObject({ code: "INVALID_STATE" });
+
+    await db.user.update({ where: { id: target.user.id }, data: { anonymizedAt: new Date() } });
+    await expect(adminResetTwoFactor(db, admin.user, target.user.id, { adminCode: codeAt(admin.secret, later(120)), reason }, later(120))).rejects.toMatchObject({ code: "INVALID_STATE" });
+    expect(await db.auditLog.count({ where: { action: "mfa.reset_by_admin" } })).toBe(0);
   });
 });

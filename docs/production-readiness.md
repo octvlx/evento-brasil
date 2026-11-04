@@ -31,7 +31,7 @@
 - [x] CSV com neutralização de fórmulas; exportações auditadas.
 - [x] Contas demo bloqueadas em produção.
 - [ ] Verificação de e-mail no cadastro e recuperação de senha.
-- [x] 2FA (TOTP) obrigatório para administradores e donos de organização em produção (`MFA_REQUIRED`), com códigos de recuperação; ver `docs/senhas.md` § "Verificação em duas etapas". Pendente: redefinição do 2FA por outro admin para quem perder celular e códigos.
+- [x] 2FA (TOTP) obrigatório para administradores e donos de organização em produção (`MFA_REQUIRED`), com códigos de recuperação; ver `docs/senhas.md` § "Verificação em duas etapas". Quem perde celular e códigos: um admin redefine em `/admin/usuarios`, com o próprio código e um motivo.
 - [x] Limitação de taxa distribuída: contadores no Postgres (`RateLimitBucket`, `src/server/rate-limit.ts`), valem entre instâncias e reinícios; janelas vencidas saem no expurgo programado.
 - [x] Cabeçalhos de segurança (CSP sem nonce, HSTS fora do dev, `frame-ancestors`/`X-Frame-Options`, `Permissions-Policy`) em `next.config.ts`. CSP com nonce exigiria renderização dinâmica e é incompatível com o pré-render parcial.
 - [ ] Revisão de dependências (`npm audit`) e varredura de segredos no CI.
