@@ -17,6 +17,9 @@ import { eventFormOptions } from "@/features/organizer/form-data";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { listEventCoupons } from "@/server/services/coupons";
+import { halfPriceControl } from "@/server/services/reports";
+import { HalfPriceControl } from "@/features/organizer/half-price-control";
+import { limitPercentForForm } from "@/features/half-price/policy";
 import { listEventChanges } from "@/server/services/event-changes";
 import { listEventTrackingLinks } from "@/server/services/tracking-links";
 import { requireOrganizer } from "@/server/auth/organizer-context";
@@ -57,6 +60,8 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   const canWrite = can("event:write");
   const changes = await listEventChanges(db, user, id);
   const openWindows = changes.filter((c) => c.windowOpen);
+  // Controle de meia-entrada: mesma permissão dos relatórios do evento (finance:read).
+  const halfControl = can("finance:read") ? await halfPriceControl(db, user, id) : null;
   const [coupons, links] = canWrite ? await Promise.all([listEventCoupons(db, user, id), listEventTrackingLinks(db, user, id)]) : [[], []];
 
   return (
@@ -128,6 +133,12 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
           }))}
         />
       </Card>
+
+      {halfControl && (
+        <Card className="mb-6 p-6">
+          <HalfPriceControl control={halfControl} />
+        </Card>
+      )}
 
       {canWrite && (
         <>
@@ -202,7 +213,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             salesEndLocal: utcToZonedLocalInput(event.salesEndAt, tz),
             ageRestriction: event.ageRestriction,
             capacity: event.capacity,
-            halfPriceQuotaPercent: event.halfPriceQuotaBps === null ? undefined : event.halfPriceQuotaBps / 100,
+            halfPriceQuotaPercent: limitPercentForForm(event.halfPriceQuotaBps) ?? undefined,
             maxTicketsPerAccount: event.maxTicketsPerAccount ?? undefined,
             refundPolicy: event.refundPolicy,
             transferDeadlineHours: event.transferDeadlineHours,

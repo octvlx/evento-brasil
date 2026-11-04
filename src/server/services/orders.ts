@@ -15,6 +15,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { createOrderSchema, type CreateOrderInput } from "@/features/schemas";
 import { discountPerUnit, undercutHalfPrice } from "@/features/fees/discount";
 import { computeFees, lineWithNegativePayout } from "@/features/fees/policy";
+import { checkHalfPriceRequest, computeHalfPriceState, halfPriceRequestMessage } from "@/features/half-price/quota";
 import { onlyDigits } from "@/lib/br";
 import { hasEventEnded } from "@/lib/event-lifecycle";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
@@ -25,6 +26,7 @@ import { env } from "../env";
 import { rateLimit } from "../rate-limit";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { resolveCommissionRule } from "./commission";
+import { halfPriceEventInput, halfPriceSnapshot, loadHalfPriceStateTx } from "./half-price";
 import { postSale } from "./ledger";
 import { notifyOrderPaid } from "./notifications";
 import { issueTicketsTx } from "./tickets";
@@ -63,9 +65,15 @@ export async function releaseOrderTx(
 ): Promise<boolean> {
   const { count } = await tx.order.updateMany({ where: { id: orderId, status: "PENDING_PAYMENT" }, data: { status, cancelledAt: now } });
   if (!count) return false;
-  const { couponId } = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { couponId: true } });
+  const { couponId, eventId, organizationId } = await tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    select: { couponId: true, eventId: true, organizationId: true },
+  });
   if (couponId) await tx.coupon.update({ where: { id: couponId }, data: { timesReserved: { decrement: 1 } } });
-  const reservations = await tx.ticketInventoryReservation.findMany({ where: { orderId, status: "ACTIVE" } });
+  const reservations = await tx.ticketInventoryReservation.findMany({
+    where: { orderId, status: "ACTIVE" },
+    include: { ticketType: { select: { kind: true } } },
+  });
   for (const r of reservations) {
     await tx.ticketType.update({ where: { id: r.ticketTypeId }, data: { quantityReserved: { decrement: r.quantity } } });
   }
@@ -73,7 +81,33 @@ export async function releaseOrderTx(
     where: { orderId, status: "ACTIVE" },
     data: { status: "RELEASED", releasedAt: now, releaseReason: reason },
   });
+  const halfQuantity = reservations.filter((r) => r.ticketType.kind === "HALF_PRICE").reduce((s, r) => s + r.quantity, 0);
+  if (halfQuantity) {
+    // A meia volta ao saldo da cota (L7c); o estado é o de depois da devolução.
+    const { state } = await loadHalfPriceStateTx(tx, eventId, now);
+    await audit(tx, {
+      organizationId,
+      action: "half_price.reservation_released",
+      entityType: "Order",
+      entityId: orderId,
+      metadata: { orderStatus: status, reason, halfQuantity, ...halfPriceSnapshot(state) },
+    });
+  }
   return true;
+}
+
+/** Auditoria da venda de meia (L7c). Pré-condição: contadores já convertidos em vendidos. */
+async function auditHalfPriceSoldTx(tx: Tx, order: OrderWithItems, now: Date, late: boolean) {
+  const halfQuantity = order.items.filter((i) => i.kind === "HALF_PRICE").reduce((s, i) => s + i.quantity, 0);
+  if (!halfQuantity) return;
+  const { state } = await loadHalfPriceStateTx(tx, order.eventId, now);
+  await audit(tx, {
+    organizationId: order.organizationId,
+    action: "half_price.sold",
+    entityType: "Order",
+    entityId: order.id,
+    metadata: { halfQuantity, late, ...halfPriceSnapshot(state) },
+  });
 }
 
 async function releaseExpiredForEventTx(tx: Tx, eventId: string, now: Date) {
@@ -121,16 +155,22 @@ export async function finalizePaidOrderTx(tx: Tx, order: OrderWithItems, now = n
   await tx.order.update({ where: { id: order.id }, data: { status: "PAID", paidAt: now } });
   // Uso do cupom: reservado → resgatado (único ponto, inclusive para pedido gratuito).
   if (order.couponId) await tx.coupon.update({ where: { id: order.couponId }, data: { timesReserved: { decrement: 1 }, timesRedeemed: { increment: 1 } } });
+  await auditHalfPriceSoldTx(tx, order, now, false);
   await issueTicketsTx(tx, order);
 }
 
 /**
  * Pagamento confirmado após a reserva expirar: tenta recuperar estoque.
- * Pré-condição: trava do evento. Retorna false se não há mais disponibilidade
- * ou se o evento já terminou (pelo relógio, com ou sem o job ter rodado).
+ * Pré-condição: trava do evento. Retorna false se não há mais disponibilidade,
+ * se o evento já terminou (pelo relógio, com ou sem o job ter rodado) ou se a
+ * regra da meia-entrada barraria o pedido agora (reserva da cota ou limite de
+ * meia, L7c); nesse caso o fluxo de pagamento tardio reembolsa.
  */
 export async function acquireLateInventoryTx(tx: Tx, order: OrderWithItems, now = new Date()): Promise<boolean> {
-  const event = await tx.event.findUniqueOrThrow({ where: { id: order.eventId }, include: { ticketTypes: true } });
+  const event = await tx.event.findUniqueOrThrow({
+    where: { id: order.eventId },
+    include: { ticketTypes: true, venue: { select: { capacity: true } } },
+  });
   if (event.status !== "PUBLISHED" || hasEventEnded(event, now)) return false;
   const byId = new Map(event.ticketTypes.map((t) => [t.id, t]));
   const committed = event.ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
@@ -139,6 +179,18 @@ export async function acquireLateInventoryTx(tx: Tx, order: OrderWithItems, now 
   for (const item of order.items) {
     const t = byId.get(item.ticketTypeId);
     if (!t || t.quantityTotal - t.quantityReserved - t.quantitySold < item.quantity) return false;
+  }
+  const halfInput = halfPriceEventInput(event);
+  const halfError = checkHalfPriceRequest(halfInput, event.ticketTypes, order.items, now);
+  if (halfError) {
+    await audit(tx, {
+      organizationId: order.organizationId,
+      action: "half_price.late_payment_blocked",
+      entityType: "Order",
+      entityId: order.id,
+      metadata: { code: halfError, ...halfPriceSnapshot(computeHalfPriceState(halfInput, event.ticketTypes, now)) },
+    });
+    return false;
   }
   for (const item of order.items) {
     await tx.ticketType.update({ where: { id: item.ticketTypeId }, data: { quantitySold: { increment: item.quantity } } });
@@ -158,6 +210,7 @@ export async function acquireLateInventoryTx(tx: Tx, order: OrderWithItems, now 
       });
     }
   }
+  await auditHalfPriceSoldTx(tx, order, now, true);
   await issueTicketsTx(tx, order);
   return true;
 }
@@ -299,6 +352,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
           organization: {
             include: { mercadoPagoAccount: { select: { revokedAt: true } } },
           },
+          venue: { select: { capacity: true } },
         },
       });
       if (!event || event.status !== "PUBLISHED") throw notFound("Evento indisponível.");
@@ -353,13 +407,15 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
           );
         }
       }
-      if (halfRequested > 0) {
-        if (!input.halfPriceDeclaration) throw new AppError("VALIDATION", "Confirme a declaração de direito à meia-entrada.");
-        if (event.halfPriceQuotaBps !== null) {
-          const quota = Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000);
-          const used = ticketTypes.filter((t) => t.kind === "HALF_PRICE").reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
-          if (used + halfRequested > quota) throw new AppError("SOLD_OUT", "Cota de meia-entrada esgotada.");
-        }
+      if (halfRequested > 0 && !input.halfPriceDeclaration) throw new AppError("VALIDATION", "Confirme a declaração de direito à meia-entrada.");
+      // Reserva da cota legal e limite de meia (L7c), sob a trava do evento e depois de
+      // liberar os vencidos e o pendente anterior do comprador.
+      const halfInput = halfPriceEventInput(event);
+      const halfItems = [...merged.values()].map((i) => ({ ticketTypeId: i.ticketTypeId, quantity: i.quantity }));
+      const halfError = checkHalfPriceRequest(halfInput, ticketTypes, halfItems, now);
+      if (halfError) {
+        const { releaseAt } = computeHalfPriceState(halfInput, ticketTypes, now);
+        throw new AppError("SOLD_OUT", halfPriceRequestMessage(halfError, releaseAt, event.timezone));
       }
 
       // Desconto do cupom (validado com o cupom travado e o pedido anterior já liberado).
@@ -450,6 +506,17 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       }
       // Uso do cupom reservado; vira resgatado em finalizePaidOrderTx (inclusive se gratuito).
       if (coupon) await tx.coupon.update({ where: { id: coupon.id }, data: { timesReserved: { increment: 1 } } });
+      if (halfRequested > 0) {
+        const reserved = ticketTypes.map((t) => ({ ...t, quantityReserved: t.quantityReserved + (merged.get(t.id)?.quantity ?? 0) }));
+        await audit(tx, {
+          actorUserId: actor.id,
+          organizationId: event.organizationId,
+          action: "half_price.order_reserved",
+          entityType: "Order",
+          entityId: order.id,
+          metadata: { halfQuantity: halfRequested, ...halfPriceSnapshot(computeHalfPriceState(halfInput, reserved, now)) },
+        });
+      }
 
       if (isFree && !opts.checkoutReviewRequired) {
         await tx.payment.create({

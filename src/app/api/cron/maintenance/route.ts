@@ -1,8 +1,9 @@
 // Job agendado (ex.: a cada minuto): expira reservas vencidas e convites de
-// transferência de ingresso vencidos, encerra eventos
-// finalizados, reconcilia pagamentos/reembolsos com o provedor e verifica os
-// invariantes financeiros e, no máximo uma vez por hora, expurga dados pessoais
-// vencidos (prazos provisórios em src/server/retention.ts). Protegido por segredo no header x-cron-secret.
+// transferência de ingresso vencidos, encerra eventos finalizados, registra a
+// liberação da cota de meia-entrada (L7c), reconcilia pagamentos/reembolsos com o
+// provedor e verifica os invariantes financeiros e, no máximo uma vez por hora,
+// expurga dados pessoais vencidos (prazos provisórios em src/server/retention.ts).
+// Protegido por segredo no header x-cron-secret.
 // Cada etapa é idempotente e isolada: a falha de uma é registrada e não impede as
 // demais; a resposta sai com 500 para o agendador alertar. Nada aqui é a única
 // proteção: o término do evento já é reconhecido pelo relógio em todo o backend.
@@ -12,6 +13,7 @@ import { env } from "@/server/env";
 import { safeEqual } from "@/server/crypto";
 import { getPaymentAdapter } from "@/server/payments";
 import { completeEndedEvents } from "@/server/services/events";
+import { recordHalfPriceReleases } from "@/server/services/half-price";
 import { expireStaleOrders } from "@/server/services/orders";
 import { financeLog } from "@/server/services/finance-log";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
@@ -35,6 +37,8 @@ export async function POST(req: Request) {
 
   const expiredOrders = await step("expireStaleOrders", () => expireStaleOrders(db));
   const completedEvents = await step("completeEndedEvents", () => completeEndedEvents(db));
+  // Só registra a liberação da cota de meia (auditoria); a regra já vale pelo relógio.
+  const halfPriceReleases = await step("recordHalfPriceReleases", () => recordHalfPriceReleases(db));
   const expiredTransfers = await step("expireTicketTransfers", () => expireTicketTransfers(db));
   const reconciliation = await step("reconcilePayments", () => reconcilePayments(db, getPaymentAdapter()));
   const violations = (await step("checkFinancialInvariants", () => checkFinancialInvariants(db))) ?? [];
@@ -52,6 +56,7 @@ export async function POST(req: Request) {
       emailDelivery,
       expiredOrders,
       completedEvents,
+      halfPriceReleases,
       expiredTransfers,
       reconciliation: reconciliation && { ...reconciliation, errors: reconciliation.errors.length },
       retention,

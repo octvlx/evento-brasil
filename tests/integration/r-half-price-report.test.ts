@@ -44,7 +44,8 @@ describe("relatório de meia-entrada", () => {
   it("reports daily monetary totals above Int32 without breaking CSV", async () => {
     const owner = await makeUser();
     const event = await makeEvent(await makeOrg(owner), {
-      capacity: 1000, halfPriceQuotaBps: 4000,
+      // L7c: o limite de meia é sobre o estoque elegível (aqui só meia, 400); 100% para vender 250.
+      capacity: 1000, halfPriceQuotaBps: 10_000,
       tickets: [{ name: "Meia", kind: "HALF_PRICE", priceCents: 10_000_000, quantityTotal: 400, maxPerOrder: 50 }],
     });
     for (let i = 0; i < 5; i++) {
@@ -108,12 +109,12 @@ describe("relatório de meia-entrada", () => {
     expect(r).toMatchObject({ sold: 2, cancelled: 2, refunded: 0, valid: 0, checkedIn: 0 });
   });
 
-  it("sem cota definida informa isso em vez de inventar um número", async () => {
+  it("sem tipo de meia (reserva não se aplica) informa isso em vez de inventar um número", async () => {
     const owner = await makeUser();
     const event = await makeEvent(await makeOrg(owner));
     const r = await halfPriceReport(db, owner, event.id);
     expect(r).toMatchObject({ quota: null, remaining: null, sold: 0, byDay: [] });
-    expect(halfPriceReportToCsv(r)).toContain('"Cota restante";"Sem cota definida"');
+    expect(halfPriceReportToCsv(r)).toContain('"Cota restante";"Não se aplica"');
   });
 
   it("neutraliza fórmulas de planilha no título do evento", async () => {

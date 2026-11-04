@@ -3,11 +3,20 @@
 import "server-only";
 import type { CommissionRule, Prisma } from "@/generated/prisma/client";
 import { computeFees } from "@/features/fees/policy";
+import {
+  computeHalfPriceState,
+  ticketAvailability,
+  type HalfPriceEventInput,
+  type HalfPriceStatus,
+  type HalfPriceTypeInput,
+  type TicketUnavailableReason,
+} from "@/features/half-price/quota";
 import { localDayRange, weekendRange } from "@/lib/datetime";
 import { hasEventEnded } from "@/lib/event-lifecycle";
 import type { PriceQuote } from "@/lib/price-display";
 import type { Db } from "../db";
 import { resolveCommissionRule, resolveCommissionRules } from "./commission";
+import { halfPriceEventInput } from "./half-price";
 import { rankPublicEvents } from "./search-ranking";
 
 export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
@@ -30,11 +39,14 @@ const cardSelect = {
   salesStartAt: true,
   salesEndAt: true,
   isFeatured: true,
+  // Para a disponibilidade usar a mesma regra da meia-entrada do pedido (L7c).
+  halfPriceQuotaBps: true,
+  halfPriceRegime: true,
   city: { select: { name: true, state: true, slug: true } },
-  venue: { select: { name: true, city: { select: { name: true, state: true, slug: true } } } },
+  venue: { select: { name: true, capacity: true, city: { select: { name: true, state: true, slug: true } } } },
   category: { select: { name: true, slug: true } },
   ticketTypes: {
-    select: { isHidden: true, kind: true, priceCents: true, quantityTotal: true, quantityReserved: true, quantitySold: true, salesStartAt: true, salesEndAt: true },
+    select: { id: true, isHidden: true, kind: true, priceCents: true, quantityTotal: true, quantityReserved: true, quantitySold: true, salesStartAt: true, salesEndAt: true },
   },
 } satisfies Prisma.EventSelect;
 
@@ -93,16 +105,40 @@ export interface EventCard {
   availability: Availability;
 }
 
+type AvailabilityType = {
+  quantityTotal: number;
+  quantityReserved: number;
+  quantitySold: number;
+  isHidden?: boolean;
+  salesStartAt?: Date | null;
+  salesEndAt?: Date | null;
+  id?: string;
+  kind?: string;
+  priceCents?: number;
+};
+
+/**
+ * Disponibilidade resumida (cards, busca, página). Com `half` (entrada da regra da
+ * meia-entrada, L7c) e tipos com id/kind/preço, o estoque de cada tipo vem de
+ * `ticketAvailability` — o mesmo que `createOrder` aceita, inclusive a reserva da cota.
+ * Aproximação deliberada: o selo LOW soma o disponível por tipo (limitado pela
+ * capacidade livre), o que pode superestimar quando inteira e meia disputam o mesmo
+ * saldo; SOLD_OUT só aparece quando nenhum tipo público tem ingresso comprável.
+ * Sem `half`, vale a conta simples por tipo e capacidade.
+ */
 export function availabilityOf(
   event: { capacity: number; salesStartAt: Date; salesEndAt: Date },
-  types: { quantityTotal: number; quantityReserved: number; quantitySold: number; isHidden?: boolean; salesStartAt?: Date | null; salesEndAt?: Date | null }[],
+  types: AvailabilityType[],
   now = new Date(),
+  half?: HalfPriceEventInput,
 ): Availability {
   if (now < event.salesStartAt) return "NOT_STARTED";
   if (now >= event.salesEndAt) return "CLOSED";
   const committed = types.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
   const visible = types.filter((t) => !t.isHidden);
-  const stock = (t: (typeof types)[number]) => Math.max(0, t.quantityTotal - t.quantityReserved - t.quantitySold);
+  const typed = half && types.every((t) => t.id !== undefined && t.kind !== undefined && t.priceCents !== undefined);
+  const byType = typed ? ticketAvailability(computeHalfPriceState(half, types as HalfPriceTypeInput[], now), types as HalfPriceTypeInput[]) : null;
+  const stock = (t: AvailabilityType) => byType?.get(t.id!)?.available ?? Math.max(0, t.quantityTotal - t.quantityReserved - t.quantitySold);
   const active = visible.filter((t) => (!t.salesStartAt || now >= t.salesStartAt) && (!t.salesEndAt || now < t.salesEndAt));
   const typeAvail = active.reduce((s, t) => s + stock(t), 0);
   if (event.capacity <= committed || !visible.some((t) => stock(t) > 0)) return "SOLD_OUT";
@@ -131,7 +167,7 @@ function toCard(e: CardRow, rule: CommissionRule, now: Date): EventCard {
     categorySlug: e.category.slug,
     minPriceCents: visibleTypes.length ? Math.min(...visibleTypes.map((t) => t.priceCents)) : null,
     minPrice: minPriceQuote(visibleTypes, rule),
-    availability: availabilityOf(e, e.ticketTypes, now),
+    availability: availabilityOf(e, e.ticketTypes, now, halfPriceEventInput(e)),
   };
 }
 
@@ -291,12 +327,18 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
   });
   if (!event) return null;
   const ended = hasEventEnded(event, now);
-  const halfUsed = event.ticketTypes.filter((t) => t.kind === "HALF_PRICE").reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
-  const halfQuota = event.halfPriceQuotaBps === null ? null : Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000);
   const committed = event.ticketTypes.reduce((s, t) => s + t.quantityReserved + t.quantitySold, 0);
+  // Estado da cota de meia-entrada (L7c) calculado no servidor; a página só exibe.
+  const halfState = computeHalfPriceState(halfPriceEventInput(event), event.ticketTypes, now);
+  const byType = ticketAvailability(halfState, event.ticketTypes);
   const [rule, organizer] = await Promise.all([resolveCommissionRule(db, event.organizationId, event.id, now), organizerIdentification(db, event.organizationId)]);
   return {
-    event: { ...event, ticketTypes: event.ticketTypes.filter((t) => !t.isHidden) },
+    event: {
+      ...event,
+      ticketTypes: event.ticketTypes
+        .filter((t) => !t.isHidden)
+        .map((t) => ({ ...t, available: byType.get(t.id)?.available ?? 0, unavailableReason: byType.get(t.id)?.reason ?? null })),
+    },
     /** Identificação do organizador responsável (L10b); null sem verificação aprovada. */
     organizer,
     /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
@@ -304,9 +346,36 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
     buyerPaysFee: rule.bearer === "BUYER",
     /** Término passado (pelo relógio, mesmo com o status ainda PUBLISHED): sem venda. */
     ended,
-    availability: ended ? ("CLOSED" as const) : availabilityOf(event, event.ticketTypes, now),
+    availability: ended ? ("CLOSED" as const) : availabilityOf(event, event.ticketTypes, now, halfPriceEventInput(event)),
     capacityLeft: Math.max(0, event.capacity - committed),
-    halfPriceLeft: halfQuota === null ? null : Math.max(0, halfQuota - halfUsed),
+    halfPrice: publicHalfPrice(halfState),
+  };
+}
+
+/** Estado público mínimo da meia-entrada: sem números internos (estoque elegível, cota, vendidas, avisos). */
+export interface PublicHalfPrice {
+  status: HalfPriceStatus;
+  /** A reserva legal está barrando parte das inteiras agora (antes do prazo). */
+  reserveActive: boolean;
+  /** Instante em que a reserva termina (início − 48/72 h). */
+  releaseAt: Date;
+  deadlineHours: number;
+  halfAvailable: number;
+  fullAvailable: number;
+  halfUnavailableReason: "QUOTA_EXHAUSTED" | "SOLD_OUT" | null;
+}
+
+export type PublicTicketUnavailableReason = TicketUnavailableReason;
+
+function publicHalfPrice(s: ReturnType<typeof computeHalfPriceState>): PublicHalfPrice {
+  return {
+    status: s.status,
+    reserveActive: s.reserveActive,
+    releaseAt: s.releaseAt,
+    deadlineHours: s.deadlineHours,
+    halfAvailable: s.halfAvailable,
+    fullAvailable: s.fullAvailable,
+    halfUnavailableReason: s.halfUnavailableReason,
   };
 }
 
