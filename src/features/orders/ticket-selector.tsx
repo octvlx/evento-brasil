@@ -23,7 +23,10 @@ export interface SelectorTicket {
   serviceFeeCents: number;
   minPerOrder: number;
   maxPerOrder: number;
+  /** Quantidade que o servidor aceitaria agora (estoque, capacidade e reserva da meia-entrada). */
   available: number;
+  /** Por que `available` é 0, segundo o servidor. */
+  unavailableReason: "SOLD_OUT" | "HALF_QUOTA_EXHAUSTED" | "RESERVED_FOR_HALF_PRICE" | null;
   onSale: boolean;
   requiresAttendeeInfo: boolean;
 }
@@ -35,13 +38,14 @@ interface Props {
   /** A regra do evento cobra taxa de serviço do comprador. */
   buyerPaysFee: boolean;
   user: { name: string; email: string } | null;
-  halfPriceLeft: number | null;
+  /** "dd/mm/aaaa às HH:mm" no fuso do evento: fim da reserva legal da meia-entrada. */
+  halfReleaseLabel: string;
   paymentsAvailable: boolean;
   /** Cupom pré-aplicado por um link rastreado (o comprador pode remover). */
   initialCouponCode?: string | null;
 }
 
-export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfPriceLeft, paymentsAvailable, initialCouponCode }: Props) {
+export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfReleaseLabel, paymentsAvailable, initialCouponCode }: Props) {
   const router = useRouter();
   const [qty, setQty] = usePersistentCartState<Record<string, number>>(eventId, "quantities", {});
   const [attendees, setAttendees] = usePersistentCartState<Record<string, string[]>>(eventId, "attendees", {});
@@ -112,10 +116,12 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfPrice
   return (
     <div className="space-y-4">
       {!paymentsAvailable && <Alert variant="warning">A compra de ingressos pagos está temporariamente indisponível. Ingressos gratuitos continuam disponíveis.</Alert>}
-      <ul className="space-y-3">
+      <ul className="space-y-3" aria-live="polite">
         {tickets.map((t) => {
           const n = qty[t.id] ?? 0;
           const soldOut = t.available <= 0;
+          const reason = soldOut ? t.unavailableReason : null;
+          const soldOutLabel = reason === "HALF_QUOTA_EXHAUSTED" ? "Cota esgotada" : reason === "RESERVED_FOR_HALF_PRICE" ? "Reservado p/ meia" : "Esgotado";
           const breakdown = feeBreakdownText({ priceCents: t.priceCents, serviceFeeCents: t.serviceFeeCents, totalCents: t.priceCents + t.serviceFeeCents });
           return (
             <li key={t.id} className="rounded-2xl border border-border p-4">
@@ -131,7 +137,7 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfPrice
                   {breakdown && <p className="text-xs text-muted-foreground">{breakdown} de serviço</p>}
                 </div>
                 {!t.onSale || soldOut || (!paymentsAvailable && t.priceCents > 0) ? (
-                  <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{soldOut ? "Esgotado" : !t.onSale ? "Fora do período" : "Indisponível"}</span>
+                  <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{soldOut ? soldOutLabel : !t.onSale ? "Fora do período" : "Indisponível"}</span>
                 ) : (
                   <div className="flex shrink-0 items-center gap-2" role="group" aria-label={`Quantidade de ${t.name}`}>
                     <Button type="button" variant="outline" size="icon" onClick={() => change(t, -1)} disabled={n === 0} aria-label="Diminuir">
@@ -146,6 +152,10 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfPrice
                   </div>
                 )}
               </div>
+              {t.onSale && reason === "HALF_QUOTA_EXHAUSTED" && <p className="mt-2 text-xs font-semibold text-muted-foreground">Cota de meia-entrada esgotada</p>}
+              {t.onSale && reason === "RESERVED_FOR_HALF_PRICE" && (
+                <p className="mt-2 text-xs font-semibold text-muted-foreground">Ingressos restantes reservados para meia-entrada até {halfReleaseLabel}</p>
+              )}
               {t.onSale && !soldOut && t.available <= 10 && <p className="mt-2 text-xs font-semibold text-warning">Restam poucas unidades</p>}
               {t.requiresAttendeeInfo && n > 0 && (
                 <div className="mt-3 space-y-2">
@@ -177,7 +187,6 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfPrice
           <input type="checkbox" className="mt-0.5 size-4 accent-[var(--secondary)]" checked={halfDecl} onChange={(e) => { setKey(crypto.randomUUID()); setHalfDecl(e.target.checked); }} />
           <span>
             Declaro ter direito à <strong>meia-entrada</strong> e apresentarei documento comprobatório na entrada. A falta de comprovação pode impedir o acesso.
-            {halfPriceLeft !== null && <span className="block text-xs text-muted-foreground">Cota de meia-entrada restante: {halfPriceLeft}</span>}
           </span>
         </label>
       )}

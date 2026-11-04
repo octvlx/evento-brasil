@@ -20,6 +20,7 @@ import { getPublicEvent, trackingLinkCouponCode } from "@/server/services/catalo
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { formatAddress } from "@/lib/br";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
+import { formatReleaseAt } from "@/features/half-price/quota";
 import { AVAILABILITY } from "@/lib/labels";
 import { whatsappShareUrl } from "@/lib/utils";
 
@@ -61,7 +62,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   await connection();
   const data = await getPublicEvent(db, slug);
   if (!data) notFound();
-  const { event, organizer, prices, buyerPaysFee, ended, availability, capacityLeft, halfPriceLeft } = data;
+  const { event, organizer, prices, buyerPaysFee, ended, availability, halfPrice } = data;
   const user = await getCurrentUser();
   // Cupom pré-aplicado pelo link rastreado desta visita (cookie eb_attr), se for deste evento.
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
@@ -72,6 +73,8 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   const base = process.env.APP_URL ?? "http://localhost:3000";
   const url = `${base}/eventos/${event.slug}`;
   const av = AVAILABILITY[availability];
+  const halfReleaseLabel = formatReleaseAt(halfPrice.releaseAt, tz);
+  const hasHalfType = event.ticketTypes.some((t) => t.kind === "HALF_PRICE");
 
   const tickets = event.ticketTypes.map((t) => ({
     id: t.id,
@@ -82,7 +85,9 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
     serviceFeeCents: prices[t.id].serviceFeeCents,
     minPerOrder: t.minPerOrder,
     maxPerOrder: t.maxPerOrder,
-    available: Math.max(0, Math.min(t.quantityTotal - t.quantityReserved - t.quantitySold, capacityLeft, t.kind === "HALF_PRICE" && halfPriceLeft !== null ? halfPriceLeft : Infinity)),
+    // Disponível e motivo vêm do servidor (mesma regra que createOrder aceita).
+    available: t.available,
+    unavailableReason: t.unavailableReason,
     onSale: now >= event.salesStartAt && now < event.salesEndAt && (!t.salesStartAt || now >= t.salesStartAt) && (!t.salesEndAt || now < t.salesEndAt),
     requiresAttendeeInfo: t.requiresAttendeeInfo,
   }));
@@ -220,10 +225,17 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               antes do início, se nenhum ingresso do pedido tiver sido usado.
             </p>
             <p className="mt-2 text-[15px] text-foreground/90">{event.refundPolicy}</p>
-            {event.halfPriceQuotaBps !== null && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Meia-entrada disponível conforme a legislação aplicável, mediante comprovação na entrada. Cota: {event.halfPriceQuotaBps / 100}% da capacidade.
-              </p>
+            {hasHalfType && (
+              <div className="mt-2 space-y-1 text-sm text-muted-foreground" data-testid="half-price-info">
+                <p>Meia-entrada disponível conforme a legislação aplicável, mediante comprovação do direito na entrada.</p>
+                {halfPrice.status !== "NOT_APPLICABLE" && (
+                  <p>
+                    {halfPrice.reserveActive
+                      ? `Pela Lei 12.933/2013, 40% dos ingressos à venda ficam reservados para meia-entrada até ${halfPrice.deadlineHours} horas antes do início (${halfReleaseLabel}). Até lá, as inteiras só são vendidas enquanto sobrarem ingressos fora dessa reserva.`
+                      : `Pela Lei 12.933/2013, 40% dos ingressos à venda ficam reservados para meia-entrada até ${halfPrice.deadlineHours} horas antes do início. Esse prazo terminou em ${halfReleaseLabel}; a disponibilidade abaixo é conferida novamente ao reservar.`}
+                  </p>
+                )}
+              </div>
             )}
           </section>
 
@@ -253,7 +265,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               tickets={tickets}
               buyerPaysFee={buyerPaysFee}
               user={user ? { name: user.name, email: user.email } : null}
-              halfPriceLeft={halfPriceLeft}
+              halfReleaseLabel={halfReleaseLabel}
               initialCouponCode={linkCoupon}
               paymentsAvailable={getPaymentAdapter().supportedMethods.length > 0}
             />
