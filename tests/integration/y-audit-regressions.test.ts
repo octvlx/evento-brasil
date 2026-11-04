@@ -62,7 +62,7 @@ describe("audit: catalogue queries and stock", () => {
   it("hidden half-price sales still consume the public half-price quota", async () => {
     const event = await makeEvent(await makeOrg(await makeUser()), { capacity: 10, halfPriceQuotaBps: 5000, tickets: [{ priceCents: 5000, quantityTotal: 5, kind: "HALF_PRICE" }, { priceCents: 4000, quantityTotal: 5, kind: "HALF_PRICE" }] });
     await db.ticketType.update({ where: { id: event.ticketTypes[1].id }, data: { isHidden: true, quantitySold: 4 } });
-    expect((await getPublicEvent(db, event.slug))?.halfPriceLeft).toBe(1);
+    expect((await getPublicEvent(db, event.slug))?.halfPrice.halfAvailable).toBe(1);
   });
 
   it("lot-specific sale windows are reflected in availability", async () => {

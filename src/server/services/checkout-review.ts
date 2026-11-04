@@ -12,6 +12,8 @@ import { getPaymentAdapter } from "../payments";
 import { audit } from "../audit";
 import { resolveCommissionRule } from "./commission";
 import { createOrder, finalizePaidOrderTx, lockCoupons, lockEvent, lockOrder, releaseOrderTx } from "./orders";
+import { checkHalfPriceRequest, computeHalfPriceState, formatReleaseAt, halfPriceRequestMessage, ticketAvailability, type TicketUnavailableReason } from "@/features/half-price/quota";
+import { loadHalfPriceStateTx } from "./half-price";
 import { postSale } from "./ledger";
 import { notifyOrderPaid } from "./notifications";
 import { checkoutTermsGate, recordAcceptanceTx } from "./terms";
@@ -66,6 +68,38 @@ export async function createCheckoutDraft(db: Db, raw: CreateOrderInput, actor?:
   }
 }
 
+export interface CheckoutHalfPrice {
+  /** Motivo (pt-BR) pelo qual a regra da meia-entrada barraria a seleção agora; null se pode. */
+  message: string | null;
+  /** Fim da reserva legal, "dd/mm/aaaa às HH:mm" no fuso do evento. */
+  releaseLabel: string;
+  /** O que o servidor aceitaria por tipo público (sem contar o pedido pendente do próprio comprador). */
+  availability: Record<string, { available: number; reason: TicketUnavailableReason | null }>;
+}
+
+/**
+ * Revalida a seleção com a regra da meia-entrada (L7c) contra o estado atual do banco.
+ * As reservas que `createOrder` liberaria antes de decidir (vencidas e o pendente do próprio
+ * comprador) não contam. `createOrder` continua sendo a garantia final.
+ */
+export async function checkHalfPriceSelection(client: Db | Tx, eventId: string, actorId: string, items: { ticketTypeId: string; quantity: number }[], now = new Date()): Promise<CheckoutHalfPrice> {
+  const { event, input, types } = await loadHalfPriceStateTx(client, eventId, now);
+  const releasing = await client.orderItem.findMany({
+    where: { order: { eventId, status: "PENDING_PAYMENT", OR: [{ expiresAt: { lte: now } }, { userId: actorId }] } },
+    select: { ticketTypeId: true, quantity: true },
+  });
+  const freed = new Map<string, number>();
+  for (const i of releasing) freed.set(i.ticketTypeId, (freed.get(i.ticketTypeId) ?? 0) + i.quantity);
+  const adjusted = types.map((t) => ({ ...t, quantityReserved: Math.max(0, t.quantityReserved - (freed.get(t.id) ?? 0)) }));
+  const state = computeHalfPriceState(input, adjusted, now);
+  const code = checkHalfPriceRequest(input, adjusted, items, now);
+  return {
+    message: code ? halfPriceRequestMessage(code, state.releaseAt, event.timezone) : null,
+    releaseLabel: formatReleaseAt(state.releaseAt, event.timezone),
+    availability: Object.fromEntries(ticketAvailability(state, adjusted)),
+  };
+}
+
 /** Read-only, safe for server rendering/prefetch. Preparing inventory is a separate POST action. */
 export async function getCheckoutReview(db: Db, actor: Actor, draftId: string, token?: string) {
   const draft = checkAccess(await db.checkoutDraft.findUnique({ where: { id: draftId } }), actor, token);
@@ -74,7 +108,8 @@ export async function getCheckoutReview(db: Db, actor: Actor, draftId: string, t
     draft.orderId ? db.order.findUnique({ where: { id: draft.orderId }, include: orderInclude }) : null,
     checkoutReadiness(db, actor.id),
   ]);
-  return { draft: { id: draft.id, selection: draft.selection, expiresAt: draft.expiresAt, confirmedAt: draft.confirmedAt, revision: draft.revision, orderId: draft.orderId }, event, order, readiness: ready.readiness, reviewHash: draft.reviewHash };
+  const halfPrice = order?.status === "PAID" ? null : await checkHalfPriceSelection(db, draft.eventId, actor.id, createOrderSchema.parse(draft.selection).items, new Date());
+  return { halfPrice, draft: { id: draft.id, selection: draft.selection, expiresAt: draft.expiresAt, confirmedAt: draft.confirmedAt, revision: draft.revision, orderId: draft.orderId }, event, order, readiness: ready.readiness, reviewHash: draft.reviewHash };
 }
 
 function revisionKey(draft: CheckoutDraft) {
@@ -111,6 +146,9 @@ async function prepareTx(tx: Tx, actor: Actor, current: CheckoutDraft) {
     // A new revision creates at most one replacement using the existing order/inventory service.
     if (previous) draft = await tx.checkoutDraft.update({ where: { id: draft.id }, data: { revision: { increment: 1 } } });
     const selection = createOrderSchema.parse(draft.selection);
+    // Motivo claro antes de criar o pedido (a trava do evento já está tomada); createOrder segue sendo a garantia final.
+    const half = await checkHalfPriceSelection(tx, draft.eventId, actor.id, selection.items);
+    if (half.message) throw new AppError("SOLD_OUT", half.message);
     const adapter = getPaymentAdapter();
     const order = await createOrder(tx as unknown as Db, actor, { ...selection, buyerName: ready.buyer.name, buyerEmail: ready.buyer.email, buyerPhone: ready.buyer.phone ?? undefined, idempotencyKey: revisionKey(draft) }, { transaction: tx, checkoutReviewRequired: true, providerIsSimulated: adapter.isSimulated, providerId: adapter.id, paymentsAvailable: adapter.supportedMethods.length > 0 });
     draft = await tx.checkoutDraft.update({ where: { id: draft.id }, data: { orderId: order.id, pricingHash: fingerprint, confirmedAt: null, reviewHash: null } });
