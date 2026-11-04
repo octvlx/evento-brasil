@@ -3,6 +3,7 @@ import type { EventStatus } from "@/generated/prisma/client";
 import { eventInputSchema, ticketTypeInputSchema, type EventInput, type TicketTypeInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
 import { commissionPerUnit } from "@/features/fees/policy";
+import { computeHalfPriceState, stockChangeError, type HalfPriceEventInput, type HalfPriceState, type HalfPriceTypeInput } from "@/features/half-price/quota";
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { formatBRL } from "@/lib/money";
@@ -16,6 +17,7 @@ import { resolveVenueCity } from "./cities";
 import { resolveCommissionRule } from "./commission";
 import { getWizardProgress, isWizardComplete } from "./event-wizard-progress";
 import { recordRelevantChange } from "./event-changes";
+import { halfPriceSnapshot, loadHalfPriceStateTx } from "./half-price";
 import { notifyEventChangeInBackground } from "./notifications";
 import { ticketsHeldByAccount } from "./orders";
 
@@ -145,6 +147,25 @@ export async function largestHoldingOverLimit(tx: Tx, eventId: string, limit: nu
   return largest;
 }
 
+/** Capacidade do local físico (nulo se online ou sem capacidade cadastrada). */
+async function venueCapacityOf(tx: Tx, locationType: "VENUE" | "ONLINE", venueId: string | null): Promise<number | null> {
+  if (locationType === "ONLINE" || !venueId) return null;
+  return (await tx.venue.findUnique({ where: { id: venueId }, select: { capacity: true } }))?.capacity ?? null;
+}
+
+/**
+ * L7c: recusa a mudança de estoque/capacidade que invade a reserva legal de meia-entrada.
+ * O "antes" e o "depois" usam a MESMA data e local: mudança só de data nunca é barrada
+ * (é auditada em `half_price.stock_changed`). Chamar com a trava do evento tomada.
+ */
+function guardStockChange(before: { input: HalfPriceEventInput; types: HalfPriceTypeInput[] }, afterTypes: HalfPriceTypeInput[], afterCapacity: number, now: Date): HalfPriceState {
+  const stateBefore = computeHalfPriceState(before.input, before.types, now);
+  const stateGuard = computeHalfPriceState({ ...before.input, capacity: afterCapacity }, afterTypes, now);
+  const message = stockChangeError(stateBefore, stateGuard);
+  if (message) throw new AppError("VALIDATION", message);
+  return stateBefore;
+}
+
 export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: EventInput) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
   const { event, change } = await db.$transaction(async (tx) => {
@@ -184,6 +205,16 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
     }
     const loc = await resolveLocation(tx, organizationId, input, current.venueId);
     const data = { ...eventData({ ...input, ...policy }), ...loc };
+    // L7c: capacidade que invade a cota legal de meia-entrada é recusada; aumento é livre.
+    const now = new Date();
+    const half = await loadHalfPriceStateTx(tx, eventId, now);
+    const halfBefore = guardStockChange(half, half.types, input.capacity, now);
+    const halfChanged =
+      current.capacity !== data.capacity ||
+      current.startsAt.getTime() !== data.startsAt.getTime() ||
+      current.locationType !== data.locationType ||
+      current.venueId !== loc.venueId ||
+      current.halfPriceQuotaBps !== data.halfPriceQuotaBps;
     const change = await recordRelevantChange(tx, {
       actorUserId: actor.id,
       event: current,
@@ -205,6 +236,27 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
         },
       },
     });
+    if (halfChanged) {
+      const halfAfter = computeHalfPriceState(
+        {
+          ...half.input,
+          capacity: event.capacity,
+          startsAt: event.startsAt,
+          halfPriceQuotaBps: event.halfPriceQuotaBps,
+          venueCapacity: await venueCapacityOf(tx, event.locationType, event.venueId),
+        },
+        half.types,
+        now,
+      );
+      await audit(tx, {
+        actorUserId: actor.id,
+        organizationId,
+        action: "half_price.stock_changed",
+        entityType: "Event",
+        entityId: eventId,
+        metadata: { source: "event.updated", before: halfPriceSnapshot(halfBefore), after: halfPriceSnapshot(halfAfter) },
+      });
+    }
     return { event, change };
   });
   // Fora da transação: falha de e-mail não desfaz a alteração (pode ser reenviada).
@@ -252,6 +304,11 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
       isHidden: input.isHidden,
     };
     let result;
+    let afterTypes: HalfPriceTypeInput[] = [];
+    let halfChanged = false;
+    let halfBefore: HalfPriceState;
+    const now = new Date();
+    const half = await loadHalfPriceStateTx(tx, eventId, now);
     if (input.id) {
       const tt = await tx.ticketType.findFirst({ where: { id: input.id, eventId } });
       if (!tt) throw notFound("Tipo de ingresso não encontrado.");
@@ -260,11 +317,33 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
       if (input.quantityTotal < tt.quantitySold + tt.quantityReserved)
         throw new AppError("VALIDATION", `Quantidade mínima: ${tt.quantitySold + tt.quantityReserved} (vendidos + reservados).`);
       if (tt.quantitySold > 0 && tt.kind !== input.kind) throw new AppError("VALIDATION", "Não é possível mudar o tipo após vendas.");
+      // L7c: estoque, tipo, visibilidade ou preço não podem invadir a cota legal de meia-entrada.
+      afterTypes = half.types.map((t) => (t.id === tt.id ? { ...t, kind: data.kind, priceCents: data.priceCents, isHidden: data.isHidden, quantityTotal: data.quantityTotal } : t));
+      halfChanged = tt.kind !== data.kind || tt.priceCents !== data.priceCents || tt.isHidden !== data.isHidden || tt.quantityTotal !== data.quantityTotal;
+      halfBefore = guardStockChange(half, afterTypes, half.input.capacity, now);
       result = await tx.ticketType.update({ where: { id: tt.id }, data });
     } else {
       await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents, input.kind === "HALF_PRICE");
+      afterTypes = [...half.types, { id: "novo", kind: data.kind, priceCents: data.priceCents, isHidden: data.isHidden, quantityTotal: data.quantityTotal, quantityReserved: 0, quantitySold: 0 }];
+      halfChanged = true;
+      halfBefore = guardStockChange(half, afterTypes, half.input.capacity, now);
       const count = await tx.ticketType.count({ where: { eventId } });
       result = await tx.ticketType.create({ data: { ...data, eventId, sortOrder: count } });
+    }
+    if (halfChanged) {
+      await audit(tx, {
+        actorUserId: actor.id,
+        organizationId,
+        action: "half_price.stock_changed",
+        entityType: "TicketType",
+        entityId: result.id,
+        metadata: {
+          source: input.id ? "ticket_type.updated" : "ticket_type.created",
+          eventId,
+          before: halfPriceSnapshot(halfBefore),
+          after: halfPriceSnapshot(computeHalfPriceState(half.input, afterTypes, now)),
+        },
+      });
     }
     await audit(tx, {
       actorUserId: actor.id,
@@ -282,10 +361,28 @@ export async function deleteTicketType(db: Db, actor: Actor, ticketTypeId: strin
   const tt = await db.ticketType.findUnique({ where: { id: ticketTypeId } });
   if (!tt) throw notFound();
   const { organizationId } = await assertEventPermission(db, actor, tt.eventId, "event:write");
-  const used = await db.orderItem.count({ where: { ticketTypeId } });
-  if (used > 0) throw new AppError("VALIDATION", "Este ingresso já possui pedidos; oculte-o em vez de excluir.");
-  await db.ticketType.delete({ where: { id: ticketTypeId } });
-  await audit(db, { actorUserId: actor.id, organizationId, action: "ticket_type.deleted", entityType: "TicketType", entityId: ticketTypeId });
+  await db.$transaction(async (tx) => {
+    // Sob a trava do evento: pedido e checagem da cota não correm junto com a exclusão.
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${tt.eventId} FOR UPDATE`;
+    const used = await tx.orderItem.count({ where: { ticketTypeId } });
+    if (used > 0) throw new AppError("VALIDATION", "Este ingresso já possui pedidos; oculte-o em vez de excluir.");
+    const now = new Date();
+    const half = await loadHalfPriceStateTx(tx, tt.eventId, now);
+    const afterTypes = half.types.filter((t) => t.id !== ticketTypeId);
+    // L7c: remover um tipo reduz o estoque elegível; não pode invadir a cota legal.
+    const before = guardStockChange(half, afterTypes, half.input.capacity, now);
+    const { count } = await tx.ticketType.deleteMany({ where: { id: ticketTypeId } });
+    if (!count) return;
+    await audit(tx, { actorUserId: actor.id, organizationId, action: "ticket_type.deleted", entityType: "TicketType", entityId: ticketTypeId });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "half_price.stock_changed",
+      entityType: "TicketType",
+      entityId: ticketTypeId,
+      metadata: { source: "ticket_type.deleted", eventId: tt.eventId, before: halfPriceSnapshot(before), after: halfPriceSnapshot(computeHalfPriceState(half.input, afterTypes, now)) },
+    });
+  });
 }
 
 /** Envia para publicação. Publica direto se a organização tem autoPublishEvents. */
