@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll } from "vitest";
-import type { OrgRole, TicketKind } from "@/generated/prisma/client";
+import type { HalfPriceRegime, OrgRole, TicketKind } from "@/generated/prisma/client";
 import { createPrismaClient } from "@/server/db";
 import { SimulatedPaymentAdapter } from "@/server/payments/simulated";
 import { createOrder } from "@/server/services/orders";
@@ -72,11 +72,27 @@ export interface TicketSpec {
 
 export async function makeEvent(
   org: { id: string },
-  opts: { tickets?: TicketSpec[]; capacity?: number; startsInDays?: number; halfPriceQuotaBps?: number; status?: "PUBLISHED" | "DRAFT" } = {},
+  opts: {
+    tickets?: TicketSpec[];
+    capacity?: number;
+    startsInDays?: number;
+    /** Início exato; tem precedência sobre `startsInDays`. */
+    startsAt?: Date;
+    /** Padrão: ontem. Deve ficar antes de `startsAt` (CHECK Event_time_order). */
+    salesStartAt?: Date;
+    halfPriceQuotaBps?: number;
+    halfPriceRegime?: HalfPriceRegime;
+    /** Cria um Venue na cidade do evento com essa capacidade e liga ao evento. */
+    venueCapacity?: number;
+    status?: "PUBLISHED" | "DRAFT";
+  } = {},
 ) {
   const [city, category] = await Promise.all([makeCity(), makeCategory()]);
-  const startsAt = new Date(Date.now() + (opts.startsInDays ?? 10) * 86_400_000);
+  const startsAt = opts.startsAt ?? new Date(Date.now() + (opts.startsInDays ?? 10) * 86_400_000);
   n++;
+  const venue = opts.venueCapacity === undefined
+    ? null
+    : await db.venue.create({ data: { cityId: city.id, name: `Local ${n}`, slug: `local-${n}-${randomUUID().slice(0, 6)}`, capacity: opts.venueCapacity } });
   return db.event.create({
     data: {
       organizationId: org.id,
@@ -85,13 +101,15 @@ export async function makeEvent(
       description: "Descrição de teste com mais de vinte caracteres.",
       categoryId: category.id,
       cityId: city.id,
+      venueId: venue?.id ?? null,
       startsAt,
       endsAt: new Date(startsAt.getTime() + 4 * 3_600_000),
       timezone: "America/Sao_Paulo",
-      salesStartAt: new Date(Date.now() - 86_400_000),
+      salesStartAt: opts.salesStartAt ?? new Date(Date.now() - 86_400_000),
       salesEndAt: startsAt,
       capacity: opts.capacity ?? 1000,
       halfPriceQuotaBps: opts.halfPriceQuotaBps ?? null,
+      ...(opts.halfPriceRegime ? { halfPriceRegime: opts.halfPriceRegime } : {}),
       status: opts.status ?? "PUBLISHED",
       refundPolicy: "Política de teste.",
       ticketTypes: {

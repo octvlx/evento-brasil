@@ -358,6 +358,13 @@ enum LocationType {
   ONLINE
 }
 
+// FEDERAL = Lei 12.933/2013 (cota de 40%, reserva até 48/72 h antes do início).
+// NOT_SUBJECT = evento fora do alcance da lei (definido pelo admin, com nota).
+enum HalfPriceRegime {
+  FEDERAL
+  NOT_SUBJECT
+}
+
 model EventCategory {
   id        String  @id @default(cuid())
   slug      String  @unique
@@ -367,52 +374,59 @@ model EventCategory {
 }
 
 model Event {
-  id                        String       @id @default(cuid())
-  organizationId            String
-  slug                      String       @unique
-  title                     String
-  summary                   String?
-  description               String
-  categoryId                String
-  coverImageUrl             String?
-  locationType              LocationType @default(VENUE)
-  venueId                   String?
-  onlineUrl                 String?
-  cityId                    String?
-  startsAt                  DateTime     @db.Timestamptz(3)
-  endsAt                    DateTime     @db.Timestamptz(3)
-  timezone                  String
+  id                         String          @id @default(cuid())
+  organizationId             String
+  slug                       String          @unique
+  title                      String
+  summary                    String?
+  description                String
+  categoryId                 String
+  coverImageUrl              String?
+  locationType               LocationType    @default(VENUE)
+  venueId                    String?
+  onlineUrl                  String?
+  cityId                     String?
+  startsAt                   DateTime        @db.Timestamptz(3)
+  endsAt                     DateTime        @db.Timestamptz(3)
+  timezone                   String
   // 0 = livre; caso contrário idade mínima.
-  ageRestriction            Int          @default(0)
-  salesStartAt              DateTime     @db.Timestamptz(3)
-  salesEndAt                DateTime     @db.Timestamptz(3)
-  capacity                  Int
-  // Cota de meia-entrada em pontos-base da capacidade (ex.: 4000 = 40%).
-  // Nulo = sem cota configurada. Requer revisão jurídica.
-  halfPriceQuotaBps         Int?
+  ageRestriction             Int             @default(0)
+  salesStartAt               DateTime        @db.Timestamptz(3)
+  salesEndAt                 DateTime        @db.Timestamptz(3)
+  capacity                   Int
+  // LIMITE de meia-entrada oferecido, em pontos-base do estoque elegível (ex.: 5000 = 50%).
+  // Nulo = sem limite. Abaixo de 4000 vale o mínimo legal de 40%; a reserva protegida e o
+  // prazo (48/72 h) são calculados no serviço (src/features/half-price). CHECK 0–10000.
+  halfPriceQuotaBps          Int?
+  // Regime da meia-entrada (L7c). Só o admin muda (auditado), com motivo/base legal na nota.
+  halfPriceRegime            HalfPriceRegime @default(FEDERAL)
+  halfPriceRegimeNote        String?
+  // Marcador do cron: a releaseAt cuja liberação da cota já foi auditada. Se a data do
+  // evento muda, a releaseAt muda e o cron audita de novo. Nunca é a garantia da regra.
+  halfPriceReleaseAuditedFor DateTime?       @db.Timestamptz(3)
   // Limite de ingressos por conta neste evento (R4, Decreto 13.108/2026). Nulo = sem
   // limite; CHECK > 0. Contagem e exceções ficam no serviço (L4b).
-  maxTicketsPerAccount      Int?
-  status                    EventStatus  @default(DRAFT)
-  isFeatured                Boolean      @default(false)
-  refundPolicy              String
+  maxTicketsPerAccount       Int?
+  status                     EventStatus     @default(DRAFT)
+  isFeatured                 Boolean         @default(false)
+  refundPolicy               String
   // Reembolso a pedido do comprador: até N dias após a compra E até N horas antes do
   // início. Definido pelo organizador; com vendas, só pode ficar mais generoso.
   // CHECKs: dias 0–365, horas 0–720. Requer revisão jurídica (CDC art. 49).
-  refundWindowDays          Int          @default(7)
-  refundMinHoursBeforeEvent Int          @default(48)
+  refundWindowDays           Int             @default(7)
+  refundMinHoursBeforeEvent  Int             @default(48)
   // Transferência: antecedência em horas (0–8760), total por ingresso (1–10) e
   // permissão de nova transferência consentida para um titular anterior.
-  transferDeadlineHours     Int          @default(24)
-  transferMaxTransfers      Int          @default(1)
-  transferAllowReturn       Boolean      @default(false)
-  accessibilityInfo         String?
-  moderationNote            String?
-  publishedAt               DateTime?    @db.Timestamptz(3)
-  cancelledAt               DateTime?    @db.Timestamptz(3)
-  cancellationReason        String?
-  createdAt                 DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt                 DateTime     @updatedAt @db.Timestamptz(3)
+  transferDeadlineHours      Int             @default(24)
+  transferMaxTransfers       Int             @default(1)
+  transferAllowReturn        Boolean         @default(false)
+  accessibilityInfo          String?
+  moderationNote             String?
+  publishedAt                DateTime?       @db.Timestamptz(3)
+  cancelledAt                DateTime?       @db.Timestamptz(3)
+  cancellationReason         String?
+  createdAt                  DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt                  DateTime        @updatedAt @db.Timestamptz(3)
 
   organization     Organization           @relation(fields: [organizationId], references: [id])
   category         EventCategory          @relation(fields: [categoryId], references: [id])
@@ -755,26 +769,26 @@ enum PaymentStatus {
 }
 
 model Payment {
-  id                 String        @id @default(cuid())
-  orderId            String
-  provider           String
-  providerPaymentId  String?
+  id                   String        @id @default(cuid())
+  orderId              String
+  provider             String
+  providerPaymentId    String?
   providerPreferenceId String?
-  method             PaymentMethod
-  status             PaymentStatus @default(PENDING)
-  amountCents        Int
-  processingFeeCents Int?
-  pixCopyPaste       String?
-  pixQrCodeBase64    String?
-  checkoutUrl        String?
-  providerExpiresAt  DateTime?     @db.Timestamptz(3)
-  providerRawStatus  String?
-  failureReason      String?
-  isSimulated        Boolean       @default(false)
-  idempotencyKey     String        @unique
-  paidAt             DateTime?     @db.Timestamptz(3)
-  createdAt          DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime      @updatedAt @db.Timestamptz(3)
+  method               PaymentMethod
+  status               PaymentStatus @default(PENDING)
+  amountCents          Int
+  processingFeeCents   Int?
+  pixCopyPaste         String?
+  pixQrCodeBase64      String?
+  checkoutUrl          String?
+  providerExpiresAt    DateTime?     @db.Timestamptz(3)
+  providerRawStatus    String?
+  failureReason        String?
+  isSimulated          Boolean       @default(false)
+  idempotencyKey       String        @unique
+  paidAt               DateTime?     @db.Timestamptz(3)
+  createdAt            DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime      @updatedAt @db.Timestamptz(3)
 
   order         Order                  @relation(fields: [orderId], references: [id])
   refunds       Refund[]
