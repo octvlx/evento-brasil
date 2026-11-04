@@ -17,7 +17,7 @@ import type { PriceQuote } from "@/lib/price-display";
 import type { Db } from "../db";
 import { resolveCommissionRule, resolveCommissionRules } from "./commission";
 import { halfPriceEventInput } from "./half-price";
-import { rankPublicEvents } from "./search-ranking";
+import { rankPublicEventPage, type RankOptions } from "./search-ranking";
 
 export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
@@ -193,8 +193,7 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
   const tz = "America/Sao_Paulo";
   // Texto: relevância e acentos no banco (search-ranking.ts); a ordem vem do ranking.
   const q = params.q?.trim().slice(0, 80) ?? "";
-  const ranked = q || params.matchCategoryId ? await rankPublicEvents(db, q, { citySlug: params.citySlug, categoryId: params.matchCategoryId, now }) : null;
-  if (ranked) and.push({ id: { in: ranked.map((r) => r.id) } });
+  const rankFilters: RankOptions = { citySlug: params.citySlug, categorySlug: params.categorySlug, categoryId: params.matchCategoryId, now };
   if (params.citySlug) and.push({ OR: [{ city: { slug: params.citySlug } }, { venue: { city: { slug: params.citySlug } } }] });
   if (params.categorySlug) and.push({ category: { slug: params.categorySlug } });
   if (params.date) {
@@ -208,22 +207,23 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
             : localDayRange(now, tz, 0, params.date === "7-dias" ? 7 : 30);
     // Eventos que acontecem (ao menos em parte) dentro da janela.
     and.push({ startsAt: { lt: range.to }, endsAt: { gt: range.from } });
+    rankFilters.dateRange = range;
   }
   if (params.price) {
     const priceWhere: Prisma.IntFilter =
       params.price === "gratis" ? { equals: 0 } : params.price === "ate-50" ? { lte: 5000 } : params.price === "50-150" ? { gte: 5000, lte: 15000 } : { gte: 15000 };
     and.push({ ticketTypes: { some: { isHidden: false, priceCents: priceWhere } } });
+    rankFilters.priceRange = { min: typeof priceWhere.equals === "number" ? priceWhere.equals : typeof priceWhere.gte === "number" ? priceWhere.gte : 0, max: typeof priceWhere.equals === "number" ? priceWhere.equals : typeof priceWhere.lte === "number" ? priceWhere.lte : undefined };
   }
   const where = { AND: and };
   const requestedPage = params.page ?? 1;
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 && (requestedPage - 1) * PAGE_SIZE <= 2_147_483_647 ? requestedPage : 1;
-  if (ranked) {
-    // Ordem de relevância: filtra (data, preço, categoria…) pelos ids e pagina na ordem do ranking.
-    const order = new Map(ranked.map((r, i) => [r.id, i]));
-    const ids = (await db.event.findMany({ where, select: { id: true } })).map((r) => r.id).sort((a, b) => order.get(a)! - order.get(b)!);
-    const pageIds = ids.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    const rows = (await db.event.findMany({ where: { id: { in: pageIds } }, select: cardSelect })).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
-    return { total: ids.length, page, pageCount: Math.max(1, Math.ceil(ids.length / PAGE_SIZE)), events: await toCards(db, rows, now) };
+  if (q || params.matchCategoryId) {
+    // Todos os filtros são aplicados antes do ranking; contagem e paginação no banco.
+    const ranked = await rankPublicEventPage(db, q, rankFilters, (page - 1) * PAGE_SIZE, PAGE_SIZE);
+    const order = new Map(ranked.ids.map((id, i) => [id, i]));
+    const rows = (await db.event.findMany({ where: { AND: [where, { id: { in: ranked.ids } }] }, select: cardSelect })).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    return { total: ranked.total, page, pageCount: Math.max(1, Math.ceil(ranked.total / PAGE_SIZE)), events: await toCards(db, rows, now) };
   }
   const [total, rows] = await Promise.all([
     db.event.count({ where }),

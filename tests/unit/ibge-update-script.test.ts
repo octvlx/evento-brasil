@@ -1,6 +1,6 @@
 // npm run ibge:update: só substitui a base se tudo for válido; em qualquer falha
 // (rede, HTTP, JSON, dados inválidos, base encolhendo) o arquivo anterior fica igual.
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -69,9 +69,19 @@ describe("ibge:update — falhas preservam a base atual", () => {
 });
 
 describe("ibge:update — sucesso", () => {
-  it("sem mudanças: não reescreve nada", async () => {
+  it("sem mudanças: preserva a base e registra a verificação oficial nos metadados", async () => {
     const shuffled = toApi([...fakeDataset()].reverse());
     await expect(updateMunicipalities({ fetchImpl: respond(shuffled), dataPath, metaPath, log: silent })).resolves.toEqual({ status: "unchanged", count: 5100 });
+    expect(await readFile(dataPath, "utf8")).toBe(serializeDataset(fakeDataset()));
+    expect(JSON.parse(await readFile(metaPath, "utf8"))).toMatchObject({ source: IBGE_SOURCE_URL, count: 5100 });
+  });
+
+  it("restaura os dois arquivos se a publicação dos metadados falhar", async () => {
+    const renameImpl: typeof rename = async (from, to) => {
+      if (to === metaPath) throw new Error("falha simulada no segundo rename");
+      return rename(from, to);
+    };
+    await expect(updateMunicipalities({ fetchImpl: respond(toApi(fakeDataset(5101))), renameImpl, dataPath, metaPath, log: silent })).rejects.toThrow("segundo rename");
     await expectUntouched();
   });
 

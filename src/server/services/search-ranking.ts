@@ -25,6 +25,9 @@ export interface RankOptions {
   categoryId?: string | null;
   now?: Date;
   limit?: number;
+  categorySlug?: string;
+  dateRange?: { from: Date; to: Date };
+  priceRange?: { min: number; max?: number };
 }
 
 /**
@@ -35,17 +38,23 @@ export interface RankOptions {
  * palavras relevantes em algum campo (título, resumo, descrição, local, cidade,
  * categoria, organizador) ou a categoria reconhecida. Com `citySlug`, só a cidade.
  */
-export async function rankPublicEvents(db: Db, text: string, opts: RankOptions = {}): Promise<{ id: string; score: number }[]> {
+function rankingQuery(text: string, opts: RankOptions = {}): Prisma.Sql {
   const tokens = searchTokens(text);
   const phrase = normalizeSearchText(text);
-  if (!tokens.length && !opts.categoryId) return [];
+  if (!tokens.length && !opts.categoryId) return Prisma.sql`SELECT NULL::text AS id, 0::int AS score, NULL::timestamptz AS "startsAt" WHERE FALSE`;
   const now = opts.now ?? new Date();
   const city = opts.citySlug ? Prisma.sql`AND (c.slug = ${opts.citySlug} OR vc.slug = ${opts.citySlug})` : Prisma.empty;
   const category = opts.categoryId ?? "";
   const all = tokens.length ? Prisma.join(tokens.map((t) => Prisma.sql`doc LIKE ${like(` ${t}`)}`), " AND ") : Prisma.sql`FALSE`;
   const perToken = tokens.length ? Prisma.join(tokens.map((t) => Prisma.sql`(CASE WHEN t LIKE ${like(` ${t}`)} THEN 5 ELSE 0 END)`), " + ") : Prisma.sql`0`;
   const p = ` ${phrase} `;
-  return db.$queryRaw<{ id: string; score: number }[]>`
+  const categoryFilter = opts.categorySlug ? Prisma.sql`AND k.slug = ${opts.categorySlug}` : Prisma.empty;
+  const dateFilter = opts.dateRange ? Prisma.sql`AND e."startsAt" < ${opts.dateRange.to} AND e."endsAt" > ${opts.dateRange.from}` : Prisma.empty;
+  const priceFilter = opts.priceRange ? Prisma.sql`AND EXISTS (
+    SELECT 1 FROM "TicketType" tt WHERE tt."eventId" = e.id AND tt."isHidden" = FALSE
+      AND tt."priceCents" >= ${opts.priceRange.min}
+      ${opts.priceRange.max === undefined ? Prisma.empty : Prisma.sql`AND tt."priceCents" <= ${opts.priceRange.max}`})` : Prisma.empty;
+  return Prisma.sql`
     WITH docs AS (
       SELECT e.id, e."startsAt", e."categoryId",
              ${norm(Prisma.sql`e.title`)} AS t,
@@ -59,9 +68,9 @@ export async function rankPublicEvents(db: Db, text: string, opts: RankOptions =
         LEFT JOIN "Venue" v ON v.id = e."venueId"
         LEFT JOIN "City" c ON c.id = e."cityId"
         LEFT JOIN "City" vc ON vc.id = v."cityId"
-       WHERE ${PUBLIC(now)} ${city}
+       WHERE ${PUBLIC(now)} ${city} ${categoryFilter} ${dateFilter} ${priceFilter}
     )
-    SELECT id, score::int AS score FROM (
+    SELECT id, score::int AS score, "startsAt" FROM (
       SELECT id, "startsAt", "categoryId", (${all}) AS matched,
              (CASE WHEN t = ${p} THEN 100 WHEN t LIKE ${`${p}%`} THEN 70 WHEN t LIKE ${like(p)} THEN 55 WHEN ${phrase.length >= 3} AND t LIKE ${like(phrase)} THEN 45 ELSE 0 END)
            + (CASE WHEN "categoryId" = ${category} THEN 35 ELSE 0 END)
@@ -73,7 +82,20 @@ export async function rankPublicEvents(db: Db, text: string, opts: RankOptions =
     ) ranked
     WHERE matched OR "categoryId" = ${category}
     ORDER BY score DESC, "startsAt" ASC, id ASC
-    LIMIT ${opts.limit ?? 500}`;
+    `;
+}
+
+/** Sugestões têm limite próprio; resultados paginados contam todas as correspondências. */
+export async function rankPublicEvents(db: Db, text: string, opts: RankOptions = {}): Promise<{ id: string; score: number }[]> {
+  return db.$queryRaw`${rankingQuery(text, opts)} LIMIT ${opts.limit ?? 500}`;
+}
+
+export async function rankPublicEventPage(db: Db, text: string, opts: RankOptions, offset: number, take: number) {
+  const [result] = await db.$queryRaw<{ total: number; ids: string[] }[]>`
+    WITH matches AS (${rankingQuery(text, opts)})
+    SELECT (SELECT count(*)::int FROM matches) AS total,
+           ARRAY(SELECT id FROM matches ORDER BY score DESC, "startsAt" ASC, id ASC OFFSET ${offset} LIMIT ${take}) AS ids`;
+  return result;
 }
 
 /** Cidades (id) com evento público que corresponde ao texto: sugestões "Rock em São Paulo". */

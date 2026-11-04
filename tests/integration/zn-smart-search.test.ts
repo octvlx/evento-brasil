@@ -223,3 +223,22 @@ describe("ZN — sugestões", () => {
     expect(await db.event.count()).toBe(events);
   });
 });
+
+
+it("conta mais de 500 correspondências e filtra antes de paginar", async () => {
+  const { e } = await seed();
+  const original = await db.event.findUniqueOrThrow({ where: { id: e.rockSp.id } });
+  const { id: _id, ...data } = original;
+  void _id;
+  await db.event.createMany({ data: Array.from({ length: 501 }, (_, i) => ({ ...data, id: `ranking-${i}`, slug: `ranking-${i}`, title: "Festival Auditoria", startsAt: new Date(Date.now() + (i + 10) * 86400000), endsAt: new Date(Date.now() + (i + 11) * 86400000) })) });
+  const result = await searchEvents(db, { q: "Festival Auditoria", page: 42 });
+  expect(result.total).toBe(501);
+  expect(result.events).toHaveLength(9);
+  const empty = await searchEvents(db, { q: "Festival Auditoria", page: 43 });
+  expect(empty.total).toBe(501);
+  expect(empty.events).toEqual([]);
+  await db.ticketType.create({ data: { eventId: "ranking-500", name: "Grátis", kind: "FREE", priceCents: 0, quantityTotal: 50 } });
+  const free = await searchEvents(db, { q: "Festival Auditoria", price: "gratis" });
+  expect(free.total).toBe(1);
+  expect(free.events[0].id).toBe("ranking-500");
+});

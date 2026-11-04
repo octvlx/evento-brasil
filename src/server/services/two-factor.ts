@@ -119,53 +119,59 @@ export async function confirmTotpEnrollment(db: Db, userId: string, code: string
  * tentativas; na última a sessão é apagada e é preciso digitar a senha de novo.
  */
 export async function completeMfaLogin(db: Db, sessionToken: string, code: string, now = new Date()) {
-  const session = await db.session.findUnique({
-    where: { tokenHash: hashToken(sessionToken) },
-    select: { id: true, userId: true, mfaPending: true, mfaAttempts: true, expiresAt: true, user: { select: { status: true, totpSecretEncrypted: true, totpEnabledAt: true, totpLastStep: true } } },
-  });
-  const expired = () => new AppError("UNAUTHENTICATED", "A verificação expirou. Entre novamente com e-mail e senha.");
-  if (!session || !session.mfaPending || session.expiresAt <= now || session.user.status !== "ACTIVE") throw expired();
-  if (!session.user.totpEnabledAt || !session.user.totpSecretEncrypted) {
-    // 2FA desligado no meio do caminho: a senha já foi conferida, libera.
-    await db.session.update({ where: { id: session.id }, data: { mfaPending: false, mfaAttempts: 0, expiresAt: new Date(now.getTime() + SESSION_TTL_MS) } });
-    return { userId: session.userId, usedRecoveryCode: false };
-  }
-
-  let accepted = false;
-  let usedRecoveryCode = false;
-  const step = verifyTotp(decryptPII(session.user.totpSecretEncrypted), code, now, session.user.totpLastStep);
-  if (step !== null) {
-    // Só um uso por passo, mesmo com dois logins simultâneos com o mesmo código.
-    const claimed = await db.user.updateMany({
-      where: { id: session.userId, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
-      data: { totpLastStep: step },
+  const outcome = await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Session" WHERE "tokenHash" = ${hashToken(sessionToken)} FOR UPDATE`;
+    const session = await tx.session.findUnique({
+      where: { tokenHash: hashToken(sessionToken) },
+      select: { id: true, userId: true, mfaPending: true, mfaAttempts: true, expiresAt: true, user: { select: { status: true, totpSecretEncrypted: true, totpEnabledAt: true, totpLastStep: true } } },
     });
-    accepted = claimed.count === 1;
-  } else if (normalizeRecoveryCode(code).length === 10) {
-    const used = await db.totpRecoveryCode.updateMany({
-      where: { userId: session.userId, codeHash: recoveryHash(code), usedAt: null },
-      data: { usedAt: now },
-    });
-    accepted = usedRecoveryCode = used.count === 1;
-  }
-
-  if (!accepted) {
-    const attempts = session.mfaAttempts + 1;
-    if (attempts >= MAX_MFA_ATTEMPTS) {
-      await db.session.deleteMany({ where: { id: session.id } });
-      await audit(db, { actorUserId: session.userId, action: "mfa.login_locked", entityType: "User", entityId: session.userId, metadata: { attempts } });
-      throw new AppError("RATE_LIMITED", "Muitas tentativas com código incorreto. Entre novamente com e-mail e senha.");
+    const expired = () => new AppError("UNAUTHENTICATED", "A verificação expirou. Entre novamente com e-mail e senha.");
+    if (!session || !session.mfaPending || session.expiresAt <= now || session.user.status !== "ACTIVE") throw expired();
+    if (!session.user.totpEnabledAt || !session.user.totpSecretEncrypted) {
+      // 2FA desligado no meio do caminho: a senha já foi conferida, libera.
+      await tx.session.update({ where: { id: session.id }, data: { mfaPending: false, mfaAttempts: 0, expiresAt: new Date(now.getTime() + SESSION_TTL_MS) } });
+      return { userId: session.userId, usedRecoveryCode: false };
     }
-    await db.session.update({ where: { id: session.id }, data: { mfaAttempts: attempts } });
-    throw wrongCode();
-  }
 
-  await db.session.update({ where: { id: session.id }, data: { mfaPending: false, mfaAttempts: 0, expiresAt: new Date(now.getTime() + SESSION_TTL_MS) } });
-  if (usedRecoveryCode) {
-    const remaining = await db.totpRecoveryCode.count({ where: { userId: session.userId, usedAt: null } });
-    await audit(db, { actorUserId: session.userId, action: "mfa.recovery_code_used", entityType: "User", entityId: session.userId, metadata: { remaining } });
-  }
-  return { userId: session.userId, usedRecoveryCode };
+    let accepted = false;
+    let usedRecoveryCode = false;
+    const step = verifyTotp(decryptPII(session.user.totpSecretEncrypted), code, now, session.user.totpLastStep);
+    if (step !== null) {
+      // Só um uso por passo, mesmo com dois logins simultâneos com o mesmo código.
+      const claimed = await tx.user.updateMany({
+        where: { id: session.userId, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
+        data: { totpLastStep: step },
+      });
+      accepted = claimed.count === 1;
+    } else if (normalizeRecoveryCode(code).length === 10) {
+      const used = await tx.totpRecoveryCode.updateMany({
+        where: { userId: session.userId, codeHash: recoveryHash(code), usedAt: null },
+        data: { usedAt: now },
+      });
+      accepted = usedRecoveryCode = used.count === 1;
+    }
+
+    if (!accepted) {
+      const attempts = session.mfaAttempts + 1;
+      if (attempts >= MAX_MFA_ATTEMPTS) {
+        await tx.session.deleteMany({ where: { id: session.id } });
+        await audit(tx, { actorUserId: session.userId, action: "mfa.login_locked", entityType: "User", entityId: session.userId, metadata: { attempts } });
+        return { error: new AppError("RATE_LIMITED", "Muitas tentativas com código incorreto. Entre novamente com e-mail e senha.") };
+      }
+      await tx.session.update({ where: { id: session.id }, data: { mfaAttempts: attempts } });
+      return { error: wrongCode() };
+    }
+
+    await tx.session.update({ where: { id: session.id }, data: { mfaPending: false, mfaAttempts: 0, expiresAt: new Date(now.getTime() + SESSION_TTL_MS) } });
+    if (usedRecoveryCode) {
+      const remaining = await tx.totpRecoveryCode.count({ where: { userId: session.userId, usedAt: null } });
+      await audit(tx, { actorUserId: session.userId, action: "mfa.recovery_code_used", entityType: "User", entityId: session.userId, metadata: { remaining } });
+    }
+    return { userId: session.userId, usedRecoveryCode };
+  }, TX_OPTIONS);
+  // Erros de tentativa saem após commit: o contador/bloqueio precisa persistir.
+  if ("error" in outcome) throw outcome.error;
+  return outcome;
 }
 
 /** Confere um código TOTP da conta já ativa (para ações sensíveis da própria conta). */
