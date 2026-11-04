@@ -30,6 +30,15 @@ export function quotaOf(base: number, bps: number, rounding: "floor" | "ceil" = 
   return rounding === "ceil" ? Math.ceil(exact) : Math.floor(exact);
 }
 
+/**
+ * Limite de meia em % para preencher o formulário (null = sem limite). Um limite antigo
+ * abaixo do mínimo legal aparece como o mínimo, que é o que o cálculo já aplica; assim
+ * o organizador não fica preso a um valor que o formulário agora recusa.
+ */
+export function limitPercentForForm(bps: number | null): number | null {
+  return bps === null ? null : Math.max(bps, HALF_PRICE_POLICY.quotaBps) / 100;
+}
+
 /** Horas de antecedência da liberação, pela capacidade do local (ou do evento, sem local). */
 export function deadlineHoursFor(capacity: number): number {
   return capacity > HALF_PRICE_POLICY.largeVenueThreshold ? HALF_PRICE_POLICY.largeVenueDeadlineHours : HALF_PRICE_POLICY.deadlineHours;

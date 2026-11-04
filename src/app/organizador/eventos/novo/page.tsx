@@ -8,6 +8,7 @@ import { EventWizard, type WizardEstimate } from "@/features/organizer/event-wiz
 import { eventFormOptions } from "@/features/organizer/form-data";
 import { clampStep, DATA_STEPS, DEFAULT_REFUND_POLICY, firstIncompleteStep, splitAddressLine, WIZARD_STEPS, type WizardValues } from "@/features/organizer/wizard-steps";
 import { computeFees } from "@/features/fees/policy";
+import { limitPercentForForm } from "@/features/half-price/policy";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { cityFormValue } from "@/server/services/cities";
@@ -174,7 +175,7 @@ async function Content({ searchParams }: { searchParams: Search }) {
       : BLANK.newVenue,
     onlineUrl: has(2) ? (event.onlineUrl ?? "") : "",
     capacity: has(3) ? String(event.capacity) : "",
-    halfPriceQuotaPercent: has(3) && event.halfPriceQuotaBps !== null ? String(event.halfPriceQuotaBps / 100) : "",
+    halfPriceQuotaPercent: has(3) && event.halfPriceQuotaBps !== null ? String(limitPercentForForm(event.halfPriceQuotaBps)) : "",
     maxTicketsPerAccount: has(3) && event.maxTicketsPerAccount !== null ? String(event.maxTicketsPerAccount) : "",
     // Sem a etapa 3, o período provisório (agora → início do evento) vira sugestão.
     salesStartLocal: has(2) ? local(event.salesStartAt) : "",

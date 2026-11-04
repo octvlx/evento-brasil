@@ -19,6 +19,7 @@ import { env } from "@/server/env";
 import { listEventCoupons } from "@/server/services/coupons";
 import { halfPriceControl } from "@/server/services/reports";
 import { HalfPriceControl } from "@/features/organizer/half-price-control";
+import { limitPercentForForm } from "@/features/half-price/policy";
 import { listEventChanges } from "@/server/services/event-changes";
 import { listEventTrackingLinks } from "@/server/services/tracking-links";
 import { requireOrganizer } from "@/server/auth/organizer-context";
@@ -212,7 +213,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             salesEndLocal: utcToZonedLocalInput(event.salesEndAt, tz),
             ageRestriction: event.ageRestriction,
             capacity: event.capacity,
-            halfPriceQuotaPercent: event.halfPriceQuotaBps === null ? undefined : event.halfPriceQuotaBps / 100,
+            halfPriceQuotaPercent: limitPercentForForm(event.halfPriceQuotaBps) ?? undefined,
             maxTicketsPerAccount: event.maxTicketsPerAccount ?? undefined,
             refundPolicy: event.refundPolicy,
             transferDeadlineHours: event.transferDeadlineHours,

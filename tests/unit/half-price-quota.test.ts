@@ -1,6 +1,6 @@
 // L7c — reserva da cota legal de meia-entrada: cálculo puro.
 import { describe, expect, it } from "vitest";
-import { HALF_PRICE_POLICY, quotaOf } from "@/features/half-price/policy";
+import { HALF_PRICE_POLICY, limitPercentForForm, quotaOf } from "@/features/half-price/policy";
 import {
   checkHalfPriceRequest,
   computeHalfPriceState,
@@ -33,6 +33,10 @@ describe("política", () => {
     expect([1, 2, 3, 4, 5, 9, 10].map((n) => quotaOf(n, 4000))).toEqual([0, 0, 1, 1, 2, 3, 4]);
     expect(quotaOf(5, 4000, "ceil")).toBe(2);
     expect(quotaOf(3, 4000, "ceil")).toBe(2);
+  });
+
+  it("formulário: limite antigo abaixo de 40% aparece como 40%", () => {
+    expect([null, 0, 3000, 4000, 5000].map(limitPercentForForm)).toEqual([null, 40, 40, 40, 50]);
   });
 });
 
