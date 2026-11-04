@@ -12,6 +12,8 @@ import { moderateEvent, setEventFeatured } from "@/server/services/events";
 import { reviewOrganization, setAutoPublish, setOrganizationSuspended } from "@/server/services/organizers";
 import { adminRefundOrder, processRefund } from "@/server/services/refunds";
 import { setUserSuspended } from "@/server/services/users";
+import { adminResetTwoFactor } from "@/server/services/two-factor";
+import { rateLimit } from "@/server/rate-limit";
 
 async function run(fn: (admin: Awaited<ReturnType<typeof requireAdmin>>) => Promise<unknown>): Promise<ActionResult> {
   const admin = await requireAdmin();
@@ -33,6 +35,11 @@ export const featureEventAction = async (id: string, featured: boolean) => run((
 export const adminCancelEventAction = async (id: string, reason?: string) =>
   run((a) => cancelEvent(db, getPaymentAdapter(), a, id, reason ?? "", { asAdmin: true }));
 export const suspendUserAction = async (id: string, suspended: boolean, reason?: string) => run((a) => setUserSuspended(db, a, id, suspended, reason));
+export const resetUserTwoFactorAction = async (id: string, adminCode: string, reason: string) =>
+  run(async (a) => {
+    await rateLimit(`mfa-admin-reset:${a.id}`, 10, 15 * 60_000);
+    await adminResetTwoFactor(db, a, id, { adminCode, reason });
+  });
 export const adminRefundAction = async (orderId: string, note?: string) => run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, note ?? ""));
 export const retryRefundAction = async (refundId: string) => run(() => processRefund(db, getPaymentAdapter(), refundId));
 

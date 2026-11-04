@@ -92,6 +92,26 @@ export function transactionalEmail(
   };
 }
 /** Aviso de segurança após troca ou redefinição de senha. Nunca leva senha, hash ou token. */
+/** Aviso de que um administrador redefiniu a verificação em duas etapas da conta. */
+export function twoFactorResetEmail(securityUrl: string) {
+  const lines = [
+    "Olá!",
+    "A verificação em duas etapas da sua conta Evento Brasil foi redefinida pela nossa equipe, a seu pedido.",
+    "Todas as sessões foram encerradas. No próximo acesso, entre com sua senha e ative de novo a verificação em duas etapas com o aplicativo autenticador.",
+    "Se você não pediu essa redefinição, troque sua senha e fale imediatamente com o suporte.",
+    "Equipe Evento Brasil.",
+  ];
+  return {
+    subject: "Evento Brasil — Sua verificação em duas etapas foi redefinida",
+    html: emailLayout(
+      "Verificação em duas etapas redefinida",
+      lines.map((line) => "<p>" + escapeHtml(line) + "</p>").join(""),
+      { label: "Ativar de novo", url: securityUrl },
+    ),
+    text: [...lines, "Ativar de novo: " + securityUrl].join("\n"),
+  };
+}
+
 export function passwordChangedEmail(kind: "changed" | "reset", resetUrl: string) {
   const what = kind === "changed" ? "alterada" : "redefinida";
   const lines = [

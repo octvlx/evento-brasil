@@ -6,6 +6,61 @@ import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import type { ActionResult } from "@/server/errors";
 import { saveCommissionRuleAction } from "./actions";
 
+/**
+ * Redefinir o 2FA de outra pessoa (suporte): pede o motivo e o código do
+ * aplicativo do próprio admin. O servidor revalida tudo.
+ */
+export function ResetTwoFactorButton({ action }: { action: (adminCode: string, reason: string) => Promise<ActionResult> }) {
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  if (!open)
+    return (
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Redefinir 2FA
+      </Button>
+    );
+  return (
+    <form
+      className="flex max-w-xs flex-col gap-1.5 rounded-xl border border-border p-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await action(code, reason);
+          if (!r.ok) setError(r.error);
+          else {
+            setOpen(false);
+            setError(null);
+          }
+        });
+      }}
+    >
+      <p className="text-xs">A pessoa perde o 2FA e as sessões abertas, recebe um e-mail e ativa de novo no próximo acesso.</p>
+      <Input placeholder="Motivo (ex.: perdeu o celular; identidade confirmada)" value={reason} onChange={(e) => setReason(e.target.value)} className="h-9 text-xs" aria-label="Motivo da redefinição" />
+      <Input
+        placeholder="Seu código de 6 dígitos"
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, "").slice(0, 7))}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        className="h-9 font-mono text-xs"
+        aria-label="Seu código do aplicativo autenticador"
+      />
+      <div className="flex gap-1">
+        <Button size="sm" variant="destructive" disabled={pending || reason.trim().length < 5 || code.replace(/\s/g, "").length !== 6}>
+          {pending ? "…" : "Redefinir"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Voltar
+        </Button>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </form>
+  );
+}
+
 /** Botão de ação administrativa com motivo opcional/obrigatório e confirmação. */
 export function AdminActionButton({
   label,

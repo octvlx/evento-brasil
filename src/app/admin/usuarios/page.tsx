@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
-import { AdminActionButton } from "@/features/admin/controls";
-import { suspendUserAction } from "@/features/admin/actions";
+import { AdminActionButton, ResetTwoFactorButton } from "@/features/admin/controls";
+import { resetUserTwoFactorAction, suspendUserAction } from "@/features/admin/actions";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { formatDateShort } from "@/lib/datetime";
@@ -39,19 +39,22 @@ async function Content({ searchParams }: { searchParams: Promise<{ q?: string }>
             <div>
               <p className="font-semibold">
                 {u.name} {u.platformRole === "ADMIN" && <Badge variant="primary">Admin</Badge>} {u.anonymizedAt ? <Badge>Conta excluída</Badge> : u.status === "SUSPENDED" && <Badge variant="danger">Suspenso</Badge>}{" "}
-                {u.isDemoAccount && <Badge variant="warning">demo</Badge>}
+                {u.isDemoAccount && <Badge variant="warning">demo</Badge>} {u.totpEnabledAt && <Badge variant="success">2FA</Badge>}
               </p>
               <p className="text-xs text-muted-foreground">
                 {u.email} · {u._count.orders} pedidos · {u._count.tickets} ingressos · desde {formatDateShort(u.createdAt)}
               </p>
             </div>
-            {u.id !== admin.id &&
-              !u.anonymizedAt &&
-              (u.status === "ACTIVE" ? (
-                <AdminActionButton label="Suspender" variant="destructive" askReason="Motivo" reasonRequired action={suspendUserAction.bind(null, u.id, true)} />
-              ) : (
-                <AdminActionButton label="Reativar" action={suspendUserAction.bind(null, u.id, false)} />
-              ))}
+            {u.id !== admin.id && !u.anonymizedAt && (
+              <div className="flex flex-wrap items-start gap-2">
+                {u.totpEnabledAt && <ResetTwoFactorButton action={resetUserTwoFactorAction.bind(null, u.id)} />}
+                {u.status === "ACTIVE" ? (
+                  <AdminActionButton label="Suspender" variant="destructive" askReason="Motivo" reasonRequired action={suspendUserAction.bind(null, u.id, true)} />
+                ) : (
+                  <AdminActionButton label="Reativar" action={suspendUserAction.bind(null, u.id, false)} />
+                )}
+              </div>
+            )}
           </li>
         ))}
       </ul>
