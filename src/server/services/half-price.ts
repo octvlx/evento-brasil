@@ -3,7 +3,8 @@
 // pelo relógio em todo lugar; `recordHalfPriceReleases` (cron) só registra.
 import "server-only";
 import type { HalfPriceRegime, Prisma } from "@/generated/prisma/client";
-import { computeHalfPriceState, releaseAtOf, type HalfPriceEventInput, type HalfPriceState, type HalfPriceTypeInput } from "@/features/half-price/quota";
+import { HALF_PRICE_POLICY } from "@/features/half-price/policy";
+import { computeHalfPriceState, type HalfPriceEventInput, type HalfPriceState, type HalfPriceTypeInput } from "@/features/half-price/quota";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertPlatformAdmin, type Actor } from "../auth/permissions";
@@ -97,7 +98,7 @@ export function halfPriceSnapshot(state: HalfPriceState) {
   };
 }
 
-const RELEASE_LOOKAHEAD_MS = 72 * 3_600_000;
+const RELEASE_BATCH = 500;
 
 /**
  * Cron: registra (uma vez por `releaseAt`) a liberação da cota de cada evento cujo
@@ -106,26 +107,32 @@ const RELEASE_LOOKAHEAD_MS = 72 * 3_600_000;
  * registro rearma. Nunca é a garantia: a regra libera pelo relógio, com ou sem o cron.
  */
 export async function recordHalfPriceReleases(db: Db, now = new Date()): Promise<number> {
-  const candidates = await db.event.findMany({
-    where: { status: "PUBLISHED", halfPriceRegime: "FEDERAL", startsAt: { lte: new Date(now.getTime() + RELEASE_LOOKAHEAD_MS) }, endsAt: { gt: now } },
-    select: { id: true, capacity: true, startsAt: true, locationType: true, venue: { select: { capacity: true } }, halfPriceReleaseAuditedFor: true },
-    take: 500,
-  });
+  // Filtro sem trava, no banco: só eventos cujo prazo passou e cuja `releaseAt` ainda não
+  // foi marcada (mesma conta de `releaseAtOf`). Os já marcados não ocupam o lote.
+  const p = HALF_PRICE_POLICY;
+  const candidates = await db.$queryRaw<{ id: string }[]>`
+    SELECT id FROM (
+      SELECT e.id, e."startsAt", e."halfPriceReleaseAuditedFor" AS marker,
+             e."startsAt" - make_interval(hours => CASE
+               WHEN COALESCE(CASE WHEN e."locationType" = 'ONLINE' THEN NULL ELSE v.capacity END, e.capacity) > ${p.largeVenueThreshold}
+               THEN ${p.largeVenueDeadlineHours}::int ELSE ${p.deadlineHours}::int END) AS "releaseAt"
+      FROM "Event" e LEFT JOIN "Venue" v ON v.id = e."venueId"
+      WHERE e.status = 'PUBLISHED' AND e."halfPriceRegime" = 'FEDERAL' AND e."endsAt" > ${now}
+    ) c
+    WHERE c."releaseAt" <= ${now} AND (c.marker IS NULL OR c.marker <> c."releaseAt")
+    ORDER BY c."startsAt" LIMIT ${RELEASE_BATCH}`;
   let recorded = 0;
-  for (const c of candidates) {
-    // Filtro sem trava (a cada minuto): só trava o evento cujo prazo passou e ainda não foi registrado.
-    const { releaseAt } = releaseAtOf({ startsAt: c.startsAt, capacity: c.capacity, venueCapacity: c.locationType === "ONLINE" ? null : (c.venue?.capacity ?? null) });
-    if (releaseAt > now || c.halfPriceReleaseAuditedFor?.getTime() === releaseAt.getTime()) continue;
-    const { id } = c;
+  for (const { id } of candidates) {
     recorded += await db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${id} FOR UPDATE`;
       const { event, state } = await loadHalfPriceStateTx(tx, id, now);
-      if (!state.applicable || state.reserveActive) return 0;
+      if (state.reserveActive) return 0;
       const { count } = await tx.event.updateMany({
         where: { id, OR: [{ halfPriceReleaseAuditedFor: null }, { halfPriceReleaseAuditedFor: { not: state.releaseAt } }] },
         data: { halfPriceReleaseAuditedFor: state.releaseAt },
       });
-      if (!count) return 0;
+      // Sem reserva aplicável (ex.: evento sem meia) só marca, sem auditoria: não volta ao lote.
+      if (!count || !state.applicable) return 0;
       await audit(tx, {
         organizationId: event.organizationId,
         action: "half_price.quota_released",

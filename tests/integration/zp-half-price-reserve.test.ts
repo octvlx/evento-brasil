@@ -370,6 +370,23 @@ describe("cron (cenários 15, 16)", () => {
     expect(all[1].metadata).toMatchObject({ releaseAt: newRelease.toISOString(), previousReleaseAt: releaseAt.toISOString() });
   });
 
+  it("16: só pendentes entram no lote; evento sem meia é marcado sem auditoria; 72 h pelo local", async () => {
+    const startsAt = new Date(Date.now() + 10 * 86_400_000);
+    const withHalf = await setup({ startsAt });
+    const noHalf = await setup({ startsAt, tickets: [FULL(10)] });
+    const big = await setup({ startsAt, capacity: 12_000, venueCapacity: 15_000, tickets: [FULL(12_000), HALF(4800)] });
+    const at48 = new Date(startsAt.getTime() - 48 * HOUR);
+    // 72 h antes: só o local de 15.000 já liberou.
+    expect(await recordHalfPriceReleases(db, new Date(startsAt.getTime() - 72 * HOUR))).toBe(1);
+    expect(await audits("half_price.quota_released", big.event.id)).toHaveLength(1);
+    // 48 h antes: o de meia registra; o sem meia só é marcado (fica fora dos próximos lotes).
+    expect(await recordHalfPriceReleases(db, at48)).toBe(1);
+    expect(await audits("half_price.quota_released", withHalf.event.id)).toHaveLength(1);
+    expect(await audits("half_price.quota_released", noHalf.event.id)).toHaveLength(0);
+    expect((await db.event.findUniqueOrThrow({ where: { id: noHalf.event.id } })).halfPriceReleaseAuditedFor?.toISOString()).toBe(at48.toISOString());
+    expect(await recordHalfPriceReleases(db, at48)).toBe(0);
+  });
+
   it("ignora NOT_SUBJECT, sem tipo meia e eventos encerrados; o endpoint expõe a etapa", async () => {
     const soon = new Date(Date.now() + 24 * HOUR);
     const ok = await setup({ startsAt: soon });
