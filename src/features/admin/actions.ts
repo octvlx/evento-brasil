@@ -11,7 +11,7 @@ import { setCommissionRule } from "@/server/services/commission";
 import { moderateEvent, setEventFeatured } from "@/server/services/events";
 import { reviewOrganization, setAutoPublish, setOrganizationSuspended } from "@/server/services/organizers";
 import { adminRefundOrder, processRefund } from "@/server/services/refunds";
-import { setUserSuspended } from "@/server/services/users";
+import { setAdminRoles, setUserSuspended } from "@/server/services/users";
 import { adminResetTwoFactor } from "@/server/services/two-factor";
 import { rateLimit } from "@/server/rate-limit";
 
@@ -35,6 +35,7 @@ export const featureEventAction = async (id: string, featured: boolean) => run((
 export const adminCancelEventAction = async (id: string, reason?: string) =>
   run((a) => cancelEvent(db, getPaymentAdapter(), a, id, reason ?? "", { asAdmin: true }));
 export const suspendUserAction = async (id: string, suspended: boolean, reason?: string) => run((a) => setUserSuspended(db, a, id, suspended, reason));
+export const setAdminRolesAction = async (id: string, roles: string[]) => run((a) => setAdminRoles(db, a, id, Array.isArray(roles) ? roles.map(String) : []));
 export const resetUserTwoFactorAction = async (id: string, adminCode: string, reason: string) =>
   run(async (a) => {
     await rateLimit(`mfa-admin-reset:${a.id}`, 10, 15 * 60_000);

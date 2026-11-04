@@ -10,7 +10,7 @@ import { formatBRL } from "@/lib/money";
 import { slugify } from "@/lib/utils";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
-import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { assertEventPermission, assertOrgPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { randomToken } from "../crypto";
 import { AppError, invalidState, notFound } from "../errors";
 import { resolveVenueCity } from "./cities";
@@ -410,7 +410,7 @@ export async function submitEventForPublication(db: Db, actor: Actor, eventId: s
 }
 
 export async function moderateEvent(db: Db, admin: Actor, eventId: string, decision: "APPROVE" | "REJECT", note?: string) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "events:moderate");
   if (decision === "REJECT" && !note?.trim()) throw new AppError("VALIDATION", "Informe o motivo para o organizador.");
   return db.$transaction(async (tx) => {
     // Trava o evento antes de ler o status: dois moderadores simultâneos são
@@ -442,7 +442,7 @@ export async function moderateEvent(db: Db, admin: Actor, eventId: string, decis
 }
 
 export async function setEventFeatured(db: Db, admin: Actor, eventId: string, featured: boolean) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "events:moderate");
   await db.event.update({ where: { id: eventId }, data: { isFeatured: featured } });
   await audit(db, { actorUserId: admin.id, action: "event.featured", entityType: "Event", entityId: eventId, metadata: { featured } });
 }

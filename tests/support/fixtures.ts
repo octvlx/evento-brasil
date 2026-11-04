@@ -26,6 +26,8 @@ export async function makeUser(opts: { admin?: boolean; email?: string; verified
       passwordHash: "x",
       emailVerifiedAt: opts.verified ? new Date() : null,
       platformRole: opts.admin ? "ADMIN" : "USER",
+      // Admin de teste = super admin (como a migração T6 faz com os admins existentes).
+      adminRoles: opts.admin ? ["SUPER_ADMIN"] : [],
     },
   });
 }

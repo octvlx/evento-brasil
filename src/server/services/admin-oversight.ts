@@ -5,7 +5,7 @@
 import "server-only";
 import type { CancellationRequestStatus, Prisma, TicketTransferStatus } from "@/generated/prisma/client";
 import type { Db } from "../db";
-import { assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { assertPlatformAdmin, type Actor, assertAdminPermission } from "../auth/permissions";
 import { notFound } from "../errors";
 import { openChangeRefundWindow, refundEligibility } from "./refunds";
 
@@ -48,7 +48,7 @@ export async function listCancellationQueue(
   opts: { status?: CancellationRequestStatus; overdueOnly?: boolean; page?: number } = {},
   now = new Date(),
 ) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "cancellations:decide");
   const status = opts.overdueOnly ? "OPEN" : (opts.status ?? "OPEN");
   const where: Prisma.CancellationRequestWhereInput = { status, ...(opts.overdueOnly ? { respondBy: { lt: now } } : {}) };
   const [total, overdueCount] = await Promise.all([
@@ -85,7 +85,7 @@ export async function adminQueueCounts(db: Db, admin: Actor, now = new Date()) {
 
 /** Detalhe para decidir: pedido, pagamentos, reembolsos e a elegibilidade de hoje pela política. */
 export async function getCancellationRequestDetail(db: Db, admin: Actor, requestId: string, now = new Date()) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "cancellations:decide");
   const request = await db.cancellationRequest.findUnique({
     where: { id: requestId },
     include: {
@@ -131,7 +131,7 @@ export function parseTransferStatus(raw: unknown): TicketTransferStatus | undefi
 
 /** Histórico de transferências (somente leitura), por código do ingresso, e-mail ou evento. */
 export async function searchTransfers(db: Db, admin: Actor, opts: { q?: string; status?: TicketTransferStatus; page?: number } = {}) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "transfers:read");
   const q = opts.q?.trim().slice(0, 200) ?? "";
   const where: Prisma.TicketTransferWhereInput = {
     ...(opts.status ? { status: opts.status } : {}),
@@ -187,7 +187,7 @@ export async function transferPatternReport(
   opts: { windowHours?: number; minCount?: number } = {},
   now = new Date(),
 ) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "transfers:read");
   const windowHours = opts.windowHours ?? TRANSFER_PATTERN_DEFAULTS.windowHours;
   const minCount = opts.minCount ?? TRANSFER_PATTERN_DEFAULTS.minCount;
   const since = new Date(now.getTime() - windowHours * 3_600_000);
@@ -221,7 +221,7 @@ export async function transferPatternReport(
  * antes da alteração (potencialmente elegíveis).
  */
 export async function listOpenChangeWindows(db: Db, admin: Actor, opts: { page?: number } = {}, now = new Date()) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "events:moderate");
   const where: Prisma.EventChangeWhereInput = {
     relevant: true,
     extendsChangeId: null,
@@ -285,7 +285,7 @@ export function parseAuditPreset(raw: unknown): AuditPreset | undefined {
 }
 
 export async function listAuditLogs(db: Db, admin: Actor, opts: { preset?: AuditPreset; action?: string; page?: number } = {}) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "audit:read");
   const prefixes: string[] = opts.preset ? [...AUDIT_PRESETS[opts.preset].prefixes] : [];
   const text = opts.action?.trim().slice(0, 100);
   const and: Prisma.AuditLogWhereInput[] = [];

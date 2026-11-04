@@ -35,7 +35,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 async function Content({ params }: { params: Promise<{ id: string }> }) {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin("cancellations:decide");
   const { id } = await params;
   const { request: r, eligibilityNow, ticketCounts, overdue } = await getCancellationRequestDetail(db, admin, id).catch((err: unknown) => {
     if (err instanceof AppError && err.code === "NOT_FOUND") notFound();

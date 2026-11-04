@@ -3,7 +3,7 @@ import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { enqueueCancelledEventEmailsTx } from "../email/events";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
-import { assertEventPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { assertEventPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { AppError } from "../errors";
 import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { assertEventTransition } from "./events";
@@ -23,7 +23,7 @@ export async function cancelEvent(
   opts: { asAdmin?: boolean; autoRefund?: boolean } = {},
 ) {
   if (!reason.trim()) throw new AppError("VALIDATION", "Informe o motivo do cancelamento.");
-  if (opts.asAdmin) assertPlatformAdmin(actor);
+  if (opts.asAdmin) assertAdminPermission(actor, "events:cancel");
   else await assertEventPermission(db, actor, eventId, "event:cancel");
 
   const result = await db.$transaction(async (tx) => {

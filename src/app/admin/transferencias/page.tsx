@@ -46,7 +46,7 @@ function PatternList({ title, rows, unit }: { title: string; rows: { key: string
 }
 
 async function Content({ searchParams }: { searchParams: Promise<Search> }) {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin("transfers:read");
   const sp = await searchParams;
   const status = parseTransferStatus(sp.status);
   const [result, report] = await Promise.all([searchTransfers(db, admin, { q: sp.q, status, page: parsePage(sp.pagina) }), transferPatternReport(db, admin)]);

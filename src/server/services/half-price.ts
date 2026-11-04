@@ -7,7 +7,7 @@ import { HALF_PRICE_POLICY } from "@/features/half-price/policy";
 import { computeHalfPriceState, type HalfPriceEventInput, type HalfPriceState, type HalfPriceTypeInput } from "@/features/half-price/quota";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
-import { assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { type Actor, assertAdminPermission } from "../auth/permissions";
 import { AppError, notFound } from "../errors";
 
 /** Campos do Event (com o local) que a regra usa. */
@@ -153,7 +153,7 @@ const NOTE_MAX = 500;
  * `NOT_SUBJECT` exige o motivo/base legal na nota. Auditado com o estado antes/depois.
  */
 export async function setHalfPriceRegime(db: Db, admin: Actor, eventId: string, regime: HalfPriceRegime, note: string | null | undefined, now = new Date()) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "events:moderate");
   if (regime !== "FEDERAL" && regime !== "NOT_SUBJECT") throw new AppError("VALIDATION", "Regime de meia-entrada inválido.");
   const text = note?.trim() || null;
   if (text && text.length > NOTE_MAX) throw new AppError("VALIDATION", `A justificativa pode ter até ${NOTE_MAX} caracteres.`);

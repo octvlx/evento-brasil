@@ -4,7 +4,7 @@ import { enqueueRefundEmailTx } from "../email/events";
 import type { RefundReason, RefundStatus } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
-import { assertActive, assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { financeLog } from "./finance-log";
@@ -226,7 +226,7 @@ export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdap
 }
 
 export async function adminRefundOrder(db: Db, adapter: PaymentProviderAdapter, admin: Actor, orderId: string, note: string) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "finance:refunds");
   if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo do reembolso.");
   const refund = await createRefundRequest(db, orderId, "ADMIN", admin.id, { note });
   await processRefund(db, adapter, refund.id);
@@ -415,7 +415,7 @@ export interface FailedRefundView extends RefundRetryState {
 
 /** Fila do admin: todos os reembolsos FAILED de pedidos aguardando reembolso. */
 export async function listFailedRefunds(db: Db, admin: Actor, now = new Date()): Promise<FailedRefundView[]> {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "finance:refunds");
   const refunds = await db.refund.findMany({
     where: { status: "FAILED", order: { status: "REFUND_PENDING" } },
     include: { order: { select: { publicCode: true, event: { select: { id: true, title: true, status: true, endsAt: true } } } } },
@@ -439,7 +439,7 @@ export async function listFailedRefunds(db: Db, admin: Actor, now = new Date()):
 
 /** Decisão do admin: nova tentativa no provedor, com a mesma chave de idempotência. */
 export async function adminRetryRefund(db: Db, adapter: PaymentProviderAdapter, admin: Actor, refundId: string, note: string) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "finance:refunds");
   if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo do reprocessamento.");
   const refund = await db.refund.findUnique({ where: { id: refundId }, include: { order: { select: { status: true, organizationId: true } } } });
   if (!refund) throw notFound("Reembolso não encontrado.");
@@ -479,7 +479,7 @@ export async function adminRestoreAfterFailedRefund(
   note: string,
   now = new Date(),
 ): Promise<{ outcome: RestoreOutcome; restoredTickets: number }> {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "finance:refunds");
   if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo da restauração.");
   const refund = await db.refund.findUnique({ where: { id: refundId }, include: { payment: true, order: { include: { event: true } } } });
   if (!refund) throw notFound("Reembolso não encontrado.");

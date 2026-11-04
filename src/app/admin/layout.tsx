@@ -1,22 +1,20 @@
+import { Suspense } from "react";
 import { PanelShell } from "@/components/site/panel-shell";
+import { AdminNav } from "@/features/admin/admin-nav";
 
-const NAV: [string, string][] = [
-  ["/admin", "Visão geral"],
-  ["/admin/organizadores", "Organizadores"],
-  ["/admin/eventos", "Eventos"],
-  ["/admin/pagamentos", "Pedidos e pagamentos"],
-  ["/admin/cancelamentos", "Cancelamentos"],
-  ["/admin/transferencias", "Transferências"],
-  ["/admin/alteracoes", "Alterações de evento"],
-  ["/admin/usuarios", "Clientes"],
-  ["/admin/configuracoes", "Comissões"],
-  ["/admin/auditoria", "Auditoria"],
-];
-
-// A autorização é verificada em cada página e em cada ação (requireAdmin).
+// A autorização é verificada em cada página e em cada ação (requireAdmin / assertAdminPermission);
+// o menu só esconde o que o papel do admin não permite (T6).
 export default function AdminLayout({ children }: LayoutProps<"/admin">) {
   return (
-    <PanelShell title="Administração" nav={NAV}>
+    <PanelShell
+      title="Administração"
+      nav={[]}
+      aside={
+        <Suspense fallback={null}>
+          <AdminNav />
+        </Suspense>
+      }
+    >
       {children}
     </PanelShell>
   );

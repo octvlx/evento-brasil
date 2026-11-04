@@ -8,7 +8,7 @@ import { slugify } from "@/lib/utils";
 import type { OrgRole } from "@/generated/prisma/client";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
-import { assertActive, assertOrgPermission, assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { assertActive, assertOrgPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { encryptPII, hashToken, randomToken } from "../crypto";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 
@@ -144,7 +144,7 @@ async function lockOrganization(tx: Tx, organizationId: string) {
 }
 
 export async function reviewOrganization(db: Db, admin: Actor, organizationId: string, decision: "APPROVE" | "REJECT", note?: string) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "organizers:review");
   if (decision === "REJECT" && !note?.trim()) throw new AppError("VALIDATION", "Informe o motivo da rejeição.");
   return db.$transaction(async (tx) => {
     const org = await lockOrganization(tx, organizationId);
@@ -175,7 +175,7 @@ export async function reviewOrganization(db: Db, admin: Actor, organizationId: s
 }
 
 export async function setOrganizationSuspended(db: Db, admin: Actor, organizationId: string, suspended: boolean, reason?: string) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "organizers:review");
   return db.$transaction(async (tx) => {
     const org = await lockOrganization(tx, organizationId);
     if (!org) throw notFound();
@@ -199,7 +199,7 @@ export async function setOrganizationSuspended(db: Db, admin: Actor, organizatio
 }
 
 export async function setAutoPublish(db: Db, admin: Actor, organizationId: string, value: boolean) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "organizers:review");
   await db.organization.update({ where: { id: organizationId }, data: { autoPublishEvents: value } });
   await audit(db, { actorUserId: admin.id, organizationId, action: "organization.auto_publish", entityType: "Organization", entityId: organizationId, metadata: { value } });
 }

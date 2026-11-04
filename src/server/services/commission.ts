@@ -3,7 +3,7 @@ import type { CommissionRule, CommissionScope, FeeBearer, ProcessingFeeBearer } 
 import { computeFees } from "@/features/fees/policy";
 import type { Db, Tx } from "../db";
 import { audit } from "../audit";
-import { assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { type Actor, assertAdminPermission } from "../auth/permissions";
 import { AppError } from "../errors";
 
 export const DEFAULT_COMMISSION_BPS = 700; // 7% do valor de face
@@ -77,7 +77,7 @@ export interface NewRuleInput {
 
 /** Nova versão de regra: encerra a vigente do mesmo escopo/alvo e cria outra. Regras antigas permanecem. */
 export async function setCommissionRule(db: Db, actor: Actor, input: NewRuleInput): Promise<CommissionRule> {
-  assertPlatformAdmin(actor);
+  assertAdminPermission(actor, "finance:commissions");
   if (input.scope === "EVENT" && !input.eventId) throw new AppError("VALIDATION", "Informe o evento.");
   if (input.scope === "ORGANIZATION" && !input.organizationId) throw new AppError("VALIDATION", "Informe a organização.");
   const target = {

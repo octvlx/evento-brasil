@@ -23,7 +23,7 @@ export default function AdminAudit({ searchParams }: PageProps<"/admin/auditoria
 }
 
 async function Content({ searchParams }: { searchParams: Promise<Search> }) {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin("audit:read");
   const sp = await searchParams;
   const preset = parseAuditPreset(sp.grupo);
   const acao = sp.acao?.trim() || undefined;

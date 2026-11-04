@@ -8,7 +8,7 @@ import { decryptPII, encryptPII, hashToken } from "../crypto";
 import { AppError, forbidden, invalidState } from "../errors";
 import { verifyPassword } from "../auth/password";
 import { MFA_SETUP_PATH, mfaEnforced } from "../auth/mfa-policy";
-import { assertPlatformAdmin, type Actor } from "../auth/permissions";
+import { type Actor, assertAdminPermission } from "../auth/permissions";
 import { enqueueEmail } from "../email/outbox";
 import { twoFactorResetEmail } from "../email/templates";
 import { authAppUrl } from "./email-verification";
@@ -216,7 +216,7 @@ export async function disableTotp(db: Db, userId: string, input: { code: string;
  * para admin e dono quando mfaEnforced()). Não vale para a própria conta.
  */
 export async function adminResetTwoFactor(db: Db, admin: Actor, targetUserId: string, input: { adminCode: string; reason: string }, now = new Date()) {
-  assertPlatformAdmin(admin);
+  assertAdminPermission(admin, "users:manage");
   if (targetUserId === admin.id)
     throw new AppError("VALIDATION", "Para a sua própria conta, use Minha conta › Segurança.");
   const reason = input.reason.trim();

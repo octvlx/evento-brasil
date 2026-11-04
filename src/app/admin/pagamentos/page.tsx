@@ -25,7 +25,7 @@ export default function AdminPayments() {
 }
 
 async function Content() {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin("finance:refunds");
   const [failed, orders, refunds, flagged, webhooks] = await Promise.all([
     listFailedRefunds(db, admin),
     db.order.findMany({
