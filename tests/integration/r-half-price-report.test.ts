@@ -44,7 +44,8 @@ describe("relatório de meia-entrada", () => {
   it("reports daily monetary totals above Int32 without breaking CSV", async () => {
     const owner = await makeUser();
     const event = await makeEvent(await makeOrg(owner), {
-      capacity: 1000, halfPriceQuotaBps: 4000,
+      // L7c: o limite de meia é sobre o estoque elegível (aqui só meia, 400); 100% para vender 250.
+      capacity: 1000, halfPriceQuotaBps: 10_000,
       tickets: [{ name: "Meia", kind: "HALF_PRICE", priceCents: 10_000_000, quantityTotal: 400, maxPerOrder: 50 }],
     });
     for (let i = 0; i < 5; i++) {
