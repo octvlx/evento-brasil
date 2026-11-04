@@ -2,11 +2,14 @@ import "server-only";
 import type { OrgRole, PlatformRole, UserStatus } from "@/generated/prisma/client";
 import type { Db, Tx } from "../db";
 import { AppError, forbidden } from "../errors";
+import { MFA_REQUIRED_MESSAGE, needsMfaEnrollment } from "./mfa-policy";
 
 export interface Actor {
   id: string;
   platformRole: PlatformRole;
   status: UserStatus;
+  /** Verificação em duas etapas ativa (vem da sessão); exigida de admin e dono de organização. */
+  totpEnabledAt?: Date | null;
 }
 
 export type OrgPermission =
@@ -38,9 +41,15 @@ export function assertActive(actor: Actor): void {
   if (actor.status !== "ACTIVE") throw new AppError("FORBIDDEN", "Sua conta está suspensa.");
 }
 
+/** Admin e dono de organização sem 2FA ativo não usam a área privilegiada (quando exigido). */
+function assertMfaEnrolled(actor: Actor): void {
+  if (needsMfaEnrollment(actor)) throw new AppError("MFA_REQUIRED", MFA_REQUIRED_MESSAGE);
+}
+
 export function assertPlatformAdmin(actor: Actor): void {
   assertActive(actor);
   if (actor.platformRole !== "ADMIN") throw forbidden();
+  assertMfaEnrolled(actor);
 }
 
 /** Garante que o ator é membro da organização com a permissão exigida. */
@@ -51,6 +60,7 @@ export async function assertOrgPermission(client: Db | Tx, actor: Actor, organiz
     select: { role: true, organization: { select: { status: true } } },
   });
   if (!membership || !roleHas(membership.role, perm)) throw forbidden();
+  if (membership.role === "OWNER") assertMfaEnrolled(actor);
   if (membership.organization.status === "SUSPENDED" && perm !== "org:read" && perm !== "finance:read") {
     throw new AppError("FORBIDDEN", "Esta organização está suspensa.");
   }
@@ -79,6 +89,7 @@ export async function resolveCheckinAccess(client: Db | Tx, actor: Actor, eventI
   });
   if (!membership) throw forbidden();
   if (membership.organization.status === "SUSPENDED") throw forbidden();
+  if (membership.role === "OWNER") assertMfaEnrolled(actor);
   if (roleHas(membership.role, "checkin:history")) return { event, canSeeAllHistory: true };
   if (membership.role === "CHECKIN_STAFF") {
     const assigned = await client.eventStaffAssignment.findUnique({

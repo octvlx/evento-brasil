@@ -12,7 +12,10 @@ export async function GET(req: NextRequest) {
     const user = await findGoogleUser(db, identity.subject, identity.email);
     if (user) {
       const session = await createSession(db, user.id, req.headers.get("user-agent"));
-      response = NextResponse.redirect(new URL(internalReturnPath(identity.next), authAppUrl()));
+      const next = internalReturnPath(identity.next);
+      // Com 2FA ativo, a sessão nasce pendente: o código é pedido em /entrar/verificacao.
+      const target = session.mfaPending ? `/entrar/verificacao?next=${encodeURIComponent(next)}` : next;
+      response = NextResponse.redirect(new URL(target, authAppUrl()));
       response.cookies.set(SESSION_COOKIE, session.token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", expires: session.expiresAt });
     } else {
       response = NextResponse.redirect(new URL("/auth/google/consent", authAppUrl()));

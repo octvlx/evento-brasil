@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { expect, type Page } from "@playwright/test";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
@@ -134,4 +135,29 @@ export async function confirmEmail(page: Page, email: string) {
   await page.goto(link);
   await page.getByRole("button", { name: "Confirmar meu e-mail", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "E-mail confirmado com sucesso." })).toBeVisible();
+}
+
+/**
+ * Código TOTP (RFC 6238, SHA-1, 6 dígitos) do segredo base32 mostrado na tela de
+ * ativação. `stepOffset` = 1 dá o código do próximo passo de 30 s (o servidor aceita
+ * ±1 e recusa um passo já usado, então o login logo após a ativação usa o próximo).
+ */
+export function totpFor(secretBase32: string, stepOffset = 0) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+  for (const ch of secretBase32.replace(/\s/g, "").toUpperCase()) {
+    value = (value << 5) | alphabet.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000) + stepOffset));
+  const mac = createHmac("sha1", Buffer.from(bytes)).update(counter).digest();
+  const offset = mac[mac.length - 1] & 0x0f;
+  return ((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).toString().padStart(6, "0");
 }

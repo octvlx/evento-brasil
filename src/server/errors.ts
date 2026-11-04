@@ -13,7 +13,9 @@ export type AppErrorCode =
   | "PROVIDER_ERROR"
   | "RATE_LIMITED"
   // Há versão vigente dos termos ainda não aceita (R10).
-  | "TERMS_REQUIRED";
+  | "TERMS_REQUIRED"
+  // Área privilegiada (admin, dono de organização) sem verificação em duas etapas ativa.
+  | "MFA_REQUIRED";
 
 export class AppError extends Error {
   constructor(

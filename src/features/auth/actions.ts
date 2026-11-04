@@ -59,6 +59,8 @@ export async function loginAction(
   if (!parsed.success) return { error: "Informe e-mail e senha válidos." };
   const key = `login:${await clientKey()}:${parsed.data.email}`;
   const WINDOW = 15 * 60_000;
+  const next = safeNext(formData.get("next")?.toString());
+  let mfaPending = false;
   try {
     await failureLimiter.assert(key, 8, WINDOW);
     const user = await authenticate(
@@ -72,17 +74,20 @@ export async function loginAction(
       return { error: "E-mail ou senha incorretos." };
     }
     await failureLimiter.reset(key);
-    const { token, expiresAt } = await createSession(
+    const session = await createSession(
       db,
       user.id,
       (await headers()).get("user-agent"),
     );
-    await setSessionCookie(token, expiresAt);
+    await setSessionCookie(session.token, session.expiresAt);
+    mfaPending = session.mfaPending;
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
     throw err;
   }
-  redirect(safeNext(formData.get("next")?.toString()));
+  // Verificação em duas etapas ativa: a sessão só vale depois do código.
+  if (mfaPending) redirect(`/entrar/verificacao?next=${encodeURIComponent(next)}`);
+  redirect(next);
 }
 
 export async function registerAction(

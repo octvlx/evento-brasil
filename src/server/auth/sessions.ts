@@ -3,22 +3,33 @@ import type { Db } from "../db";
 import { hashToken, randomToken } from "../crypto";
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Prazo para digitar o código de duas etapas depois da senha. */
+export const MFA_PENDING_TTL_MS = 10 * 60_000;
 
+/**
+ * Cria a sessão de login. Com a verificação em duas etapas ativa, a sessão nasce
+ * pendente (curta e sem autenticar nada) até o código ser conferido em
+ * completeMfaLogin. Todo login (senha, Google) passa por aqui.
+ */
 export async function createSession(db: Db, userId: string, userAgent?: string | null) {
+  const user = await db.user.findUnique({ where: { id: userId }, select: { totpEnabledAt: true } });
+  const mfaPending = Boolean(user?.totpEnabledAt);
   const token = randomToken(32);
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const expiresAt = new Date(Date.now() + (mfaPending ? MFA_PENDING_TTL_MS : SESSION_TTL_MS));
   await db.session.create({
-    data: { tokenHash: hashToken(token), userId, expiresAt, userAgent: userAgent?.slice(0, 300) },
+    data: { tokenHash: hashToken(token), userId, expiresAt, mfaPending, userAgent: userAgent?.slice(0, 300) },
   });
-  return { token, expiresAt };
+  return { token, expiresAt, mfaPending };
 }
 
-export async function resolveSession(db: Db, token: string) {
+export async function resolveSession(db: Db, token: string, opts: { allowMfaPending?: boolean } = {}) {
   const session = await db.session.findUnique({
     where: { tokenHash: hashToken(token) },
-    include: { user: { select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, platformRole: true, status: true, isDemoAccount: true } } },
+    include: { user: { select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, platformRole: true, status: true, isDemoAccount: true, totpEnabledAt: true } } },
   });
   if (!session) return null;
+  // Sessão à espera do código de duas etapas: só a tela de verificação a enxerga.
+  if (session.mfaPending && !opts.allowMfaPending) return null;
   if (session.expiresAt < new Date() || session.user.status !== "ACTIVE") {
     await db.session.delete({ where: { id: session.id } }).catch(() => {});
     return null;

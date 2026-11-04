@@ -45,6 +45,13 @@ model User {
   // Exclusão pelo titular (L9b): a linha fica, anonimizada, porque pedidos, ingressos
   // e auditoria apontam para ela. Nunca DELETE.
   anonymizedAt    DateTime?    @db.Timestamptz(3)
+  // Verificação em duas etapas (TOTP, RFC 6238). Segredo cifrado (encryptPII);
+  // o "pendente" só vale durante a ativação. totpLastStep impede reusar um código.
+  totpSecretEncrypted        String?
+  totpEnabledAt              DateTime? @db.Timestamptz(3)
+  totpLastStep               Int?
+  totpPendingSecretEncrypted String?
+  totpPendingAt              DateTime? @db.Timestamptz(3)
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
@@ -53,6 +60,7 @@ model User {
   emailVerificationTokens EmailVerificationToken[]
   checkoutDrafts          CheckoutDraft[]
   sessions                Session[]
+  totpRecoveryCodes       TotpRecoveryCode[]
   memberships             OrganizationMember[]
   orders                  Order[]
   tickets                 IssuedTicket[]           @relation("TicketBuyer")
@@ -132,12 +140,28 @@ model Session {
   expiresAt  DateTime @db.Timestamptz(3)
   lastSeenAt DateTime @default(now()) @db.Timestamptz(3)
   userAgent  String?
+  // Senha conferida, falta o código de duas etapas: não autentica nada até lá.
+  mfaPending  Boolean  @default(false)
+  mfaAttempts Int      @default(0)
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+/// Códigos de recuperação da verificação em duas etapas: só o hash, uso único.
+model TotpRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @unique
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ───────────────────────────── Organizações ─────────────────────────────
