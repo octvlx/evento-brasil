@@ -5,6 +5,8 @@ import type { Db } from "../db";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, roleHas, type Actor } from "../auth/permissions";
+import { computeHalfPriceState, formatReleaseAt } from "@/features/half-price/quota";
+import { HALF_PRICE_EVENT_SELECT, HALF_PRICE_TYPE_SELECT, halfPriceEventInput, loadHalfPriceStateTx } from "./half-price";
 
 export async function organizerOverview(db: Db, actor: Actor, organizationId: string) {
   await assertOrgPermission(db, actor, organizationId, "org:read");
@@ -224,13 +226,15 @@ export async function dailySales(db: Db, actor: Actor, organizationId: string, d
 export async function eventSalesSummary(db: Db, actor: Actor, eventId: string) {
   await assertEventPermission(db, actor, eventId, "finance:read");
   const event = await db.event.findUniqueOrThrow({ where: { id: eventId }, include: { ticketTypes: { orderBy: { sortOrder: "asc" } } } });
-  const halfUsed = event.ticketTypes.filter((t) => t.kind === "HALF_PRICE").reduce((s, t) => s + t.quantitySold + t.quantityReserved, 0);
+  const { state } = await loadHalfPriceStateTx(db, eventId);
   return {
     event,
     balances: await ledgerBalances(db, { order: { eventId } }),
+    // Cota e uso vêm do estado do backend (L7c): cota legal sobre o estoque elegível.
     halfPrice: {
-      quota: event.halfPriceQuotaBps === null ? null : Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000),
-      used: halfUsed,
+      quota: state.applicable ? state.quota : null,
+      used: state.halfCommitted,
+      status: state.status,
     },
   };
 }
@@ -362,13 +366,20 @@ export async function halfPriceReport(db: Db, actor: Actor, eventId: string, now
   const count = (pred: (r: (typeof ticketRows)[number]) => boolean) => ticketRows.filter(pred).reduce((s, r) => s + r._count, 0);
   const sold = event.ticketTypes.reduce((s, t) => s + t.quantitySold, 0);
   const reserved = event.ticketTypes.reduce((s, t) => s + t.quantityReserved, 0);
-  const quota = event.halfPriceQuotaBps === null ? null : Math.floor((event.capacity * event.halfPriceQuotaBps) / 10_000);
+  // Cota, limite e saldo: o estado do backend (L7c), nunca uma fórmula local.
+  const { state } = await loadHalfPriceStateTx(db, eventId, now);
+  const quota = state.applicable ? state.quota : null;
   return {
     event,
     generatedAt: now,
     capacity: event.capacity,
     quotaBps: event.halfPriceQuotaBps,
     quota,
+    halfLimit: state.applicable && Number.isFinite(state.halfLimit) ? state.halfLimit : null,
+    eligibleStock: state.eligibleStock,
+    reserveStatus: state.status,
+    deadlineHours: state.deadlineHours,
+    releaseAt: state.releaseAt,
     sold,
     reserved,
     refunded: count((r) => r.status === "REVOKED" && r.revocationReason === "REFUNDED"),
@@ -376,9 +387,87 @@ export async function halfPriceReport(db: Db, actor: Actor, eventId: string, now
     otherRevoked: count((r) => r.status === "REVOKED" && r.revocationReason !== "REFUNDED" && r.revocationReason !== "EVENT_CANCELLED"),
     valid: count((r) => r.status === "VALID"),
     checkedIn: count((r) => r.status === "CHECKED_IN"),
-    remaining: quota === null ? null : Math.max(0, quota - sold - reserved),
+    remaining: state.applicable ? state.balance : null,
     byDay: dayRows.map((r) => ({ day: r.day, halfSold: r.half, halfFaceCents: Number(r.halfFaceCents), totalSold: r.total })),
   };
+}
+
+const HALF_RESERVE_STATUS_LABEL = {
+  RESERVED: "Reservada",
+  RELEASED: "Liberada",
+  EXHAUSTED: "Cota atingida",
+  NOT_APPLICABLE: "Não se aplica",
+} as const;
+
+/**
+ * Controle de meia-entrada do evento (L7c): o estado do backend (`computeHalfPriceState`),
+ * sem nenhum cálculo no frontend. Mesma permissão dos relatórios do evento (`finance:read`);
+ * evento de outra organização → FORBIDDEN. Só números agregados.
+ */
+export async function halfPriceControl(db: Db, actor: Actor, eventId: string, now = new Date()) {
+  await assertEventPermission(db, actor, eventId, "finance:read");
+  const { event, types, state } = await loadHalfPriceStateTx(db, eventId, now);
+  const info = await db.event.findUniqueOrThrow({ where: { id: eventId }, select: { title: true, slug: true, status: true } });
+  const sum = (xs: typeof types) => xs.reduce((s, t) => s + t.quantityTotal, 0);
+  return {
+    eventId,
+    title: info.title,
+    eventStatus: info.status,
+    timezone: event.timezone,
+    startsAt: event.startsAt,
+    generatedAt: now,
+    regime: event.halfPriceRegime,
+    regimeNote: event.halfPriceRegimeNote,
+    /** Limite configurado pelo organizador, em % (null = sem limite). Abaixo de 40% vale 40%. */
+    configuredLimitPercent: event.halfPriceQuotaBps === null ? null : event.halfPriceQuotaBps / 100,
+    status: state.status,
+    notApplicableReason: state.notApplicableReason,
+    applicable: state.applicable,
+    reserveActive: state.reserveActive,
+    eligibleStock: state.eligibleStock,
+    quota: state.quota,
+    /** null = sem limite além da cota. */
+    halfLimit: Number.isFinite(state.halfLimit) ? state.halfLimit : null,
+    halfSold: state.halfSold,
+    halfReserved: state.halfReserved,
+    halfCommitted: state.halfCommitted,
+    balance: state.balance,
+    deadlineHours: state.deadlineHours,
+    releaseAt: state.releaseAt,
+    releaseAtLabel: formatReleaseAt(state.releaseAt, event.timezone),
+    physicalCapacity: state.physicalCapacity,
+    eventCapacity: state.eventCapacity,
+    /** Estoque à venda ao público (tipos não ocultos) e das meias. */
+    onSaleStock: sum(types.filter((t) => !t.isHidden)),
+    halfStock: sum(types.filter((t) => t.kind === "HALF_PRICE")),
+    /** Indisponíveis para a inteira por causa da reserva. */
+    unavailableForFull: state.blocked,
+    fullAvailable: state.fullAvailable,
+    halfAvailable: state.halfAvailable,
+    warnings: state.warnings,
+  };
+}
+
+/** Uma linha por evento da organização para a tela de vendas: cota, meias e saldo do estado do backend. */
+export async function organizerHalfPriceSummary(db: Db, actor: Actor, organizationId: string, now = new Date()) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  const events = await db.event.findMany({
+    where: { organizationId },
+    orderBy: { startsAt: "desc" },
+    select: { ...HALF_PRICE_EVENT_SELECT, title: true, ticketTypes: { select: HALF_PRICE_TYPE_SELECT } },
+  });
+  return events.map(({ ticketTypes, title, ...event }) => {
+    const state = computeHalfPriceState(halfPriceEventInput(event), ticketTypes, now);
+    return {
+      id: event.id,
+      title,
+      status: state.status,
+      quota: state.applicable ? state.quota : null,
+      halfCommitted: state.halfCommitted,
+      balance: state.applicable ? state.balance : null,
+      totalSold: ticketTypes.reduce((s, t) => s + t.quantitySold, 0),
+    };
+  });
 }
 
 const decimalBR = (n: number) => String(n).replace(".", ",");
@@ -386,14 +475,15 @@ const centsBR = (c: number) => (c / 100).toFixed(2).replace(".", ",");
 
 /** Separador ";" e decimal com vírgula: o Excel em pt-BR abre em colunas. */
 export function halfPriceReportToCsv(r: Awaited<ReturnType<typeof halfPriceReport>>): string {
-  const noQuota = "Sem cota definida";
+  const noQuota = "Não se aplica";
+  const noLimit = "Sem limite definido";
   return toCsv(
     [
       ["Indicador", "Valor"],
       ["Evento", r.event.title],
       ["Início do evento", formatDateTimeShort(r.event.startsAt, r.event.timezone)],
       ["Capacidade", r.capacity],
-      ["Cota de meia-entrada (%)", r.quotaBps === null ? noQuota : decimalBR(r.quotaBps / 100)],
+      ["Cota de meia-entrada (%)", r.quotaBps === null ? noLimit : decimalBR(r.quotaBps / 100)],
       ["Cota de meia-entrada (ingressos)", r.quota ?? noQuota],
       ["Meias vendidas (inclui reembolsadas e canceladas)", r.sold],
       ["Meias reservadas (pagamento pendente)", r.reserved],
@@ -404,6 +494,11 @@ export function halfPriceReportToCsv(r: Awaited<ReturnType<typeof halfPriceRepor
       ["Meias com check-in", r.checkedIn],
       ["Cota restante", r.remaining ?? noQuota],
       ["Gerado em", formatDateTimeShort(r.generatedAt, r.event.timezone)],
+      ["Estoque elegível (base da cota)", r.eligibleStock],
+      ["Limite de meia-entrada (ingressos)", r.halfLimit ?? noLimit],
+      ["Situação da reserva", HALF_RESERVE_STATUS_LABEL[r.reserveStatus]],
+      ["Prazo da reserva (horas antes do início)", r.deadlineHours],
+      ["Liberação da reserva", formatReleaseAt(r.releaseAt, r.event.timezone)],
       [],
       ["Data da venda", "Meias vendidas", "Valor de face das meias (R$)", "Ingressos vendidos (todos os tipos)"],
       ...r.byDay.map((d) => [d.day.split("-").reverse().join("/"), d.halfSold, centsBR(d.halfFaceCents), d.totalSold]),
