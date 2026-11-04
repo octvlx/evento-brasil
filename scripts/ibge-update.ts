@@ -142,6 +142,8 @@ async function readCurrent(dataPath: string): Promise<Municipality[]> {
 
 export interface UpdateOptions {
   fetchImpl?: typeof fetch;
+  /** Transporte de publicação injetável para testar falhas de filesystem. */
+  renameImpl?: typeof rename;
   dataPath?: string;
   metaPath?: string;
   now?: Date;
@@ -156,7 +158,7 @@ export interface UpdateOptions {
 
 export type UpdateResult = { status: "unchanged"; count: number } | { status: "updated"; count: number; diff: DatasetDiff };
 
-/** Baixa, valida, compara e grava. Qualquer falha lança ANTES de tocar nos arquivos atuais. */
+/** Baixa, valida e publica; falha na publicação restaura os arquivos anteriores. */
 export async function updateMunicipalities(opts: UpdateOptions = {}): Promise<UpdateResult> {
   const { fetchImpl = fetch, dataPath = DEFAULT_DATA_PATH, metaPath = DEFAULT_META_PATH, now = new Date(), log = console.log } = opts;
   let raw: unknown;
@@ -185,24 +187,46 @@ export async function updateMunicipalities(opts: UpdateOptions = {}): Promise<Up
     throw new Error(`A nova base tem ${next.length} municípios, contra ${current.length} hoje. Revise e rode com --allow-shrink para aceitar.`);
 
   const content = serializeDataset(next);
-  if (current.length && content === serializeDataset(sortMunicipalities(current))) {
-    log(`Sem mudanças (${next.length} municípios). Nenhum arquivo alterado.`);
-    return { status: "unchanged", count: next.length };
-  }
+  const unchanged = current.length > 0 && content === serializeDataset(sortMunicipalities(current));
   const meta: DatasetMeta = { source: opts.sourceLabel ?? IBGE_SOURCE_URL, fetchedAt: now.toISOString(), count: next.length };
-  // Grava ao lado e troca por rename: um erro no meio não deixa arquivo pela metade.
+  const prior = async (file: string) => {
+    try { return await readFile(file); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw e;
+    }
+  };
+  const [oldData, oldMeta] = await Promise.all([prior(dataPath), prior(metaPath)]);
   const tmpData = `${dataPath}.tmp`;
   const tmpMeta = `${metaPath}.tmp`;
+  const publish = opts.renameImpl ?? rename;
+  let dataPublished = false;
+  let metaPublished = false;
   try {
-    await writeFile(tmpData, content, "utf8");
+    if (!unchanged) {
+      await writeFile(tmpData, content, "utf8");
+      validateMunicipalities(JSON.parse(await readFile(tmpData, "utf8")) as Municipality[]);
+    }
     await writeFile(tmpMeta, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
-    // Confere o que foi escrito antes de substituir.
-    validateMunicipalities(JSON.parse(await readFile(tmpData, "utf8")) as Municipality[]);
-    await rename(tmpData, dataPath);
-    await rename(tmpMeta, metaPath);
+    if (!unchanged) { await publish(tmpData, dataPath); dataPublished = true; }
+    await publish(tmpMeta, metaPath);
+    metaPublished = true;
+  } catch (error) {
+    // Reverte a primeira publicação se a segunda falhar; mantém os bytes anteriores.
+    const restore = async (file: string, bytes: Buffer | null) => bytes === null ? rm(file, { force: true }) : writeFile(file, bytes);
+    try {
+      if (dataPublished) await restore(dataPath, oldData);
+      if (metaPublished) await restore(metaPath, oldMeta);
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], "Falha ao publicar e restaurar a base; confira os arquivos antes de tentar novamente.");
+    }
+    throw error;
   } finally {
     await rm(tmpData, { force: true });
     await rm(tmpMeta, { force: true });
+  }
+  if (unchanged) {
+    log(`Sem mudanças (${next.length} municípios). Proveniência atualizada após validação.`);
+    return { status: "unchanged", count: next.length };
   }
   log(`Base atualizada: ${next.length} municípios. Revise o diff e faça o commit manualmente.`);
   return { status: "updated", count: next.length, diff };
@@ -215,7 +239,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   };
   updateMunicipalities({ allowShrink: process.argv.includes("--allow-shrink"), fromFile: arg("--from-file"), sourceLabel: arg("--source") }).catch((e) => {
     console.error(`Falha: ${e instanceof Error ? e.message : String(e)}`);
-    console.error("A base atual foi mantida.");
+    console.error(e instanceof AggregateError ? "A restauração automática falhou. Confira os arquivos antes de tentar novamente." : "A base atual foi mantida.");
     process.exit(1);
   });
 }

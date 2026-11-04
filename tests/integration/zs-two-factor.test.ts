@@ -25,6 +25,17 @@ const T0 = new Date();
 const later = (seconds: number) => new Date(T0.getTime() + seconds * 1000);
 const codeAt = (secret: string, when: Date) => totpCode(secret, totpStep(when));
 
+it("conta erros concorrentes na mesma sessão e bloqueia na quinta tentativa", async () => {
+  const { user } = await enrolled();
+  const session = await createSession(db, user.id);
+  await Promise.allSettled(Array.from({ length: 4 }, () => completeMfaLogin(db, session.token, "invalido", later(30))));
+  expect(await db.session.findUnique({ where: { tokenHash: hashToken(session.token) } })).toMatchObject({ mfaAttempts: 4, mfaPending: true });
+  const results = await Promise.allSettled(Array.from({ length: 4 }, () => completeMfaLogin(db, session.token, "invalido", later(30))));
+  expect(results.every((r) => r.status === "rejected")).toBe(true);
+  expect(await db.session.findUnique({ where: { tokenHash: hashToken(session.token) } })).toBeNull();
+  expect(await db.auditLog.count({ where: { action: "mfa.login_locked", entityId: user.id } })).toBe(1);
+});
+
 /** Usuário com 2FA ativo (ativado em T0). Devolve o segredo e os códigos de recuperação. */
 async function enrolled(opts: { admin?: boolean } = {}) {
   const user = await makeUser(opts);

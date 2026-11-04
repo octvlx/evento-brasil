@@ -41,6 +41,7 @@ export async function POST(req: Request) {
   const halfPriceReleases = await step("recordHalfPriceReleases", () => recordHalfPriceReleases(db));
   const expiredTransfers = await step("expireTicketTransfers", () => expireTicketTransfers(db));
   const reconciliation = await step("reconcilePayments", () => reconcilePayments(db, getPaymentAdapter()));
+  if (reconciliation?.errors.length) failed.push("reconcilePayments");
   const violations = (await step("checkFinancialInvariants", () => checkFinancialInvariants(db))) ?? [];
   if (violations.length) {
     // Incidente: nunca corrigir automaticamente — registrar para análise humana.

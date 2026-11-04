@@ -34,3 +34,4 @@ Atualizado em 2026-11-04. Referência auditada: `cb77dc5` (main). Este documento
 - Não rodar build e e2e em paralelo na mesma worktree: build limpa `.next`, incluindo os arquivos do e2e isolado.
 - Integração sobe banco descartável. Preferir porta livre via TEST_DB_PORT. Nunca resetar banco do usuário.
 - A auditoria independente e suas limitações estão em `docs/audit-2026-11-04.md`.
+- Os cinco achados da auditoria foram corrigidos na branch deste repasse: concorrência MFA, paginação completa da busca, rollback IBGE, HTTP 500 em erros parciais de reconciliação e atualização da proveniência sem alteração de municípios. Consultar os testes de regressão e o relatório antes de reabrir esses itens.
