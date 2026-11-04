@@ -28,7 +28,7 @@ exclusão de conta no #88). A análise original de 2026-10-27 está no históric
 | R4 | Proteção contra compras abusivas (robôs/cambismo) | Feito: limite por pedido, **limite por conta por evento** (`Event.maxTicketsPerAccount`, L4b, vale também na transferência) e limite de frequência na criação de pedido e de pagamento (L4a). | **Verificação anti-robô** (fornecedor a escolher, ex.: Cloudflare Turnstile) no cadastro e no checkout. | Média |
 | R5 | **Canal acessível de cancelamento e arrependimento** | Feito: link "Cancelar compra / arrependimento" no rodapé, Meus pedidos, Meus ingressos, pedido e `/ajuda` (L5a); pedido de cancelamento com **protocolo** e prazo de resposta mesmo fora da elegibilidade automática (L5b); fila no admin (A1). Prazo de reembolso automático por evento (`refundWindowDays`/`refundMinHoursBeforeEvent`, padrão 7 dias e 48 h). | Regra das 48 h × arrependimento do CDC (**D3**) e prazo de resposta definitivo — provisórios. | Média |
 | R6 | **Transferência gratuita de titularidade**, com autenticação, rastreabilidade e histórico por **≥ 2 anos** | Feito (T-TRANSF, telas na Fase 4): pedido pelo titular autenticado, aceite pelo destinatário autenticado, novo QR, histórico só de inserção (`TicketTransfer`), gratuito, sem furar o limite por conta; política por evento (prazo e número de trocas). Reembolso de ingresso transferido vai ao pagador original. | Confirmar **D7** (quem recebe o reembolso, prazo-limite para transferir) — provisório. | Baixa |
-| R7 | **Meia-entrada** e relatórios | Feito: tipo `HALF_PRICE`, cota por evento, declaração no checkout, CSV de meia por evento (L7b), check-in sinaliza "exigir documento" (L7a). **A cota ainda é um teto, não uma reserva.** | **L7c**: reservar a cota de meia até o prazo de **D5** (48 h antes? — confirmar). | Alta |
+| R7 | **Meia-entrada** e relatórios | Feito: tipo `HALF_PRICE`, cota por evento, declaração no checkout, CSV de meia por evento (L7b), check-in sinaliza "exigir documento" (L7a). **L7c feita: a cota legal de 40% é reservada automaticamente até 48 h antes do início (72 h com local acima de 10.000 lugares)** e depois liberada; ver [L7c](#l7c--reserva-automática-da-cota-de-meia-entrada). **D5 decidida.** | Revisão jurídica do arredondamento, do regime "não sujeito" e de regras estaduais/municipais (abaixo). | Média |
 | R8 | **Reembolso integral** (inclui taxas) em cancelamento, **adiamento ou alteração relevante** (art. 20) | Feito: cancelamento reembolsa tudo; alteração relevante em evento com vendas exige motivo, grava `EventChange`, avisa compradores e abre janela de reembolso integral (L8a, L8b), também para ingressos transferidos. | Definição de "alteração relevante" e prazo da janela (**D2**) — provisórios. | Baixa |
 | R9 | Proteção de dados, logs de auditoria e **retenção legal** | Feito: auditoria e razão só de inserção, CPF/CNPJ cifrado, exportação "Meus dados" (L9b), **exclusão/anonimização da conta pelo titular e expurgo programado com prazos provisórios** (#88, `src/server/retention.ts`, `docs/dados-pessoais-e-retencao.md` §2.1). | Prazos definitivos (**D6**); protocolo de pedidos do titular; expurgo de CPF/CNPJ de organizações encerradas; decidir se o Marco Civil exige guardar registros de acesso (IP), hoje não coletados. | Média |
 | R10 | **Contratos claros** (responsabilidade de organizador × plataforma) | Feito: termos versionados com **aceite registrado** no cadastro, checkout e cadastro de organizador, com bloqueio em versão nova (L10a); organizador responsável identificado no evento e no ingresso/PDF (L10b). **`/termos` e `/privacidade` ainda são rascunhos técnicos.** | Textos definitivos de termos, privacidade e contrato do organizador (**D8**). | Alta |
@@ -42,9 +42,94 @@ pagamento confirmado só pelo provedor, auditoria somente inserção.
 1. **Jurídico (bloqueia a homologação comercial — V2):** ler e conferir o texto
    oficial do decreto (as regras vieram de fontes secundárias) e decidir D1–D8.
    D2, D3, D6 e D7 já têm padrão provisório em produção; D4 foi decidido (taxa
-   proporcional na meia, já aplicada); D5 e D8 bloqueiam trabalho técnico.
-2. **Técnico:** L7c (reserva da cota de meia, depende de D5); verificação
-   anti-robô; sobras de R9.
+   proporcional na meia, já aplicada) e D5 também (48 h / 72 h, L7c feita);
+   D8 bloqueia trabalho técnico.
+2. **Técnico:** verificação anti-robô; sobras de R9; tela do admin para o
+   regime de meia-entrada de um evento (L7c, hoje só pelo serviço).
+
+## L7c — Reserva automática da cota de meia-entrada
+
+**D5 decidida (2026-11-04):** a cota é reservada até **48 h** antes do início do
+evento, ou **72 h** quando a capacidade do local passa de 10.000 (10.000 exatos
+= 48 h). Base: Lei 12.933/2013 e Decreto 8.537/2015, arts. 9º e 10. Os números
+ficam num só lugar: `src/features/half-price/policy.ts`.
+
+**Termos** (cálculo puro em `src/features/half-price/quota.ts`; o frontend não
+calcula nada):
+
+| Termo | Definição |
+| --- | --- |
+| Capacidade física | `Venue.capacity`. Sem local ou evento online, o prazo usa a capacidade do evento. |
+| Capacidade do evento | `Event.capacity`. |
+| Elegíveis | Meia-entrada (oculta ou não) e tipos públicos pagos: inteira, VIP, promocional, lote antecipado. Cortesia/gratuito e tipos ocultos pagos não entram na base, mas ocupam capacidade. |
+| Estoque elegível (E) | `min(capacidade − ocupado por não elegíveis, Σ quantidade dos elegíveis)`. |
+| Cota (Q) | `floor(E × 40%)`. É a parte protegida. |
+| Limite de meia (L) | `Event.halfPriceQuotaBps`: o organizador pode oferecer mais meia, nunca menos que 40%. Abaixo disso vale 40%. Vazio = sem limite além do estoque. |
+| Vendidas / reservadas | `quantitySold` (monotônico; reembolso não devolve cota) / `quantityReserved` (pedidos pendentes). |
+| Saldo | `max(0, Q − meias vendidas − meias reservadas)`. |
+| Indisponíveis para inteira | Durante o prazo, o saldo. Depois, zero. |
+
+**Arredondamento (decisão provisória):** `floor`. Nunca reserva mais que 40% e
+mantém a regra do teto anterior. Estoques pequenos: 1 ou 2 → cota 0; 3 ou 4 → 1;
+5 → 2; 9 → 3; 10 → 4. Para trocar para `ceil`, basta mudar `rounding` na política.
+
+**Regra:**
+
+- O prazo conta de `startsAt` em UTC, pelo relógio do servidor:
+  `releaseAt = startsAt − 48/72 h`, e a liberação vale a partir de `now ≥ releaseAt`.
+- Vendas que começam já dentro do prazo seguem desde o início a regra de depois do prazo.
+- **Durante o prazo,** uma compra que não é de meia só passa se, depois dela,
+  `inteiras + meias + saldo ≤ E`. A meia nunca é barrada pela reserva, só pelo
+  limite e pelo estoque.
+- **Depois do prazo,** o saldo volta à venda conforme a demanda. A meia continua à
+  venda enquanto houver estoque e limite.
+- A regra é aplicada sob a trava do evento em `createOrder`, conta reservas
+  temporárias e pedidos pendentes e vale sob concorrência.
+- Pagamento aprovado depois do vencimento da reserva (`acquireLateInventoryTx`)
+  passa pela mesma regra. Se for barrado, segue o reembolso de pagamento tardio
+  e fica registrado em `half_price.late_payment_blocked`.
+- O mesmo cálculo alimenta a disponibilidade da página do evento (`getPublicEvent`),
+  a revisão do checkout e o painel do organizador.
+- O cron de manutenção (`recordHalfPriceReleases`) só **registra** a liberação
+  (`half_price.quota_released`), de forma idempotente pelo marcador
+  `Event.halfPriceReleaseAuditedFor`, e rearma se a data ou o local mudam. A
+  liberação não depende dele.
+- **Pagamento recusado:** como já era, o pedido continua pendente até
+  `expiresAt` para o comprador tentar de novo. O estoque e o saldo voltam no
+  vencimento, no cancelamento, na substituição do pedido ou no PIX expirado no
+  provedor, com auditoria `half_price.reservation_released`.
+- **Organizador:** a seção "Controle de meia-entrada" (`/organizador/eventos/[id]/editar`,
+  para quem tem `finance:read`; resumo por evento em `/organizador/vendas`) mostra a
+  situação derivada no backend (`RESERVED`, `RELEASED`, `EXHAUSTED`,
+  `NOT_APPLICABLE`). Não há como desligar a reserva.
+- Reduções de capacidade ou estoque que deixariam as inteiras dentro da cota
+  protegida são recusadas. Mudança só de data é permitida e registrada em
+  `half_price.stock_changed`; se as inteiras não couberem mais, novas inteiras
+  ficam barradas até voltarem a caber.
+- **Auditoria** (`AuditLog`, prefixo `half_price.`): `order_reserved`, `sold`,
+  `reservation_released`, `late_payment_blocked`, `quota_released`,
+  `stock_changed` e `regime_changed`, todas com o snapshot do cálculo. Nenhum
+  histórico financeiro ou de check-in é apagado.
+- **Taxas:** a taxa da meia continua proporcional (D4). As comissões não mudaram.
+
+**Pendências jurídicas (configuráveis; não endurecemos o que é incerto):**
+
+- **Eventos não sujeitos à regra federal:** `Event.halfPriceRegime = NOT_SUBJECT`,
+  com motivo obrigatório em `halfPriceRegimeNote`. Só o admin da plataforma muda,
+  por `setHalfPriceRegime`; a mudança é auditada e ainda não tem tela. A assessoria
+  define quais casos se enquadram.
+- **Evento sem tipo meia-entrada público:** fica `NOT_APPLICABLE` e não bloqueia
+  inteiras. Se isso é permitido para eventos sujeitos à lei, é a assessoria que
+  decide; o painel do organizador mostra o aviso.
+- **Regras estaduais e municipais** (outros percentuais, prazos ou beneficiários):
+  não implementadas. O ponto de extensão é a política
+  (`src/features/half-price/policy.ts`); a assessoria levanta as regras das
+  praças atendidas.
+- **Vigência do Decreto 13.108/2026:** a reserva vem do Decreto 8.537/2015 e vale
+  desde já. Se a assessoria concluir que o 13.108 mudou percentual ou prazo, ou
+  que a mudança tem data de início, o ajuste fica na política. Nenhuma data de
+  vigência está fixada no código.
+- **Arredondamento `floor`:** confirmar com a assessoria, ou trocar para `ceil`.
 
 ## Plano por agente
 
@@ -57,7 +142,7 @@ migrações concorrentes.
 
 D1 aplicabilidade ao nosso modelo · D2 definição de "alteração relevante" e prazo
 da janela de reembolso · D3 arrependimento × regra de 48 h · D4 taxa sobre meia (**decidido: proporcional**) ·
-D5 reserva da cota de meia (48 h?) · D6 prazos de retenção por tipo de dado ·
+D5 reserva da cota de meia (**decidido: 48 h; 72 h acima de 10.000 lugares**) · D6 prazos de retenção por tipo de dado ·
 D7 quem recebe o reembolso de ingresso transferido (pagador original?) e se há
 prazo-limite para transferir · D8 textos de termos, privacidade e contrato do organizador.
 
@@ -83,7 +168,7 @@ Pedidos no formato de COORDENACAO.md, revisados pelos donos de domínio:
 - `CancellationRequest` (protocolo, pedido, motivo, status, prazos, decisão). Revisão: pagamentos-financeiro + admin.
 - `TermsVersion` / `TermsAcceptance` (tipo, versão, hash do texto, usuário, data, IP). Revisão: paginas-publicas + area-organizador.
 - Limite por conta por evento (`Event.maxTicketsPerAccount` ou no tipo). Revisão: pagamentos-financeiro.
-- Reserva da cota de meia (se D5) — provavelmente só regra de serviço, sem coluna.
+- Reserva da cota de meia (D5): a regra fica no serviço; no banco, só o regime do evento e o marcador do cron (migração `20261104120000_half_price_reserve`, L7c).
 - Campos de anonimização/retenção conforme D6.
 
 ### Fase 3 — Serviços
@@ -92,7 +177,7 @@ Pedidos no formato de COORDENACAO.md, revisados pelos donos de domínio:
 | --- | --- | --- | --- |
 | T-TRANSF | **Transferência**: iniciar (titular autenticado, ingresso válido, sem check-in, sem reembolso em andamento, evento não encerrado), aceitar (destinatário autenticado), cancelar, expirar; ao aceitar: novo `validationToken`/QR, novo titular, auditoria e e-mail aos dois; gratuito; limite de transferências por ingresso e respeito ao limite por conta | check-in | Fase 2, D7 |
 | L4b | Limite por conta por evento na criação do pedido e na transferência | pagamentos-financeiro | Fase 2 |
-| L7c | Reservar a cota de meia até o prazo de D5 (disponibilidade de inteiras = capacidade − cota de meia restante) | pagamentos-financeiro (pedido) + paginas-publicas (`catalog.ts`) | D5 |
+| L7c | **Feito.** Reserva automática da cota de meia até 48/72 h antes (seção L7c acima) | banco-de-dados + pagamentos-financeiro + area-organizador + paginas-publicas | D5 (decidida) |
 | L8a | `openChangeRefundWindow(eventId)`: reembolso integral (com taxas) a pedido do comprador até `refundUntil`, fora da regra normal; também para ingressos transferidos (paga o pagador original — D7) | pagamentos-financeiro | Fase 2, D2 |
 | L8b | `updateEvent` detecta alteração relevante em evento com vendas, exige motivo, grava `EventChange`, chama L8a e notifica compradores | area-organizador | L8a |
 | L5b | Pedido de cancelamento com protocolo, prazos e decisão (aprovar → `requestCustomerRefund`/`adminRefundOrder`) | pagamentos-financeiro | Fase 2 |
