@@ -3,7 +3,7 @@
 // o que vai ao provedor de pagamento.
 import { beforeEach, describe, expect, it } from "vitest";
 import { commissionPerUnit } from "@/features/fees/policy";
-import { buyerPricePreview, resolveCommissionRule, setCommissionRule, type NewRuleInput } from "@/server/services/commission";
+import { buyerPricePreview, currentPlatformCommissionRule, resolveCommissionRule, setCommissionRule, type NewRuleInput } from "@/server/services/commission";
 import { startPayment } from "@/server/services/payments";
 import { createOrder } from "@/server/services/orders";
 import { adapter, db, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
@@ -144,5 +144,20 @@ describe("R — prévia de preço ao comprador = valor cobrado", () => {
     // 7% de 50,00 + 0,50 (metade de 0,99, arredondada para cima).
     expect(byType.get(event.ticketTypes[1].id)!.commissionPerUnitCents).toBe(400);
     expect(order.commissionCents).toBe(799 * 1 + 400 * 2);
+  });
+});
+
+describe("Página \"Publique seu evento\": regra de plataforma vigente", () => {
+  it("mostra a regra de plataforma em vigor, ignora regras de organização e acompanha a troca feita pelo admin", async () => {
+    expect(await currentPlatformCommissionRule(db)).toMatchObject({ scope: "PLATFORM", percentBps: 700 });
+    const org = await makeOrg(await makeUser());
+    await setRule({ scope: "ORGANIZATION", organizationId: org.id, percentBps: 300, fixedCentsPerTicket: 0, bearer: "ORGANIZER" });
+    expect(await currentPlatformCommissionRule(db)).toMatchObject({ scope: "PLATFORM", percentBps: 700 });
+    await setRule({ scope: "PLATFORM", percentBps: 1000, fixedCentsPerTicket: 150, bearer: "BUYER" });
+    const current = await currentPlatformCommissionRule(db);
+    expect(current).toMatchObject({ scope: "PLATFORM", percentBps: 1000, fixedCentsPerTicket: 150, bearer: "BUYER" });
+    // Exemplo da página (R$ 100,00) = mesma conta do checkout.
+    expect(commissionPerUnit(10_000, current!)).toBe(1_150);
+    expect(buyerPricePreview(current!, 10_000).totalCents).toBe(11_150);
   });
 });

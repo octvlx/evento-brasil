@@ -2,12 +2,13 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { ArrowRight, BadgePercent, QrCode, ShieldCheck, Zap } from "lucide-react";
+import { ArrowRight, BadgePercent, Megaphone, QrCode, ShieldCheck, Zap } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCard, EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { CategoryChips } from "@/components/site/category-chips";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
+import { PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
 import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
 import { eventsInCity, featuredEvents, getPublicCity, listCategories, weekendEvents } from "@/server/services/catalog";
@@ -17,8 +18,8 @@ export default function HomePage() {
     <>
       {/* 1. Destaques logo abaixo do header, com uma introdução de uma linha. */}
       <section aria-labelledby="destaques-titulo" className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 sm:pt-8">
-        <div className="mb-4 flex items-end justify-between gap-4">
-          <div>
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+          <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
             <h1 className="font-display text-xl font-extrabold leading-tight sm:text-[2rem]">
               Qual é o <span className="highlight-lime">rolê</span> de hoje?
             </h1>
@@ -26,9 +27,15 @@ export default function HomePage() {
               Em destaque <span className="font-normal">· seleção da QQPega</span>
             </h2>
           </div>
-          <Link href="/eventos" className="flex shrink-0 items-center gap-1 text-sm font-semibold text-secondary hover:underline">
-            Ver todos <ArrowRight className="size-4" aria-hidden />
-          </Link>
+          {/* Celular: botão e "Ver todos" numa linha abaixo do título; a partir do tablet, no topo à direita. */}
+          <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:shrink-0 sm:flex-col sm:items-end sm:self-stretch">
+            <Link href={PUBLISH_EVENT_INFO_HREF} className={buttonVariants({ variant: "accent", size: "sm" })}>
+              <Megaphone aria-hidden /> Publique seu evento
+            </Link>
+            <Link href="/eventos" className="flex items-center gap-1 text-sm font-semibold text-secondary hover:underline">
+              Ver todos <ArrowRight className="size-4" aria-hidden />
+            </Link>
+          </div>
         </div>
         <Suspense fallback={<CarouselSkeleton />}>
           <Featured />
@@ -99,7 +106,7 @@ export default function HomePage() {
               <Link href="/organizador/cadastro" className={buttonVariants({ variant: "accent", size: "lg" })}>
                 Quero vender ingressos <ArrowRight aria-hidden />
               </Link>
-              <Link href="/ajuda#taxas" className={buttonVariants({ variant: "outline", size: "lg", className: "border-white/30 bg-white/10 text-white hover:bg-white/20" })}>
+              <Link href={`${PUBLISH_EVENT_INFO_HREF}#taxas`} className={buttonVariants({ variant: "outline", size: "lg", className: "border-white/30 bg-white/10 text-white hover:bg-white/20" })}>
                 Ver taxas
               </Link>
             </div>

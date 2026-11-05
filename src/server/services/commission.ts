@@ -41,6 +41,14 @@ export async function resolveCommissionRules(client: Db | Tx, events: { id: stri
   }));
 }
 
+/** Regra de plataforma vigente (padrão para quem não tem regra própria). Só leitura, para a página pública de taxas. */
+export async function currentPlatformCommissionRule(client: Db | Tx, at = new Date()): Promise<CommissionRule | null> {
+  return client.commissionRule.findFirst({
+    where: { scope: "PLATFORM", activeFrom: { lte: at }, OR: [{ activeTo: null }, { activeTo: { gt: at } }] },
+    orderBy: { activeFrom: "desc" },
+  });
+}
+
 export interface BuyerPricePreview {
   priceCents: number;
   /** Taxa de serviço por ingresso (0 quando a comissão sai do repasse do organizador). */

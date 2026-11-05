@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CANCEL_HELP_HREF } from "@/lib/help-links";
+import { CANCEL_HELP_HREF, PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
 import { BRAND } from "@/lib/brand";
 import { Logo } from "./logo";
 
@@ -23,7 +23,7 @@ export function SiteFooter() {
         <FooterCol
           title="Para organizadores"
           links={[
-            ["/organizador/cadastro", "Venda ingressos"],
+            [PUBLISH_EVENT_INFO_HREF, "Publique seu evento"],
             ["/organizador", "Painel do organizador"],
             ["/ajuda#taxas", "Taxas e repasses"],
           ]}
