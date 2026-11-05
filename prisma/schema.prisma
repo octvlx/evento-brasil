@@ -33,37 +33,37 @@ enum UserStatus {
 }
 
 model User {
-  id              String       @id @default(cuid())
-  email           String       @unique
-  name            String
-  phone           String?
-  passwordHash    String
+  id                         String       @id @default(cuid())
+  email                      String       @unique
+  name                       String
+  phone                      String?
+  passwordHash               String
   // Complemento do comprador: separado do cadastro básico e do KYC do organizador.
-  emailVerifiedAt DateTime?    @db.Timestamptz(3)
-  cpfEncrypted    String?
-  cpfHash         String?      @unique
-  cpfLast2        String?      @db.VarChar(2)
-  birthDate       DateTime?    @db.Date
-  googleSubject   String?      @unique
-  platformRole    PlatformRole @default(USER)
+  emailVerifiedAt            DateTime?    @db.Timestamptz(3)
+  cpfEncrypted               String?
+  cpfHash                    String?      @unique
+  cpfLast2                   String?      @db.VarChar(2)
+  birthDate                  DateTime?    @db.Date
+  googleSubject              String?      @unique
+  platformRole               PlatformRole @default(USER)
   // Sub-papéis do admin da plataforma (T6); só valem com platformRole ADMIN.
-  adminRoles      AdminRole[]  @default([])
-  status          UserStatus   @default(ACTIVE)
-  suspendedReason String?
+  adminRoles                 AdminRole[]  @default([])
+  status                     UserStatus   @default(ACTIVE)
+  suspendedReason            String?
   // Contas de demonstração do seed: bloqueadas em produção.
-  isDemoAccount   Boolean      @default(false)
+  isDemoAccount              Boolean      @default(false)
   // Exclusão pelo titular (L9b): a linha fica, anonimizada, porque pedidos, ingressos
   // e auditoria apontam para ela. Nunca DELETE.
-  anonymizedAt    DateTime?    @db.Timestamptz(3)
+  anonymizedAt               DateTime?    @db.Timestamptz(3)
   // Verificação em duas etapas (TOTP, RFC 6238). Segredo cifrado (encryptPII);
   // o "pendente" só vale durante a ativação. totpLastStep impede reusar um código.
   totpSecretEncrypted        String?
-  totpEnabledAt              DateTime? @db.Timestamptz(3)
+  totpEnabledAt              DateTime?    @db.Timestamptz(3)
   totpLastStep               Int?
   totpPendingSecretEncrypted String?
-  totpPendingAt              DateTime? @db.Timestamptz(3)
-  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+  totpPendingAt              DateTime?    @db.Timestamptz(3)
+  createdAt                  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt                  DateTime     @updatedAt @db.Timestamptz(3)
 
   address                 UserAddress?
   passwordResetTokens     PasswordResetToken[]
@@ -144,16 +144,16 @@ model CheckoutDraft {
 }
 
 model Session {
-  id         String   @id @default(cuid())
-  tokenHash  String   @unique
-  userId     String
-  expiresAt  DateTime @db.Timestamptz(3)
-  lastSeenAt DateTime @default(now()) @db.Timestamptz(3)
-  userAgent  String?
+  id          String   @id @default(cuid())
+  tokenHash   String   @unique
+  userId      String
+  expiresAt   DateTime @db.Timestamptz(3)
+  lastSeenAt  DateTime @default(now()) @db.Timestamptz(3)
+  userAgent   String?
   // Senha conferida, falta o código de duas etapas: não autentica nada até lá.
   mfaPending  Boolean  @default(false)
   mfaAttempts Int      @default(0)
-  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -344,9 +344,10 @@ model City {
   isFeatured Boolean  @default(false)
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
 
-  venues        Venue[]
-  events        Event[]
-  organizations Organization[]
+  venues         Venue[]
+  events         Event[]
+  organizations  Organization[]
+  externalEvents ExternalEvent[]
 
   @@unique([name, state])
   @@index([state])
@@ -1458,4 +1459,131 @@ model MercadoPagoOAuthState {
 
   @@index([organizationId])
   @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Eventos externos (descoberta): eventos publicados em outras plataformas, só
+// com dados públicos e factuais, levando o visitante ao site original. Tabelas
+// próprias de propósito: não tocam Event, pedidos, estoque, ingressos, comissão
+// nem relatórios financeiros.
+// ---------------------------------------------------------------------------
+
+enum ExternalSourceStatus {
+  ACTIVE
+  PAUSED
+  // Sem forma autorizada de integração ainda (API, feed ou acordo): nada é coletado.
+  NEEDS_AUTHORIZATION
+}
+
+enum ExternalEventReview {
+  PENDING_REVIEW
+  PUBLISHED
+  HIDDEN
+}
+
+// Situação do evento na fonte (o que a última coleta viu).
+enum ExternalEventSourceStatus {
+  ACTIVE
+  CANCELLED
+  // Não apareceu nas últimas coletas: mantido (nunca apagado automaticamente).
+  MISSING
+}
+
+// Preço ausente nunca vira gratuidade.
+enum ExternalPriceStatus {
+  UNKNOWN
+  FREE
+  PAID
+}
+
+enum ExternalImportRunStatus {
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+}
+
+model ExternalSource {
+  id        String               @id @default(cuid())
+  // Identificador técnico do adaptador: "duoticket", "sympla", "q2ingressos".
+  key       String               @unique @db.VarChar(40)
+  name      String               @db.VarChar(80)
+  homeUrl   String               @db.VarChar(300)
+  status    ExternalSourceStatus @default(PAUSED)
+  // Por que a fonte está como está (viabilidade, dependência de autorização).
+  notes     String?              @db.VarChar(2000)
+  lastRunAt DateTime?            @db.Timestamptz(3)
+  createdAt DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime             @updatedAt @db.Timestamptz(3)
+
+  events ExternalEvent[]
+  runs   ExternalImportRun[]
+}
+
+model ExternalEvent {
+  id                  String                    @id @default(cuid())
+  sourceId            String
+  // Identificador do evento na fonte (deduplicação junto com a URL).
+  sourceEventId       String                    @db.VarChar(120)
+  sourceUrl           String                    @unique @db.VarChar(500)
+  slug                String                    @unique @db.VarChar(160)
+  title               String                    @db.VarChar(200)
+  // Início no fuso do evento. Sem horário informado: meia-noite local e hasTime = false.
+  startsAt            DateTime                  @db.Timestamptz(3)
+  hasTime             Boolean                   @default(false)
+  timezone            String                    @db.VarChar(40)
+  venueName           String?                   @db.VarChar(200)
+  cityName            String?                   @db.VarChar(120)
+  state               String?                   @db.Char(2)
+  // Só quando o município bate exatamente com o IBGE.
+  cityId              String?
+  categoryName        String?                   @db.VarChar(80)
+  priceStatus         ExternalPriceStatus       @default(UNKNOWN)
+  minPriceCents       Int?
+  review              ExternalEventReview       @default(PENDING_REVIEW)
+  sourceStatus        ExternalEventSourceStatus @default(ACTIVE)
+  // Hash dos campos coletados: detecta mudança sem comparar campo a campo.
+  contentHash         String                    @db.VarChar(64)
+  // Possível duplicado (outra fonte ou evento nativo) para revisão; nunca unido automaticamente.
+  possibleDuplicateOf String?                   @db.VarChar(200)
+  firstSeenAt         DateTime                  @default(now()) @db.Timestamptz(3)
+  lastSeenAt          DateTime                  @default(now()) @db.Timestamptz(3)
+  lastChangedAt       DateTime                  @default(now()) @db.Timestamptz(3)
+  publishedAt         DateTime?                 @db.Timestamptz(3)
+  reviewedById        String?
+  // Contadores agregados, sem dado pessoal (mesmo padrão de TrackingLink.clicks).
+  viewCount           Int                       @default(0)
+  outboundClicks      Int                       @default(0)
+  createdAt           DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime                  @updatedAt @db.Timestamptz(3)
+
+  source ExternalSource @relation(fields: [sourceId], references: [id])
+  city   City?          @relation(fields: [cityId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceId, sourceEventId])
+  @@index([review, startsAt])
+  @@index([cityId, review, startsAt])
+}
+
+model ExternalImportRun {
+  id            String                  @id @default(cuid())
+  sourceId      String
+  status        ExternalImportRunStatus @default(RUNNING)
+  // ADMIN (execução manual limitada) ou CRON.
+  trigger       String                  @db.VarChar(10)
+  triggeredById String?
+  startedAt     DateTime                @default(now()) @db.Timestamptz(3)
+  finishedAt    DateTime?               @db.Timestamptz(3)
+  pagesFetched  Int                     @default(0)
+  eventsSeen    Int                     @default(0)
+  created       Int                     @default(0)
+  updated       Int                     @default(0)
+  unchanged     Int                     @default(0)
+  failed        Int                     @default(0)
+  // Erros resumidos (URL e mensagem), no máximo algumas dezenas; nunca segredos.
+  errors        Json                    @default("[]")
+
+  source ExternalSource @relation(fields: [sourceId], references: [id])
+
+  @@index([sourceId, startedAt])
 }
