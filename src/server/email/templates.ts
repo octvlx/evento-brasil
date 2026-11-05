@@ -1,4 +1,5 @@
 import { escapeHtml } from "./index";
+import { BRAND, BRAND_COLORS as C } from "@/lib/brand";
 export function emailLayout(
   title: string,
   body: string,
@@ -6,20 +7,22 @@ export function emailLayout(
 ) {
   const safe = escapeHtml;
   return (
-    '<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f5f3ff;font-family:Arial,sans-serif;color:#14112b"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="600" style="width:100%;max-width:600px;background:white;border-radius:16px" cellspacing="0" cellpadding="0"><tr><td style="padding:24px;background:#312e81;color:white;font-size:22px;font-weight:bold">Evento Brasil</td></tr><tr><td style="padding:28px"><h1 style="font-size:24px;color:#312e81">' +
+    // Cabeçalho escuro com o logotipo tipográfico ("QQ" em limão), botão limão com texto escuro
+    // (contraste 14:1) e fundo papel. Estilos inline: clientes de e-mail ignoram <style>.
+    `<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:${C.paper};font-family:Arial,Helvetica,sans-serif;color:${C.night}"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="600" style="width:100%;max-width:600px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid ${C.border}" cellspacing="0" cellpadding="0"><tr><td style="padding:22px 28px;background:${C.night};color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-1px"><span style="color:${C.lime}">QQ</span>Pega</td></tr><tr><td style="padding:28px"><h1 style="margin:0 0 16px;font-size:24px;line-height:1.25;color:${C.night}">` +
     safe(title) +
     "</h1>" +
     body +
     (button
-      ? '<p style="margin:28px 0"><a style="display:inline-block;background:#6d28d9;color:white;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:bold" href="' +
+      ? `<p style="margin:28px 0"><a style="display:inline-block;background:${C.lime};color:${C.night};text-decoration:none;padding:14px 24px;border-radius:999px;font-weight:bold" href="` +
         safe(button.url) +
         '">' +
         safe(button.label) +
-        '</a></p><p style="font-size:12px;word-break:break-all">Se o botão não abrir, copie o endereço: ' +
+        `</a></p><p style="font-size:12px;color:${C.mutedText};word-break:break-all">Se o botão não abrir, copie o endereço: ` +
         safe(button.url) +
         "</p>"
       : "") +
-    '</td></tr><tr><td style="padding:24px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280">Mensagem automática do Evento Brasil. Proteja sua conta e não compartilhe links de acesso ou ingressos.</td></tr></table></td></tr></table></body></html>'
+    `</td></tr><tr><td style="padding:20px 28px;border-top:1px solid ${C.border};background:${C.muted};font-size:12px;color:${C.mutedText}">Mensagem automática da ${BRAND.name}. Proteja sua conta e não compartilhe links de acesso ou ingressos.</td></tr></table></td></tr></table></body></html>`
   );
 }
 export function authEmail(
@@ -28,13 +31,13 @@ export function authEmail(
   minutes: number,
 ) {
   const reset = kind === "reset";
-  const title = reset ? "Redefinição de senha" : "Bem-vindo ao Evento Brasil!";
+  const title = reset ? "Redefinição de senha" : `Boas-vindas à ${BRAND.name}!`;
   const subject = reset
-    ? "Redefinição de senha | Evento Brasil"
-    : "Confirme seu e-mail | Evento Brasil";
+    ? `Redefinição de senha | ${BRAND.name}`
+    : `Confirme seu e-mail | ${BRAND.name}`;
   const intro = reset
     ? "Recebemos um pedido de redefinição da sua senha."
-    : "Estamos felizes por você fazer parte da nossa comunidade. Confirme seu endereço de e-mail para concluir compras e usar operações que exigem verificação.";
+    : "Que bom ter você por aqui! Confirme seu endereço de e-mail para concluir compras e usar operações que exigem verificação.";
   const label = reset ? "Redefinir senha" : "Confirmar meu e-mail";
   return {
     subject,
@@ -68,12 +71,12 @@ export function transactionalEmail(
   url: string,
 ) {
   const subjects = {
-    purchase: "Compra confirmada! | Evento Brasil",
-    tickets: "Seus ingressos chegaram! | Evento Brasil",
-    cancelled: "Atualização importante sobre seu evento | Evento Brasil",
-    refund: "Atualização do seu reembolso | Evento Brasil",
-    invitation: "Você recebeu um convite | Evento Brasil",
-    event: "Atualização importante sobre seu evento | Evento Brasil",
+    purchase: `Compra confirmada | ${BRAND.name}`,
+    tickets: `Seus ingressos chegaram | ${BRAND.name}`,
+    cancelled: `Atualização importante sobre seu evento | ${BRAND.name}`,
+    refund: `Atualização do seu reembolso | ${BRAND.name}`,
+    invitation: `Você recebeu um convite | ${BRAND.name}`,
+    event: `Atualização importante sobre seu evento | ${BRAND.name}`,
   };
   const label =
     kind === "invitation"
@@ -96,13 +99,13 @@ export function transactionalEmail(
 export function twoFactorResetEmail(securityUrl: string) {
   const lines = [
     "Olá!",
-    "A verificação em duas etapas da sua conta Evento Brasil foi redefinida pela nossa equipe, a seu pedido.",
+    `A verificação em duas etapas da sua conta ${BRAND.name} foi redefinida pela nossa equipe, a seu pedido.`,
     "Todas as sessões foram encerradas. No próximo acesso, entre com sua senha e ative de novo a verificação em duas etapas com o aplicativo autenticador.",
     "Se você não pediu essa redefinição, troque sua senha e fale imediatamente com o suporte.",
-    "Equipe Evento Brasil.",
+    `${BRAND.signature}.`,
   ];
   return {
-    subject: "Evento Brasil — Sua verificação em duas etapas foi redefinida",
+    subject: `${BRAND.name} — Sua verificação em duas etapas foi redefinida`,
     html: emailLayout(
       "Verificação em duas etapas redefinida",
       lines.map((line) => "<p>" + escapeHtml(line) + "</p>").join(""),
@@ -116,13 +119,13 @@ export function passwordChangedEmail(kind: "changed" | "reset", resetUrl: string
   const what = kind === "changed" ? "alterada" : "redefinida";
   const lines = [
     "Olá!",
-    `A senha da sua conta Evento Brasil foi ${what} com sucesso.`,
+    `A senha da sua conta ${BRAND.name} foi ${what} com sucesso.`,
     "Se você realizou essa alteração, nenhuma ação adicional é necessária.",
     "Se você não reconhece essa atividade, solicite imediatamente uma redefinição de senha e entre em contato com o suporte.",
-    "Equipe Evento Brasil.",
+    `${BRAND.signature}.`,
   ];
   return {
-    subject: `Evento Brasil — Sua senha foi ${what}`,
+    subject: `${BRAND.name} — Sua senha foi ${what}`,
     html: emailLayout(
       `Sua senha foi ${what}`,
       lines.map((line) => "<p>" + escapeHtml(line) + "</p>").join(""),

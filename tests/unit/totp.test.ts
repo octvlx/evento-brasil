@@ -52,6 +52,6 @@ describe("TOTP (RFC 6238)", () => {
 
   it("URI otpauth com emissor e conta", () => {
     const uri = otpauthUri("JBSWY3DPEHPK3PXP", "ana@exemplo.com.br");
-    expect(uri).toBe("otpauth://totp/Evento%20Brasil%3Aana%40exemplo.com.br?secret=JBSWY3DPEHPK3PXP&issuer=Evento+Brasil&algorithm=SHA1&digits=6&period=30");
+    expect(uri).toBe("otpauth://totp/QQPega%3Aana%40exemplo.com.br?secret=JBSWY3DPEHPK3PXP&issuer=QQPega&algorithm=SHA1&digits=6&period=30");
   });
 });

@@ -5,6 +5,7 @@ import type { TicketKind } from "@/generated/prisma/client";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { qrPayload } from "../services/tickets";
 import { organizerIdentityLine, type OrganizerIdentity } from "./organizer-identity";
+import { BRAND } from "@/lib/brand";
 
 export interface PdfTicket {
   code: string;
@@ -21,25 +22,28 @@ export interface PdfTicket {
   organizerIdentity?: OrganizerIdentity;
 }
 
-const INDIGO = rgb(0.192, 0.18, 0.506);
-const VIOLET = rgb(0.486, 0.227, 0.929);
-const GRAY = rgb(0.37, 0.35, 0.48);
+// Cores da marca QQPega (tinta, pink, limão e cinza de apoio).
+const NIGHT = rgb(0.086, 0.071, 0.122);
+const PINK = rgb(0.82, 0.078, 0.353);
+const LIME = rgb(0.776, 0.957, 0.196);
+const GRAY = rgb(0.357, 0.333, 0.4);
 const HALF_PRICE_NOTE = "MEIA-ENTRADA: APRESENTE O DOCUMENTO COMPROBATÓRIO NA ENTRADA";
 
 /** Um ingresso por página A5 (retrato), com QR para validação online. */
 export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
-  pdf.setTitle("Ingressos — Evento Brasil");
-  pdf.setProducer("Evento Brasil");
+  pdf.setTitle(`Ingressos — ${BRAND.name}`);
+  pdf.setProducer(BRAND.name);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
 
   for (const t of tickets) {
     const page = pdf.addPage([420, 595]);
     const { width } = page.getSize();
-    page.drawRectangle({ x: 0, y: 515, width, height: 80, color: INDIGO });
-    page.drawText("evento", { x: 28, y: 545, size: 22, font: bold, color: rgb(1, 1, 1) });
-    page.drawText("brasil", { x: 28 + bold.widthOfTextAtSize("evento", 22), y: 545, size: 22, font: bold, color: rgb(0.98, 0.45, 0.52) });
+    page.drawRectangle({ x: 0, y: 515, width, height: 80, color: NIGHT });
+    // Logotipo tipográfico: "QQ" em limão + "Pega" em branco (nome oficial: QQPega).
+    page.drawText("QQ", { x: 28, y: 545, size: 22, font: bold, color: LIME });
+    page.drawText("Pega", { x: 28 + bold.widthOfTextAtSize("QQ", 22), y: 545, size: 22, font: bold, color: rgb(1, 1, 1) });
     page.drawText("INGRESSO", { x: width - 28 - bold.widthOfTextAtSize("INGRESSO", 11), y: 549, size: 11, font: bold, color: rgb(1, 1, 1) });
     if (t.kind === "HALF_PRICE") {
       // Faixa de alto contraste na base do cabeçalho: a portaria exige o documento.
@@ -64,7 +68,7 @@ export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array
       return lines;
     };
     for (const line of wrap(t.event.title, 18, width - 56).slice(0, 2)) {
-      page.drawText(line, { x: 28, y, size: 18, font: bold, color: INDIGO });
+      page.drawText(line, { x: 28, y, size: 18, font: bold, color: NIGHT });
       y -= 22;
     }
     const tz = t.event.timezone;
@@ -102,7 +106,7 @@ export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array
     const codeText = `Código ${t.code}  ·  Pedido ${t.orderCode}`;
     page.drawText(codeText, { x: (width - regular.widthOfTextAtSize(codeText, 9)) / 2, y: 55, size: 9, font: regular, color: GRAY });
     const note = t.isSimulated ? "TESTE — pagamento simulado, ingresso sem valor" : `Organização: ${t.event.organizer}`;
-    page.drawText(note, { x: (width - bold.widthOfTextAtSize(note, 8)) / 2, y: 38, size: 8, font: bold, color: t.isSimulated ? rgb(0.75, 0.07, 0.24) : VIOLET });
+    page.drawText(note, { x: (width - bold.widthOfTextAtSize(note, 8)) / 2, y: 38, size: 8, font: bold, color: t.isSimulated ? rgb(0.71, 0.07, 0.23) : PINK });
     const warn = "Não compartilhe este QR code. Ele é validado uma única vez na entrada.";
     page.drawText(warn, { x: (width - regular.widthOfTextAtSize(warn, 7.5)) / 2, y: 22, size: 7.5, font: regular, color: GRAY });
   }

@@ -43,7 +43,7 @@ export function MfaLoginForm({ next }: { next?: string }) {
           <p id="mfa-code-help" className="mt-1.5 text-sm text-muted-foreground">
             {recovery
               ? "Cada código de recuperação vale uma única vez."
-              : "Abra o aplicativo autenticador e digite o código do Evento Brasil."}
+              : "Abra o aplicativo autenticador e digite o código da QQPega."}
           </p>
         </div>
         {state?.error && <Alert variant="danger">{state.error}</Alert>}

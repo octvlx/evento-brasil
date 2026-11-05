@@ -229,7 +229,7 @@ async function sendInvitationEmail(orgId: string, email: string, token: string) 
   await getEmailAdapter().send({
     to: email,
     subject: `Convite para a equipe de ${org.name}`,
-    html: `<p>Você foi convidado(a) para a equipe de <strong>${escapeHtml(org.name)}</strong> no Evento Brasil.</p><p><a href="${link}">Aceitar convite</a> (válido por 7 dias)</p>`,
+    html: `<p>Você foi convidado(a) para a equipe de <strong>${escapeHtml(org.name)}</strong> na QQPega.</p><p><a href="${link}">Aceitar convite</a> (válido por 7 dias)</p>`,
     text: `Aceite o convite: ${link}`,
   });
   return link;

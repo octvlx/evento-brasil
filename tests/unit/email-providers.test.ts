@@ -84,7 +84,7 @@ it("renders branded responsive templates with escaped event data and matching te
     "http://localhost/confirmar-email#token=test",
     30,
   );
-  expect(email.subject).toBe("Confirme seu e-mail | Evento Brasil");
+  expect(email.subject).toBe("Confirme seu e-mail | QQPega");
   expect(email.html).toContain("max-width:600px");
   expect(email.text).toContain("30 minutos");
   expect(

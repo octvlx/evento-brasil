@@ -39,7 +39,7 @@ function canGoBack() {
 
 /**
  * Volta para a página anterior do site. Na página de entrada da aba (acesso
- * direto ou vindo de outro site), vai para a home em vez de sair do Evento Brasil.
+ * direto ou vindo de outro site), vai para a home em vez de sair da QQPega.
  */
 export function BackButton({ className }: { className?: string }) {
   const router = useRouter();

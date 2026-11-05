@@ -17,6 +17,7 @@ import {
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { renderTicketsPdf, type PdfTicket } from "../tickets/pdf";
+import { BRAND } from "@/lib/brand";
 import {
   appleWallet,
   buildApplePass,
@@ -160,9 +161,9 @@ export async function buildQueuedOrderEmail(
   ].join("");
   const when = formatEventDateTime(order.event.startsAt, order.event.timezone);
   const title = escapeHtml(order.event.title);
-  const html = `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#14112b">
-<h1 style="color:#312e81">Seus ingressos chegaram!</h1>
-${order.isSimulated ? '<p style="color:#be123c"><strong>Ambiente de testes:</strong> pagamento simulado, ingressos sem valor.</p>' : ""}
+  const html = `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#16121f">
+<h1 style="color:#16121f">Seus ingressos chegaram!</h1>
+${order.isSimulated ? '<p style="color:#b4123a"><strong>Ambiente de testes:</strong> pagamento simulado, ingressos sem valor.</p>' : ""}
 <p><strong>${title}</strong><br>${escapeHtml(when)}</p>
 <p>Pedido ${order.publicCode} · ${tickets.length} ingresso(s) · Total ${formatBRL(order.totalCents)}</p>
 <p>Os ingressos estão em anexo (PDF) e também em <a href="${url}">Meus ingressos</a>. Apresente o QR code na entrada; ele vale para uma única leitura.</p>
@@ -171,7 +172,7 @@ ${walletHtml}
   const text = `Seus ingressos chegaram!\n${order.event.title}\n${when}\nPedido ${order.publicCode}\nAcesse: ${url}${googleUrl ? `\nGoogle Wallet: ${googleUrl}` : ""}`;
   return {
     to: order.buyerEmail,
-    subject: "Seus ingressos chegaram! | Evento Brasil",
+    subject: `Seus ingressos chegaram | ${BRAND.name}`,
     html: emailLayout(
       "Seus ingressos chegaram!",
       html.replace(/^[\s\S]*?<body[^>]*>/, "").replace(/<\/body>[\s\S]*$/, ""),
@@ -266,8 +267,8 @@ export async function notifyEventChange(
   const intro = isExtension
     ? `<p>O organizador prorrogou o prazo para pedir reembolso integral por causa da alteração de <strong>${title}</strong>.</p>`
     : `<p>O organizador alterou <strong>${title}</strong>, evento para o qual você tem ingresso.</p>`;
-  const html = `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#14112b">
-<h1 style="color:#312e81">${isExtension ? "Prazo de reembolso prorrogado" : "O evento mudou"}</h1>
+  const html = `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#16121f">
+<h1 style="color:#16121f">${isExtension ? "Prazo de reembolso prorrogado" : "O evento mudou"}</h1>
 ${intro}
 ${lines.length ? `<ul>${lines.map((l) => `<li><strong>${escapeHtml(l.label)}:</strong> ${escapeHtml(l.from)} → <strong>${escapeHtml(l.to)}</strong></li>`).join("")}</ul>` : ""}
 <p><strong>Motivo informado pelo organizador:</strong> ${escapeHtml(change.reason)}</p>

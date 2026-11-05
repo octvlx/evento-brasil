@@ -41,7 +41,7 @@ const COMMON_BASES = new Set([
   "iloveyou", "teamo", "admin", "administrador", "root", "welcome", "bemvindo", "letmein", "monkey", "dragon",
   "master", "login", "princess", "princesa", "sunshine", "football", "futebol", "flamengo", "corinthians", "palmeiras",
   "saopaulo", "santos", "vasco", "gremio", "cruzeiro", "botafogo", "fluminense", "internacional", "brasil", "brazil",
-  "mudar", "mudarsenha", "trocar", "teste", "test", "usuario", "user", "evento", "eventobrasil", "ingresso",
+  "mudar", "mudarsenha", "trocar", "teste", "test", "usuario", "user", "evento", "eventobrasil", "qqpega", "ingresso",
   "ingressos", "deus", "jesus", "jesuscristo", "amor", "familia", "felicidade", "minhasenha", "mypassword", "changeme",
   "secret", "segredo", "default", "padrao", "q1w2e3r4", "1q2w3e4r", "1qaz2wsx", "zaq12wsx", "abc123", "aa",
 ]);

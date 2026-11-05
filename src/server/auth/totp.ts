@@ -10,7 +10,8 @@ export const TOTP_PERIOD_SECONDS = 30;
 export const TOTP_DIGITS = 6;
 /** Passos aceitos antes e depois do atual: tolera ±30 s de diferença de relógio. */
 export const TOTP_WINDOW = 1;
-export const TOTP_ISSUER = "Evento Brasil";
+// Nome mostrado no aplicativo autenticador (entradas antigas mantêm o nome anterior; o código continua válido).
+export const TOTP_ISSUER = "QQPega";
 
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 

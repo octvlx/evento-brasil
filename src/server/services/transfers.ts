@@ -807,8 +807,8 @@ function transferInviteEmail(p: {
   return {
     to: p.to,
     subject: `${p.fromName} transferiu um ingresso para você: ${p.event.title}`,
-    html: `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#14112b">
-<h1 style="color:#312e81">Você recebeu um ingresso</h1>
+    html: `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#16121f">
+<h1 style="color:#16121f">Você recebeu um ingresso</h1>
 <p>Olá, ${escapeHtml(p.toName)}. <strong>${escapeHtml(p.fromName)}</strong> quer transferir um ingresso para você.</p>
 <p><strong>${escapeHtml(p.event.title)}</strong><br>${escapeHtml(when)}</p>
 <p><a href="${url}">Ver e aceitar a transferência</a> (válido até ${escapeHtml(until)}). Entre com a conta deste e-mail; se ainda não tem, crie uma com ele. A transferência é gratuita.</p>
@@ -832,8 +832,8 @@ function acceptedEmails(p: {
     {
       to: p.toEmail,
       subject: `O ingresso agora é seu: ${p.event.title}`,
-      html: `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#14112b">
-<h1 style="color:#312e81">Transferência concluída</h1>
+      html: `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#16121f">
+<h1 style="color:#16121f">Transferência concluída</h1>
 <p>O ingresso de <strong>${title}</strong> está na sua conta. <a href="${ticketUrl}">Abra o ingresso</a> para ver o QR code.</p>
 </body></html>`,
       text: `O ingresso de ${p.event.title} está na sua conta: ${ticketUrl}`,
@@ -841,8 +841,8 @@ function acceptedEmails(p: {
     {
       to: p.fromEmail,
       subject: `Transferência aceita: ${p.event.title}`,
-      html: `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#14112b">
-<h1 style="color:#312e81">Transferência aceita</h1>
+      html: `<!doctype html><html lang="pt-BR"><body style="font-family:Arial,sans-serif;color:#16121f">
+<h1 style="color:#16121f">Transferência aceita</h1>
 <p>Olá, ${escapeHtml(p.fromName)}. ${escapeHtml(p.toName)} aceitou o ingresso de <strong>${title}</strong>.</p>
 <p>O QR code, o PDF e os passes de carteira que você tinha deste ingresso <strong>não valem mais</strong> na entrada.</p>
 </body></html>`,

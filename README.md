@@ -1,4 +1,6 @@
-# Evento Brasil (nome provisório)
+# QQPega
+
+Marketplace de eventos e ingressos (antes "Evento Brasil", nome provisório; o repositório, o banco e os identificadores técnicos mantêm o nome antigo).
 
 Marketplace multi-organizador de descoberta e venda de ingressos para o Brasil —
 pt-BR, BRL, web responsiva + PWA.

@@ -84,7 +84,7 @@ describe("redefinição: não reutiliza a senha anterior", () => {
     expect(await resetPassword(db, { token, password: NEXT, confirmation: NEXT })).toEqual({ reset: true });
     expect(await verifyPassword(NEXT, await hashOf(user.id))).toBe(true);
     const notice = queue.mock.calls.find((c) => c[1].template === "PASSWORD_CHANGED")![1];
-    expect(notice.message!.subject).toBe("Evento Brasil — Sua senha foi redefinida");
+    expect(notice.message!.subject).toBe("QQPega — Sua senha foi redefinida");
     expect(notice.message!.text).not.toContain(NEXT);
     expect(notice.message!.text).not.toContain(token);
   });
