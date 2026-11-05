@@ -44,7 +44,7 @@ export function Label({ className, ...props }: ComponentProps<"label">) {
 }
 
 export function Card({ className, ...props }: ComponentProps<"div">) {
-  return <div className={cn("rounded-2xl border border-border bg-card text-card-foreground shadow-sm", className)} {...props} />;
+  return <div className={cn("rounded-2xl border border-border bg-card text-card-foreground shadow-card", className)} {...props} />;
 }
 
 export const badgeVariants = cva("inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold", {
@@ -56,6 +56,7 @@ export const badgeVariants = cva("inline-flex items-center gap-1 rounded-full px
       warning: "bg-warning-soft text-warning",
       danger: "bg-destructive-soft text-destructive",
       accent: "bg-accent text-accent-foreground",
+      night: "bg-night text-white",
       outline: "border border-border",
     },
   },

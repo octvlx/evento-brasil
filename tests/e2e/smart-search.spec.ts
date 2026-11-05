@@ -110,7 +110,7 @@ test("busca do header nas páginas públicas, sem duplicar a lógica", async ({ 
   for (const path of ["/eventos", "/cidades/franca-sp", "/eventos/festival-litoral-sonoro-rio-de-janeiro"]) {
     await page.goto(path);
     await expect(headerSearch(page)).toBeVisible();
-    await expect(page.locator("header").getByRole("link", { name: "Evento Brasil — início" })).toHaveAttribute("href", "/");
+    await expect(page.locator("header").getByRole("link", { name: "QQPega — início" })).toHaveAttribute("href", "/");
   }
   await headerSearch(page).fill("stand-up em belo");
   await expect(page.getByRole("option", { name: /stand-up em Belo Horizonte — MG/ })).toBeVisible();

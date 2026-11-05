@@ -57,6 +57,17 @@ export function formatEventDateTime(date: Date, timeZone: string): string {
   }).format(date);
 }
 
+/** Partes para o "canhoto" de data dos cards: dia, mês curto e dia da semana + hora, no fuso do evento. */
+export function eventDateStub(date: Date, timeZone: string): { day: string; month: string; weekdayTime: string } {
+  const get = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("pt-BR", { timeZone, ...opts }).format(date);
+  const clean = (s: string) => s.replace(/\./g, "");
+  return {
+    day: get({ day: "2-digit" }),
+    month: clean(get({ month: "short" })).toUpperCase(),
+    weekdayTime: `${clean(get({ weekday: "short" }))} · ${get({ hour: "2-digit", minute: "2-digit" })}`,
+  };
+}
+
 export function formatDateLong(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone,

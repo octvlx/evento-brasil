@@ -1,34 +1,42 @@
 @import "tailwindcss";
 
-/* Evento Brasil — tokens de design.
-   Primária: índigo profundo · Secundária: violeta elétrico · Destaque: coral/magenta.
-   Tema único claro (fundo branco), independente do tema do dispositivo. */
+/* QQPega — tokens de design ("a cidade à noite, com a luz acesa").
+   Tinta escura dá confiança (texto, botões principais, áreas de pagamento);
+   o verde-limão é a energia (chamadas de descoberta, marca) e o pink marca links,
+   foco e informação que ajuda a decidir (data). Contraste conferido (WCAG AA):
+   pink sobre branco 5,3:1 · tinta sobre limão 14,4:1 · cinza de apoio 6,9:1.
+   Em fundo escuro o destaque é o limão (o pink ali fica abaixo de 4,5:1).
+   Tema único claro, independente do tema do dispositivo. */
 
 :root {
-  --background: #ffffff;
-  --foreground: #14112b;
+  --background: #fbfaf7;
+  --foreground: #16121f;
   --card: #ffffff;
-  --card-foreground: #14112b;
-  --muted: #f4f3fa;
-  --muted-foreground: #5f5a7a;
-  --border: #e5e2f0;
-  --input: #d9d5ea;
-  --ring: #7c3aed;
-  --primary: #312e81;
+  --card-foreground: #16121f;
+  --muted: #f2efe9;
+  --muted-foreground: #5b5566;
+  --border: #e6e1d8;
+  /* Borda de campo de formulário: 3,6:1 sobre branco (componente de interface ≥ 3:1). */
+  --input: #8e877c;
+  --ring: #d1145a;
+  --primary: #16121f;
   --primary-foreground: #ffffff;
-  --secondary: #7c3aed;
+  --secondary: #d1145a;
   --secondary-foreground: #ffffff;
-  --accent: #f43f5e;
-  --accent-foreground: #ffffff;
-  --success: #047857;
-  --success-soft: #d1fae5;
-  --warning: #b45309;
-  --warning-soft: #fef3c7;
-  --destructive: #be123c;
-  --destructive-soft: #ffe4e6;
-  --hero-from: #1e1b4b;
-  --hero-via: #4c1d95;
-  --hero-to: #be185d;
+  --accent: #c6f432;
+  --accent-foreground: #16121f;
+  --success: #0f7a4a;
+  --success-soft: #dcf5e8;
+  --warning: #9a4a07;
+  --warning-soft: #fdf0d5;
+  --destructive: #b4123a;
+  --destructive-soft: #fde4ea;
+  /* Fundos de destaque: noite (tinta) → ameixa → pink. Texto sobre eles: branco/limão. */
+  --hero-from: #16121f;
+  --hero-via: #2a1740;
+  --hero-to: #8c1450;
+  --lime: #c6f432;
+  --night: #16121f;
 }
 
 @theme inline {
@@ -53,10 +61,15 @@
   --color-warning-soft: var(--warning-soft);
   --color-destructive: var(--destructive);
   --color-destructive-soft: var(--destructive-soft);
+  --color-lime: var(--lime);
+  --color-night: var(--night);
   --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-bricolage), var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
-  --radius-xl: 1rem;
-  --radius-2xl: 1.375rem;
+  --font-display: var(--font-unbounded), var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.75rem;
+  --shadow-card: 0 1px 2px rgb(22 18 31 / 0.04), 0 8px 24px -12px rgb(22 18 31 / 0.18);
+  --shadow-lift: 0 2px 4px rgb(22 18 31 / 0.06), 0 18px 40px -16px rgb(140 20 80 / 0.35);
 }
 
 html {
@@ -68,20 +81,44 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* Títulos de marca (Unbounded é larga): espaçamento um pouco mais fechado. */
+.font-display {
+  letter-spacing: -0.02em;
+}
+
+/* Foco sempre visível no teclado, inclusive em links simples. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .bg-hero {
   background:
-    radial-gradient(60rem 30rem at 85% -10%, color-mix(in oklab, var(--hero-to) 70%, transparent), transparent 60%),
-    radial-gradient(50rem 30rem at 0% 110%, color-mix(in oklab, var(--hero-via) 80%, transparent), transparent 60%),
-    linear-gradient(135deg, var(--hero-from), var(--hero-via) 55%, var(--hero-to));
+    radial-gradient(40rem 22rem at 100% 0%, color-mix(in oklab, var(--hero-to) 85%, transparent), transparent 65%),
+    radial-gradient(36rem 24rem at 0% 120%, color-mix(in oklab, var(--hero-via) 90%, transparent), transparent 60%),
+    linear-gradient(140deg, var(--hero-from) 10%, var(--hero-via) 60%, var(--hero-to));
+}
+
+/* Textura de pontos discreta (luzes da cidade) para fundos escuros de destaque. */
+.bg-dots {
+  background-image: radial-gradient(rgb(255 255 255 / 0.09) 1px, transparent 1px);
+  background-size: 18px 18px;
 }
 
 .text-gradient {
-  background: linear-gradient(90deg, #c4b5fd, #f9a8d4 60%, #fda4af);
+  background: linear-gradient(90deg, var(--lime), #ffd6e7 70%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+/* Marca-texto limão atrás de uma palavra de título (sobre fundo claro). */
+.highlight-lime {
+  background: linear-gradient(transparent 58%, var(--lime) 58%, var(--lime) 92%, transparent 92%);
+  padding-inline: 0.08em;
 }
 
 .scrollbar-none {
@@ -96,6 +133,8 @@ body {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

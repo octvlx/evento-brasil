@@ -8,6 +8,7 @@ import { qrPayload } from "../../services/tickets";
 import type { AppleWalletConfig } from "./config";
 import { APPLE_PASS_IMAGES } from "./images";
 import type { WalletTicket } from "./types";
+import { BRAND } from "@/lib/brand";
 
 const images = () => Object.fromEntries(Object.entries(APPLE_PASS_IMAGES).map(([name, b64]) => [name, Buffer.from(b64, "base64")]));
 
@@ -18,12 +19,12 @@ export function applePassJson(t: WalletTicket, cfg: Pick<AppleWalletConfig, "pas
     passTypeIdentifier: cfg.passTypeIdentifier,
     teamIdentifier: cfg.teamIdentifier,
     serialNumber: t.code,
-    organizationName: "Evento Brasil",
+    organizationName: BRAND.name,
     description: `Ingresso: ${t.event.title}`,
-    logoText: "Evento Brasil",
+    logoText: BRAND.name,
     foregroundColor: "rgb(255, 255, 255)",
-    backgroundColor: "rgb(49, 46, 129)",
-    labelColor: "rgb(196, 181, 253)",
+    backgroundColor: "rgb(22, 18, 31)",
+    labelColor: "rgb(198, 244, 50)",
     // Aparece na tela de bloqueio perto da hora do evento.
     relevantDate: t.event.startsAt.toISOString(),
     expirationDate: t.event.endsAt.toISOString(),

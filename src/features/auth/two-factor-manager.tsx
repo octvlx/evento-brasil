@@ -41,7 +41,7 @@ function CodeInput({ id, value, onChange, label = "Código de 6 dígitos" }: { i
 /** Mostra os códigos de recuperação uma única vez, com cópia e download. */
 function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
   const [copied, setCopied] = useState(false);
-  const text = `Evento Brasil — códigos de recuperação da verificação em duas etapas\nCada código vale uma única vez.\n\n${codes.join("\n")}\n`;
+  const text = `QQPega — códigos de recuperação da verificação em duas etapas\nCada código vale uma única vez.\n\n${codes.join("\n")}\n`;
   return (
     <div className="space-y-4" data-testid="recovery-codes">
       <Alert variant="warning">

@@ -49,7 +49,7 @@ const schema = z.object({
     .enum(["true", "false", ""])
     .optional()
     .transform((v) => (v ? v === "true" : process.env.NODE_ENV !== "test")),
-  EMAIL_FROM: z.string().default("Evento Brasil <nao-responda@example.com>"),
+  EMAIL_FROM: z.string().default("QQPega <nao-responda@example.com>"),
   STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
   OBJECT_STORAGE_ENDPOINT: z.string().optional(),
   OBJECT_STORAGE_REGION: z.string().default("auto"),
