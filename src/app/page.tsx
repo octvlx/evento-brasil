@@ -37,9 +37,9 @@ export default function HomePage() {
 
       {/* 2. Busca compacta: um campo só (artista, evento, cidade, local ou "Rock em São Paulo"). */}
       <section aria-labelledby="busca-titulo" className="mx-auto mt-6 max-w-7xl px-4 sm:px-6">
-        <div className="bg-hero relative overflow-hidden rounded-3xl px-3 py-4 sm:px-6 sm:py-6">
+        <div className="bg-hero relative overflow-hidden rounded-3xl px-3 py-3 sm:px-5 sm:py-4">
           <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
-          <p className="relative mx-auto mb-3 max-w-3xl font-display text-lg font-bold text-white sm:text-xl">
+          <p className="relative mx-auto mb-2 max-w-3xl font-display text-base font-bold leading-tight text-white sm:text-lg">
             Procurando algo? <span className="text-lime">Pega aqui.</span>
           </p>
           <h2 id="busca-titulo" className="sr-only">
@@ -48,7 +48,7 @@ export default function HomePage() {
           <Suspense fallback={<div className="mx-auto h-12 max-w-3xl rounded-xl bg-white/15" />}>
             <SmartEventSearch variant="page" label="Buscar eventos, artistas, cidades ou locais" className="relative mx-auto max-w-3xl" />
           </Suspense>
-          <div className="relative mx-auto mt-3 max-w-3xl">
+          <div className="relative mx-auto mt-2.5 max-w-3xl">
             <Suspense fallback={<div className="h-9" />}>
               <HeroCategories />
             </Suspense>
