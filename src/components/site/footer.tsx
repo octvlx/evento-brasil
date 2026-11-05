@@ -9,7 +9,7 @@ export function SiteFooter() {
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-4">
         <div className="space-y-3">
           <Logo inverted />
-          <p className="max-w-xs text-sm text-white/70">{BRAND.tagline}. Achou o rolê? É só pegar o ingresso.</p>
+          <p className="max-w-xs text-sm text-white/70">{BRAND.tagline}.</p>
         </div>
         <FooterCol
           title="Para você"

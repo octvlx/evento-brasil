@@ -91,7 +91,7 @@ export function EventCard({ event, className, priority, imageSizes }: { event: E
             {price.detail && <span className="block text-xs font-normal text-muted-foreground"> {price.detail}</span>}
           </span>
           {event.availability === "AVAILABLE" && (
-            <span className="shrink-0 rounded-full bg-accent px-2.5 py-1 text-xs font-bold text-accent-foreground">Pegar ingresso</span>
+            <span className="shrink-0 rounded-full bg-accent px-2.5 py-1 text-xs font-bold text-accent-foreground">Comprar ingresso</span>
           )}
         </div>
       </div>
@@ -103,7 +103,7 @@ export function EventGrid({ events, emptyText = "Nenhum evento por aqui ainda." 
   if (!events.length) {
     return (
       <div className="rounded-2xl border border-dashed border-input/50 bg-card/60 p-10 text-center">
-        <p className="font-display text-lg font-bold">Nada rolando por aqui… ainda.</p>
+        <p className="font-display text-lg font-bold">Nenhum evento por aqui</p>
         <p className="mt-1 text-sm text-muted-foreground">{emptyText}</p>
       </div>
     );

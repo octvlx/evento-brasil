@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Símbolo QQPega: dois "Q" entrelaçados (limão e pink) sobre a tinta da marca —
- * duas pessoas, dois rolês, conexão. O mesmo desenho vira o favicon (src/app/icon.svg).
+ * duas pessoas, dois eventos, conexão. O mesmo desenho vira o favicon (src/app/icon.svg).
  */
 export function LogoMark({ className }: { className?: string }) {
   return (

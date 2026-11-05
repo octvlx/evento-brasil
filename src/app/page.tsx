@@ -23,7 +23,7 @@ export default function HomePage() {
               Qual é o <span className="highlight-lime">rolê</span> de hoje?
             </h1>
             <h2 id="destaques-titulo" className="mt-1.5 text-sm font-semibold text-muted-foreground">
-              Em destaque <span className="font-normal">· escolhidos a dedo pela QQPega</span>
+              Em destaque <span className="font-normal">· seleção da QQPega</span>
             </h2>
           </div>
           <Link href="/eventos" className="flex shrink-0 items-center gap-1 text-sm font-semibold text-secondary hover:underline">
@@ -40,7 +40,7 @@ export default function HomePage() {
         <div className="bg-hero relative overflow-hidden rounded-3xl px-3 py-3 sm:px-5 sm:py-4">
           <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
           <p className="relative mx-auto mb-2 max-w-3xl font-display text-base font-bold leading-tight text-white sm:text-lg">
-            Procurando algo? <span className="text-lime">Pega aqui.</span>
+            Encontre seu <span className="text-lime">próximo evento</span>
           </p>
           <h2 id="busca-titulo" className="sr-only">
             Buscar eventos
@@ -60,7 +60,7 @@ export default function HomePage() {
         <NearbySection />
       </Suspense>
 
-      <Section title="Neste fim de semana" subtitle="De sexta a domingo — bora sair de casa" href="/eventos?data=fim-de-semana">
+      <Section title="Neste fim de semana" subtitle="De sexta a domingo" href="/eventos?data=fim-de-semana">
         <Suspense fallback={<EventGridSkeleton />}>
           <Weekend />
         </Suspense>
@@ -91,7 +91,7 @@ export default function HomePage() {
             <p className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-lime">
               <BadgePercent className="size-4" aria-hidden /> Para produtores, casas e coletivos
             </p>
-            <h2 className="font-display text-2xl font-extrabold leading-tight sm:text-4xl">Faça seu evento lotar. Repasse sem surpresa.</h2>
+            <h2 className="font-display text-2xl font-extrabold leading-tight sm:text-4xl">Venda ingressos com repasse transparente</h2>
             <p className="mt-3 text-white/80">
               Publique seu evento, receba via PIX e cartão, acompanhe vendas em tempo real e faça o check-in pelo celular. Comissão padrão de 7% sobre o valor de face — eventos gratuitos não pagam comissão.
             </p>
