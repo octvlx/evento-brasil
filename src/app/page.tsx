@@ -19,11 +19,11 @@ export default function HomePage() {
       <section aria-labelledby="destaques-titulo" className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 sm:pt-8">
         <div className="mb-4 flex items-end justify-between gap-4">
           <div>
-            <h1 className="font-display text-xl font-extrabold leading-tight tracking-tight sm:text-3xl">
-              O que você vai <span className="text-secondary">viver</span> neste fim de semana?
+            <h1 className="font-display text-xl font-extrabold leading-tight sm:text-[2rem]">
+              Qual é o <span className="highlight-lime">rolê</span> de hoje?
             </h1>
-            <h2 id="destaques-titulo" className="mt-1 text-sm font-semibold text-muted-foreground">
-              Em destaque <span className="font-normal">· seleção da curadoria Evento Brasil</span>
+            <h2 id="destaques-titulo" className="mt-1.5 text-sm font-semibold text-muted-foreground">
+              Em destaque <span className="font-normal">· escolhidos a dedo pela QQPega</span>
             </h2>
           </div>
           <Link href="/eventos" className="flex shrink-0 items-center gap-1 text-sm font-semibold text-secondary hover:underline">
@@ -37,14 +37,18 @@ export default function HomePage() {
 
       {/* 2. Busca compacta: um campo só (artista, evento, cidade, local ou "Rock em São Paulo"). */}
       <section aria-labelledby="busca-titulo" className="mx-auto mt-6 max-w-7xl px-4 sm:px-6">
-        <div className="bg-hero rounded-2xl px-3 py-3 sm:px-5 sm:py-4">
+        <div className="bg-hero relative overflow-hidden rounded-3xl px-3 py-4 sm:px-6 sm:py-6">
+          <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
+          <p className="relative mx-auto mb-3 max-w-3xl font-display text-lg font-bold text-white sm:text-xl">
+            Procurando algo? <span className="text-lime">Pega aqui.</span>
+          </p>
           <h2 id="busca-titulo" className="sr-only">
             Buscar eventos
           </h2>
           <Suspense fallback={<div className="mx-auto h-12 max-w-3xl rounded-xl bg-white/15" />}>
-            <SmartEventSearch variant="page" label="Buscar eventos, artistas, cidades ou locais" className="mx-auto max-w-3xl" />
+            <SmartEventSearch variant="page" label="Buscar eventos, artistas, cidades ou locais" className="relative mx-auto max-w-3xl" />
           </Suspense>
-          <div className="mx-auto mt-3 max-w-3xl">
+          <div className="relative mx-auto mt-3 max-w-3xl">
             <Suspense fallback={<div className="h-9" />}>
               <HeroCategories />
             </Suspense>
@@ -56,7 +60,7 @@ export default function HomePage() {
         <NearbySection />
       </Suspense>
 
-      <Section title="Neste fim de semana" subtitle="Sexta a domingo, para não ficar em casa" href="/eventos?data=fim-de-semana">
+      <Section title="Neste fim de semana" subtitle="De sexta a domingo — bora sair de casa" href="/eventos?data=fim-de-semana">
         <Suspense fallback={<EventGridSkeleton />}>
           <Weekend />
         </Suspense>
@@ -69,9 +73,11 @@ export default function HomePage() {
             { icon: QrCode, title: "Ingresso no celular", text: "QR code seguro, PDF para download e cópia no seu e-mail." },
             { icon: ShieldCheck, title: "Compra transparente", text: "Taxas exibidas antes do pagamento e política de reembolso clara em cada evento." },
           ].map(({ icon: Icon, title, text }) => (
-            <div key={title} className="rounded-2xl border border-border bg-card p-5">
-              <Icon className="mb-3 size-6 text-secondary" aria-hidden />
-              <h3 className="font-display font-bold">{title}</h3>
+            <div key={title} className="rounded-2xl border border-border bg-card p-5 shadow-card">
+              <span className="mb-3 grid size-10 place-items-center rounded-xl bg-night text-lime">
+                <Icon className="size-5" aria-hidden />
+              </span>
+              <h3 className="font-bold">{title}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{text}</p>
             </div>
           ))}
@@ -80,11 +86,12 @@ export default function HomePage() {
 
       <section className="mx-auto mt-16 max-w-7xl px-4 sm:px-6">
         <div className="bg-hero relative overflow-hidden rounded-3xl p-8 text-white sm:p-12">
-          <div className="max-w-2xl">
-            <p className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-white/80">
+          <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
+          <div className="relative max-w-2xl">
+            <p className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-lime">
               <BadgePercent className="size-4" aria-hidden /> Para produtores, casas e coletivos
             </p>
-            <h2 className="font-display text-3xl font-extrabold sm:text-4xl">Venda ingressos com repasse transparente</h2>
+            <h2 className="font-display text-2xl font-extrabold leading-tight sm:text-4xl">Faça seu evento lotar. Repasse sem surpresa.</h2>
             <p className="mt-3 text-white/80">
               Publique seu evento, receba via PIX e cartão, acompanhe vendas em tempo real e faça o check-in pelo celular. Comissão padrão de 7% sobre o valor de face — eventos gratuitos não pagam comissão.
             </p>
@@ -108,7 +115,7 @@ function Section({ title, subtitle, href, children }: { title: string; subtitle?
     <section className="mx-auto mt-14 max-w-7xl px-4 sm:px-6">
       <div className="mb-5 flex items-end justify-between gap-4">
         <div>
-          <h2 className="font-display text-2xl font-extrabold tracking-tight sm:text-3xl">{title}</h2>
+          <h2 className="font-display text-xl font-extrabold sm:text-2xl">{title}</h2>
           {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
         </div>
         {href && (

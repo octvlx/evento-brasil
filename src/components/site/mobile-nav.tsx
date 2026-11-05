@@ -26,9 +26,11 @@ export function MobileNav() {
               <Link
                 href={href}
                 aria-current={active ? "page" : undefined}
-                className={cn("flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold", active ? "text-secondary" : "text-muted-foreground")}
+                className={cn("flex flex-col items-center gap-0.5 py-2 text-[11px] font-semibold", active ? "text-foreground" : "text-muted-foreground")}
               >
-                <Icon className="size-5" aria-hidden />
+                <span className={cn("grid h-7 w-12 place-items-center rounded-full transition-colors", active && "bg-accent text-accent-foreground")}>
+                  <Icon className="size-5" aria-hidden />
+                </span>
                 {label}
               </Link>
             </li>

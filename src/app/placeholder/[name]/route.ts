@@ -1,11 +1,13 @@
 // Capas ilustrativas (SVG) para desenvolvimento. Rotuladas como placeholder.
+// Paletas "noite na cidade" da QQPega: base escura + uma luz de cor (limão, pink,
+// laranja, ciano…), para variar entre eventos sem fugir da identidade.
 const PALETTES = [
-  ["#1e1b4b", "#7c3aed", "#f43f5e"],
-  ["#0f172a", "#2563eb", "#22d3ee"],
-  ["#3b0764", "#c026d3", "#fb923c"],
-  ["#052e16", "#059669", "#facc15"],
-  ["#431407", "#ea580c", "#f472b6"],
-  ["#172554", "#4f46e5", "#e879f9"],
+  ["#16121f", "#2a1740", "#ff4f93"],
+  ["#16121f", "#1d3a2a", "#c6f432"],
+  ["#1a1030", "#5b1a6e", "#ff8a3d"],
+  ["#0f1a24", "#164e63", "#5eead4"],
+  ["#21101c", "#8c1450", "#ffd166"],
+  ["#14122a", "#3730a3", "#ff4f93"],
 ];
 
 function hash(s: string) {
@@ -25,15 +27,15 @@ export async function GET(_req: Request, ctx: RouteContext<"/placeholder/[name]"
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
 <defs>
 <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset=".6" stop-color="${b}"/><stop offset="1" stop-color="${c}"/></linearGradient>
-<radialGradient id="l" cx="${cx}%" cy="${cy}%" r="60%"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<radialGradient id="l" cx="${cx}%" cy="${cy}%" r="60%"><stop offset="0" stop-color="${c}" stop-opacity=".45"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
 </defs>
 <rect width="1600" height="1000" fill="url(#g)"/>
 <rect width="1600" height="1000" fill="url(#l)"/>
-<g fill="none" stroke="#fff" stroke-opacity=".14" stroke-width="3">
+<g fill="none" stroke="${c}" stroke-opacity=".22" stroke-width="3">
 ${Array.from({ length: 9 }, (_, i) => `<circle cx="${(cx / 100) * 1600}" cy="${(cy / 100) * 1000}" r="${r + i * 70}"/>`).join("")}
 </g>
 <g fill="#fff" fill-opacity=".9" font-family="system-ui,sans-serif" font-weight="700">
-<text x="60" y="940" font-size="34" letter-spacing="6">IMAGEM ILUSTRATIVA</text>
+<text x="1540" y="940" font-size="34" letter-spacing="6" text-anchor="end">IMAGEM ILUSTRATIVA</text>
 </g>
 </svg>`;
   return new Response(svg, {
