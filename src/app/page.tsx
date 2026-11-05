@@ -2,12 +2,13 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { ArrowRight, BadgePercent, QrCode, ShieldCheck, Zap } from "lucide-react";
+import { ArrowRight, BadgePercent, Megaphone, QrCode, ShieldCheck, Zap } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCard, EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { CategoryChips } from "@/components/site/category-chips";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
+import { ANNOUNCE_EVENT_HREF } from "@/lib/help-links";
 import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
 import { eventsInCity, featuredEvents, getPublicCity, listCategories, weekendEvents } from "@/server/services/catalog";
@@ -26,9 +27,17 @@ export default function HomePage() {
               Em destaque <span className="font-normal">· seleção da QQPega</span>
             </h2>
           </div>
-          <Link href="/eventos" className="flex shrink-0 items-center gap-1 text-sm font-semibold text-secondary hover:underline">
-            Ver todos <ArrowRight className="size-4" aria-hidden />
-          </Link>
+          <div className="flex shrink-0 flex-col items-end gap-2 self-stretch justify-between">
+            <Link href={ANNOUNCE_EVENT_HREF} className={buttonVariants({ variant: "accent", size: "sm" })}>
+              <Megaphone aria-hidden />
+              {/* Celular: rótulo curto para o título continuar com espaço. */}
+              <span className="sm:hidden">Anunciar evento</span>
+              <span className="hidden sm:inline">Anuncie seu evento</span>
+            </Link>
+            <Link href="/eventos" className="flex items-center gap-1 text-sm font-semibold text-secondary hover:underline">
+              Ver todos <ArrowRight className="size-4" aria-hidden />
+            </Link>
+          </div>
         </div>
         <Suspense fallback={<CarouselSkeleton />}>
           <Featured />

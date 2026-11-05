@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { ChevronDown, Ticket, UserRound } from "lucide-react";
+import { ChevronDown, Megaphone, Ticket, UserRound } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { ANNOUNCE_EVENT_HREF } from "@/lib/help-links";
 import { cn } from "@/lib/utils";
 import { getActiveMembership, getCurrentUser } from "@/server/auth/current";
 import { logoutAction } from "@/features/auth/actions";
@@ -19,13 +20,21 @@ export function SiteHeader() {
         <Suspense fallback={<div className="ml-2 hidden h-10 max-w-xl flex-1 rounded-full bg-muted/60 md:block lg:ml-6" />}>
           <HeaderSearch />
         </Suspense>
+        {/* Botão à direita da busca (a partir do tablet; no celular ele fica no topo da home). */}
+        <Link
+          href={ANNOUNCE_EVENT_HREF}
+          aria-label="Anuncie seu evento"
+          // cn (twMerge): sem ele o inline-flex da base vence o hidden e o botão aparecia no celular.
+          className={cn(buttonVariants({ variant: "accent", size: "sm" }), "hidden shrink-0 md:inline-flex")}
+        >
+          <Megaphone aria-hidden />
+          <span className="lg:hidden">Anunciar</span>
+          <span className="hidden lg:inline">Anuncie seu evento</span>
+        </Link>
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <Suspense fallback={null}>
             <HeaderSearchMobile />
           </Suspense>
-          <Link href="/organizador" className="hidden text-sm font-semibold text-muted-foreground hover:text-foreground lg:block">
-            Para organizadores
-          </Link>
           <Suspense fallback={<div className="h-10 w-24 rounded-xl bg-muted" />}>
             <UserMenu />
           </Suspense>
