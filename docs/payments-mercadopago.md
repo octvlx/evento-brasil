@@ -330,7 +330,16 @@ avisando o endereço antigo.
    provedor falhou.
 
 O túnel rápido muda de endereço a cada execução. Para um endereço estável, use um
-túnel nomeado do Cloudflare com domínio próprio. Nunca fixe o endereço no código.
+túnel nomeado do Cloudflare com domínio próprio, ou o domínio fixo gratuito do ngrok
+(`ngrok http 3000 --url https://<seu-dominio>.ngrok-free.dev`; o agente precisa ser
+3.28 ou mais novo). Endereço fixo é o que permite usar o login com Google junto: o
+retorno do Google (`<APP_URL>/auth/google/callback`) tem de estar cadastrado com o
+endereço exato. `next.config.ts` já libera `*.trycloudflare.com` e `*.ngrok-free.dev`
+em `allowedDevOrigins`. Nunca fixe o endereço no código.
+
+Com antivírus que inspeciona HTTPS (por exemplo AVG/Avast), o Node e o ngrok recusam o
+certificado do antivírus: rode o `next dev` com `NODE_USE_SYSTEM_CA=1` e adicione o
+`ngrok.exe` às exceções de HTTPS do antivírus.
 
 ## Passos de habilitação
 
