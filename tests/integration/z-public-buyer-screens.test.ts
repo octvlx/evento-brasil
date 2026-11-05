@@ -7,6 +7,29 @@ import { buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetD
 
 beforeEach(resetDb);
 
+describe("privacidade dos eventos públicos", () => {
+  it("não expõe o link privado da transmissão nos dados públicos", async () => {
+    const owner = await makeUser();
+    const org = await makeOrg(owner);
+    const event = await makeEvent(org);
+    const onlineUrl = "https://example.com/transmissao?token=acesso-comprador";
+    await db.event.update({ where: { id: event.id }, data: { locationType: "ONLINE", onlineUrl } });
+    const publicData = await getPublicEvent(db, event.slug);
+    expect(publicData).not.toBeNull();
+    expect(publicData?.event.onlineUrl).toBeNull();
+    expect(JSON.stringify(publicData)).not.toContain(onlineUrl);
+    expect((await db.event.findUniqueOrThrow({ where: { id: event.id } })).onlineUrl).toBe(onlineUrl);
+  });
+
+  it("organização suspensa não tem evento público", async () => {
+    const owner = await makeUser();
+    const org = await makeOrg(owner);
+    const event = await makeEvent(org);
+    await db.organization.update({ where: { id: org.id }, data: { status: "SUSPENDED" } });
+    expect(await getPublicEvent(db, event.slug)).toBeNull();
+  });
+});
+
 async function setup() {
   const owner = await makeUser();
   const org = await makeOrg(owner);

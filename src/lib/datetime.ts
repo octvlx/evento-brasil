@@ -23,10 +23,17 @@ function offsetMs(date: Date, timeZone: string): number {
   return asUtc - Math.floor(date.getTime() / 1000) * 1000;
 }
 
+/** Valida o calendário também: Date normaliza silenciosamente 31/02 para março. */
+export function isValidLocalDateTime(local: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local)) return false;
+  const date = new Date(`${local}:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 16) === local;
+}
+
 /** "2026-11-20T20:00" no fuso `timeZone` → instante UTC. */
 export function zonedLocalToUtc(local: string, timeZone: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local);
-  if (!m) throw new RangeError(`Data/hora local inválida: ${local}`);
+  if (!m || !isValidLocalDateTime(local)) throw new RangeError(`Data/hora local inválida: ${local}`);
   const naive = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
   // Duas iterações resolvem mudanças de offset (horário de verão em outros fusos).
   let guess = naive - offsetMs(new Date(naive), timeZone);

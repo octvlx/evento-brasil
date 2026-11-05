@@ -28,7 +28,7 @@ import { formatBRL } from "@/lib/money";
 export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">): Promise<Metadata> {
   const { slug } = await params;
   const e = await db.event.findFirst({
-    where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] } },
+    where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] }, organization: { status: "APPROVED" } },
     select: { title: true, summary: true, coverImageUrl: true, city: { select: { name: true, state: true } } },
   });
   if (!e) return { title: "Evento não encontrado" };
@@ -107,7 +107,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
     eventAttendanceMode: event.locationType === "ONLINE" ? "https://schema.org/OnlineEventAttendanceMode" : "https://schema.org/OfflineEventAttendanceMode",
     location:
       event.locationType === "ONLINE"
-        ? { "@type": "VirtualLocation", url: event.onlineUrl }
+        ? { "@type": "VirtualLocation", url }
         : { "@type": "Place", name: event.venue?.name, address: { "@type": "PostalAddress", addressLocality: city?.name, addressRegion: city?.state, addressCountry: "BR" } },
     organizer: { "@type": "Organization", name: event.organization.name },
     // Preço total por ingresso (com a taxa do comprador), o mesmo exibido e cobrado.

@@ -1,6 +1,7 @@
 // Schemas Zod compartilhados entre formulários (cliente) e servidor.
 // O servidor SEMPRE revalida; nunca confia em preço/estoque vindos do cliente.
 import { z } from "zod";
+import { isValidLocalDateTime } from "@/lib/datetime";
 import { BR_TIMEZONES, isValidCNPJ, isValidCPF, isValidMobileBR, UF_CODES } from "@/lib/br";
 import { newPasswordSchema, PASSWORD_MAX_LENGTH, PASSWORD_MESSAGES } from "@/lib/password-policy";
 
@@ -18,7 +19,7 @@ const mobile = z
   .trim()
   .refine((v) => !v || isValidMobileBR(v), "Celular inválido. Use DDD + número, ex.: (11) 91234-5678");
 const emptyToUndefined = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (v === "" || v === null ? undefined : v), schema);
-const localDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Data/hora inválida");
+const localDateTime = z.string().refine(isValidLocalDateTime, "Data/hora inválida");
 
 // ── Contas ──
 export const registerSchema = z

@@ -335,6 +335,8 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
   return {
     event: {
       ...event,
+      // Link de acesso reservado aos compradores; nunca vai para dados públicos/SEO.
+      onlineUrl: null,
       ticketTypes: event.ticketTypes
         .filter((t) => !t.isHidden)
         .map((t) => ({ ...t, available: byType.get(t.id)?.available ?? 0, unavailableReason: byType.get(t.id)?.reason ?? null })),
