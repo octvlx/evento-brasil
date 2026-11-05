@@ -19,6 +19,13 @@ describe("Google OpenID verification", () => {
   ])("rejects invalid OpenID claims %#", async ({ claims, issuer, audience, expires }) => {
     await expect(google.validateGoogleIdToken(await token(claims, issuer, audience, expires), "expected-nonce", "client-test", resolver)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
   });
+  it("tolerates a server clock slightly behind Google (iat a few seconds in the future)", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const ahead = await new SignJWT({ sub: "google-user-1", email: "person@example.com", name: "Pessoa Google", email_verified: true, nonce: "expected-nonce" }).setProtectedHeader({ alg: "RS256", kid: "test" }).setIssuer("https://accounts.google.com").setAudience("client-test").setIssuedAt(now + 5).setExpirationTime(now + 300).sign(keyPair.privateKey);
+    await expect(google.validateGoogleIdToken(ahead, "expected-nonce", "client-test", resolver)).resolves.toMatchObject({ subject: "google-user-1" });
+    const farAhead = await new SignJWT({ sub: "google-user-1", email: "person@example.com", name: "Pessoa Google", email_verified: true, nonce: "expected-nonce" }).setProtectedHeader({ alg: "RS256", kid: "test" }).setIssuer("https://accounts.google.com").setAudience("client-test").setIssuedAt(now + 600).setExpirationTime(now + 900).sign(keyPair.privateKey);
+    await expect(google.validateGoogleIdToken(farAhead, "expected-nonce", "client-test", resolver)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+  });
   it("rejects a modified JWT signature", async () => {
     const signed = await token(); const parts = signed.split("."); parts[2] = (parts[2][0] === "a" ? "b" : "a") + parts[2].slice(1);
     await expect(google.validateGoogleIdToken(parts.join("."), "expected-nonce", "client-test", resolver)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
