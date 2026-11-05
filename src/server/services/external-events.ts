@@ -336,6 +336,7 @@ export async function adminListExternalSources(db: Db, admin: Actor) {
 
 export async function adminSetSourceStatus(db: Db, admin: Actor, sourceId: string, status: Extract<ExternalSourceStatus, "ACTIVE" | "PAUSED">) {
   assertAdminPermission(admin, PERM);
+  if (status !== "ACTIVE" && status !== "PAUSED") throw new AppError("VALIDATION", "Situação inválida.");
   const source = await db.externalSource.findUnique({ where: { id: sourceId } });
   if (!source) throw new AppError("NOT_FOUND", "Fonte não encontrada.");
   if (source.status === "NEEDS_AUTHORIZATION") throw new AppError("INVALID_STATE", "Esta fonte depende de autorização (API, feed ou acordo) e não pode ser ativada.");
@@ -379,6 +380,7 @@ const REVIEW_ACTION: Record<ExternalEventReview, string> = {
 
 export async function adminReviewExternalEvent(db: Db, admin: Actor, eventId: string, review: ExternalEventReview) {
   assertAdminPermission(admin, PERM);
+  if (!Object.hasOwn(REVIEW_ACTION, review)) throw new AppError("VALIDATION", "Situação inválida.");
   const event = await db.externalEvent.findUnique({ where: { id: eventId } });
   if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
   if (event.review === review) return event;

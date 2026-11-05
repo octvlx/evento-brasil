@@ -19,6 +19,7 @@ import { financeLog } from "@/server/services/finance-log";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { runRetentionPurgeIfDue } from "@/server/services/retention-purge";
 import { expireTicketTransfers } from "@/server/services/transfers";
+import { runExternalSyncIfDue } from "@/server/services/external-events";
 
 export async function POST(req: Request) {
   const secret = req.headers.get("x-cron-secret") ?? "";
@@ -52,6 +53,8 @@ export async function POST(req: Request) {
   }
   const emailDelivery = await step("dispatchEmailOutbox", () => dispatchEmailOutbox(db));
   const retention = await step("runRetentionPurgeIfDue", () => runRetentionPurgeIfDue(db));
+  // Eventos externos: coleta limitada das fontes ativas, no máximo a cada 6 h por fonte.
+  const externalSync = await step("runExternalSyncIfDue", () => runExternalSyncIfDue(db));
   return Response.json(
     {
       emailDelivery,
@@ -61,6 +64,7 @@ export async function POST(req: Request) {
       expiredTransfers,
       reconciliation: reconciliation && { ...reconciliation, errors: reconciliation.errors.length },
       retention,
+      externalSync,
       invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
       failedSteps: failed,
       at: new Date().toISOString(),

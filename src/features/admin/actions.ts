@@ -15,6 +15,7 @@ import { setAdminRoles, setUserSuspended } from "@/server/services/users";
 import { adminResetTwoFactor } from "@/server/services/two-factor";
 import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { rateLimit } from "@/server/rate-limit";
+import { adminReviewExternalEvent, adminRunExternalImport, adminSetSourceStatus } from "@/server/services/external-events";
 
 async function run(fn: (admin: Awaited<ReturnType<typeof requireAdmin>>) => Promise<unknown>): Promise<ActionResult> {
   const admin = await requireAdmin();
@@ -76,3 +77,14 @@ export async function saveCommissionRuleAction(_prev: ActionResult | undefined, 
     }),
   );
 }
+
+// Eventos externos (descoberta): permissão de moderação conferida nos serviços.
+export const setExternalSourceStatusAction = async (sourceId: string, status: "ACTIVE" | "PAUSED") => run((a) => adminSetSourceStatus(db, a, sourceId, status));
+export const runExternalImportAction = async (sourceId: string, maxEvents: number) =>
+  run(async (a) => {
+    await rateLimit(`external-import:${a.id}`, 6, 60 * 60_000);
+    await adminRunExternalImport(db, a, sourceId, Number(maxEvents));
+  });
+export const reviewExternalEventAction = async (eventId: string, review: "PUBLISHED" | "HIDDEN" | "PENDING_REVIEW") =>
+  run((a) => adminReviewExternalEvent(db, a, eventId, review));
+

@@ -6,6 +6,8 @@ import { SlidersHorizontal } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Select } from "@/components/ui/primitives";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
+import { ExternalEventsSection } from "@/components/site/external-event-card";
+import { listPublicExternalEvents } from "@/server/services/external-events";
 import { db } from "@/server/db";
 import { BackButton } from "@/components/site/back-button";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
@@ -175,8 +177,19 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
           )}
         </nav>
       )}
+      {/* Eventos externos: só sem filtro de categoria, preço ou data (não têm esses dados confirmados). */}
+      {page === 1 && !sp.categoria && !sp.preco && !sp.data && (
+        <ExternalResults q={plan.text || undefined} cityId={plan.city?.id} citySlug={plan.city ? undefined : sp.cidade || undefined} />
+      )}
     </>
   );
+}
+
+async function ExternalResults({ q, cityId, citySlug }: { q?: string; cityId?: string; citySlug?: string }) {
+  const id = cityId ?? (citySlug ? (await db.city.findUnique({ where: { slug: citySlug }, select: { id: true } }))?.id : undefined);
+  if (citySlug && !id) return null;
+  const events = await listPublicExternalEvents(db, { q, cityId: id, take: 8 });
+  return <ExternalEventsSection events={events} />;
 }
 
 /** Como a frase foi entendida: termo, cidade (com opção de tirar) e homônimos para escolher. */

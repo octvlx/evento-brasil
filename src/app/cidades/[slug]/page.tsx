@@ -11,6 +11,8 @@ import { EventShelf } from "@/components/site/event-shelf";
 import { db } from "@/server/db";
 import { cityShowcase, getPublicCity, listCategories, searchEvents, type DateFilter } from "@/server/services/catalog";
 import { cn } from "@/lib/utils";
+import { ExternalEventsSection } from "@/components/site/external-event-card";
+import { listPublicExternalEvents } from "@/server/services/external-events";
 
 type CitySearch = { categoria?: string; data?: string };
 
@@ -101,6 +103,7 @@ async function Showcase({ slug, cityName }: { slug: string; cityName: string }) 
       {shelves.map((s) => (
         <EventShelf key={s.category.slug} id={s.category.slug} title={s.category.name} count={s.total} href={cityHref(slug, { categoria: s.category.slug })} events={s.events} />
       ))}
+      <CityExternalEvents slug={slug} cityName={cityName} />
       <div className="mt-12 text-center">
         <Link href={`/eventos?cidade=${slug}`} className={buttonVariants({ variant: "outline" })}>
           Buscar com mais filtros <ArrowRight aria-hidden />
@@ -129,3 +132,12 @@ async function FilteredResults({ slug, cityName, categoria, data }: { slug: stri
     </>
   );
 }
+
+/** Eventos externos publicados na cidade (só com município confirmado pelo IBGE). */
+async function CityExternalEvents({ slug, cityName }: { slug: string; cityName: string }) {
+  const city = await db.city.findUnique({ where: { slug }, select: { id: true } });
+  if (!city) return null;
+  const events = await listPublicExternalEvents(db, { cityId: city.id, take: 8 });
+  return <ExternalEventsSection events={events} title={`Também em ${cityName} (ingressos em outros sites)`} />;
+}
+

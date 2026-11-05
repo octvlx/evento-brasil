@@ -54,6 +54,7 @@ export const ADMIN_NAV: { href: string; label: string; perm: AdminPermission | n
   { href: "/admin", label: "Visão geral", perm: null },
   { href: "/admin/organizadores", label: "Organizadores", perm: "organizers:review" },
   { href: "/admin/eventos", label: "Eventos", perm: "events:moderate" },
+  { href: "/admin/eventos-externos", label: "Eventos externos", perm: "events:moderate" },
   { href: "/admin/pagamentos", label: "Pedidos e pagamentos", perm: "finance:refunds" },
   { href: "/admin/cancelamentos", label: "Cancelamentos", perm: "cancellations:decide" },
   { href: "/admin/transferencias", label: "Transferências", perm: "transfers:read" },
