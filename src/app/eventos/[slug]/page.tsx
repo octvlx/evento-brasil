@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { connection } from "next/server";
-import { Accessibility, CalendarDays, ChevronRight, Clock, MapPin, Share2, ShieldAlert, Users } from "lucide-react";
+import { Accessibility, ArrowDown, CalendarDays, ChevronRight, Clock, MapPin, Share2, ShieldAlert, Users } from "lucide-react";
 import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
@@ -23,6 +23,7 @@ import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { formatReleaseAt } from "@/features/half-price/quota";
 import { AVAILABILITY } from "@/lib/labels";
 import { whatsappShareUrl } from "@/lib/utils";
+import { formatBRL } from "@/lib/money";
 
 export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">): Promise<Metadata> {
   const { slug } = await params;
@@ -75,6 +76,9 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   const av = AVAILABILITY[availability];
   const halfReleaseLabel = formatReleaseAt(halfPrice.releaseAt, tz);
   const hasHalfType = event.ticketTypes.some((t) => t.kind === "HALF_PRICE");
+  // Menor total por ingresso à venda (com a taxa do comprador): só para o atalho "Ver ingressos".
+  const onSaleTotals = event.ticketTypes.filter((t) => t.available).map((t) => prices[t.id].totalCents);
+  const minTotal = onSaleTotals.length ? Math.min(...onSaleTotals) : null;
 
   const tickets = event.ticketTypes.map((t) => ({
     id: t.id,
@@ -161,6 +165,22 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
         </div>
       </div>
 
+      {/* Celular: os ingressos ficam no fim da página; o atalho leva direto a eles. */}
+      {!ended && (
+        <a
+          href="#ingressos"
+          className="mt-4 flex items-center justify-between gap-3 rounded-2xl bg-night px-4 py-3 text-white shadow-card lg:hidden"
+        >
+          <span>
+            <span className="block text-xs text-white/70">{minTotal === null ? "Ingressos" : minTotal === 0 ? "Entrada" : "A partir de"}</span>
+            <span className="font-extrabold">{minTotal === null ? "Ver disponibilidade" : minTotal === 0 ? "Gratuita" : formatBRL(minTotal)}</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-sm font-bold text-accent-foreground">
+            Ver ingressos <ArrowDown className="size-4" aria-hidden />
+          </span>
+        </a>
+      )}
+
       <div className="mt-8 grid gap-10 lg:grid-cols-[1fr_400px]">
         <div className="min-w-0 space-y-8">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -244,9 +264,15 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
           </a>
         </div>
 
-        <aside className="lg:sticky lg:top-24 lg:self-start">
-          <Card className="p-5">
-            <h2 className="mb-4 font-display text-xl font-bold">Ingressos</h2>
+        <aside id="ingressos" className="scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
+          <Card className="overflow-hidden p-0">
+            <div className="flex items-center justify-between bg-night px-5 py-3 text-white">
+              <h2 className="font-display text-lg font-bold">Ingressos</h2>
+              {!ended && av && <span className="text-xs font-semibold text-lime">{av.label}</span>}
+            </div>
+            {/* Picote do ingresso. */}
+            <div className="h-0 border-t-2 border-dashed border-border" aria-hidden />
+            <div className="p-5">
             {ended ? (
               <div role="status" className="rounded-xl bg-muted p-4 text-sm">
                 <p className="font-semibold">Evento encerrado</p>
@@ -271,6 +297,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
             />
             )}
             <UtmCapture />
+            </div>
           </Card>
         </aside>
       </div>
@@ -280,8 +307,10 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
 
 function Info({ icon: Icon, title, children }: { icon: typeof MapPin; title: string; children?: React.ReactNode }) {
   return (
-    <div className="flex gap-3 rounded-2xl border border-border bg-card p-4">
-      <Icon className="mt-0.5 size-5 shrink-0 text-secondary" aria-hidden />
+    <div className="flex gap-3 rounded-2xl border border-border bg-card p-4 shadow-card">
+      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-secondary/10 text-secondary">
+        <Icon className="size-5" aria-hidden />
+      </span>
       <div className="min-w-0">
         <p className="font-semibold first-letter:uppercase">{title}</p>
         {children && <div className="text-sm text-muted-foreground">{children}</div>}
