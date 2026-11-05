@@ -37,9 +37,10 @@ export const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // Túneis rápidos da Cloudflare mudam de nome a cada execução: o coringa cobre todos.
+  // Túneis de desenvolvimento: os rápidos da Cloudflare mudam de nome a cada execução e o
+  // domínio fixo gratuito do ngrok fica em *.ngrok-free.dev; o coringa cobre todos.
   // Só o hostname é comparado (sem esquema nem porta); localhost já é permitido por padrão.
-  allowedDevOrigins: ["*.trycloudflare.com"],
+  allowedDevOrigins: ["*.trycloudflare.com", "*.ngrok-free.dev"],
   // Authorization codes/state must not appear in Next's default dev request logs.
   logging: { incomingRequests: { ignore: [/\/api\/mercadopago\/callback(?:[?]|$)/] } },
   // A suíte isolada não compartilha cache nem lock com o dev do usuário.
