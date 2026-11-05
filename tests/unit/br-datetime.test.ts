@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { formatCNPJ, formatCPF, formatPhoneBR, isValidCNPJ, isValidCPF, isValidMobileBR, UFS } from "@/lib/br";
 import { localDayRange, utcToZonedLocalInput, weekendRange, zonedLocalToUtc } from "@/lib/datetime";
-import { createOrderSchema, organizerApplicationSchema } from "@/features/schemas";
+import { couponInputSchema, createOrderSchema, eventInputSchema, organizerApplicationSchema, ticketTypeInputSchema } from "@/features/schemas";
+import { step2Schema, step3Schema } from "@/features/organizer/wizard-steps";
 
 describe("documentos e telefone", () => {
   it("valida CPF", () => {
@@ -48,6 +49,29 @@ describe("documentos e telefone", () => {
 });
 
 describe("fusos horários", () => {
+  it.each(["2026-02-29T20:00", "2026-02-31T20:00", "2026-04-31T20:00", "2026-13-01T20:00", "2026-01-01T24:00", "2026-01-01T12:60"])("recusa data/hora inexistente: %s", (local) => {
+    expect(() => zonedLocalToUtc(local, "America/Sao_Paulo")).toThrow(RangeError);
+    expect(eventInputSchema.shape.startsAtLocal.safeParse(local).success).toBe(false);
+    expect(eventInputSchema.shape.endsAtLocal.safeParse(local).success).toBe(false);
+    expect(eventInputSchema.shape.salesStartLocal.safeParse(local).success).toBe(false);
+    expect(eventInputSchema.shape.salesEndLocal.safeParse(local).success).toBe(false);
+    expect(ticketTypeInputSchema.shape.salesStartLocal.safeParse(local).success).toBe(false);
+    expect(step2Schema.shape.startsAtLocal.safeParse(local).success).toBe(false);
+    expect(step2Schema.shape.endsAtLocal.safeParse(local).success).toBe(false);
+    expect(step3Schema.shape.salesStartLocal.safeParse(local).success).toBe(false);
+    expect(step3Schema.shape.salesEndLocal.safeParse(local).success).toBe(false);
+    const coupon = couponInputSchema.safeParse({ code: "TESTE", discountType: "PERCENT", percentBps: 1000, validUntilLocal: local });
+    expect(coupon.success).toBe(false);
+    expect(coupon.error?.issues.some((issue) => issue.path[0] === "validUntilLocal")).toBe(true);
+  });
+
+  it("aceita 29/02 em ano bissexto e campos opcionais vazios", () => {
+    expect(zonedLocalToUtc("2028-02-29T20:00", "America/Sao_Paulo").toISOString()).toBe("2028-02-29T23:00:00.000Z");
+    expect(eventInputSchema.shape.startsAtLocal.safeParse("2028-02-29T20:00").success).toBe(true);
+    expect(ticketTypeInputSchema.shape.salesStartLocal.safeParse("").success).toBe(true);
+    expect(couponInputSchema.safeParse({ code: "TESTE", discountType: "PERCENT", percentBps: 1000 }).success).toBe(true);
+  });
+
   it("converte horário local para UTC por fuso", () => {
     expect(zonedLocalToUtc("2026-11-20T20:00", "America/Sao_Paulo").toISOString()).toBe("2026-11-20T23:00:00.000Z");
     expect(zonedLocalToUtc("2026-11-20T20:00", "America/Manaus").toISOString()).toBe("2026-11-21T00:00:00.000Z");

@@ -2,6 +2,7 @@
 // Compartilhado entre o navegador (validação ao continuar/autosave) e o servidor
 // (que SEMPRE revalida). As mensagens reaproveitam os campos de `eventInputSchema`.
 import { z } from "zod";
+import { isValidLocalDateTime } from "@/lib/datetime";
 import { requireVenueCity, transferPolicyFields, validateTransferPolicySettings, eventInputSchema, venueInputSchema } from "@/features/schemas";
 
 export const WIZARD_STEPS = [
@@ -108,8 +109,8 @@ export const step1Schema = z.object({
 export const step2Schema = z
   .object({
     timezone: s.timezone,
-    startsAtLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Informe data e horário de início"),
-    endsAtLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Informe data e horário de término"),
+    startsAtLocal: z.string().refine(isValidLocalDateTime, "Informe data e horário de início válidos"),
+    endsAtLocal: z.string().refine(isValidLocalDateTime, "Informe data e horário de término válidos"),
     locationType: s.locationType,
     venueMode: z.enum(["existing", "new"]).default("existing"),
     venueId: z.string().optional(),
@@ -149,8 +150,8 @@ export const step3Schema = z
     capacity: s.capacity,
     halfPriceQuotaPercent: z.preprocess((v) => (v === "" || v === null ? undefined : v), s.halfPriceQuotaPercent),
     maxTicketsPerAccount: s.maxTicketsPerAccount,
-    salesStartLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Informe quando as vendas começam"),
-    salesEndLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Informe quando as vendas terminam"),
+    salesStartLocal: z.string().refine(isValidLocalDateTime, "Informe quando as vendas começam com data e horário válidos"),
+    salesEndLocal: z.string().refine(isValidLocalDateTime, "Informe quando as vendas terminam com data e horário válidos"),
     // Contexto da etapa 2 (só para a regra "vendas até o fim do evento").
     endsAtLocal: z.string().optional(),
   })
