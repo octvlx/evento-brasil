@@ -5,7 +5,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AdminRole } from "@/generated/prisma/client";
 import { duoticketAdapter } from "@/server/external/adapters/duoticket";
 import {
+  adminDeleteExternalEvent,
+  adminImportExternalEventByUrl,
+  adminPreviewExternalCover,
+  adminRemoveExternalCover,
   adminReviewExternalEvent,
+  adminSetExternalCoverFromUrl,
+  adminSetExternalFeatured,
+  adminUploadExternalCover,
+  featuredExternalEvents,
   adminRunExternalImport,
   adminSetSourceStatus,
   getPublicExternalEvent,
@@ -19,7 +27,8 @@ import {
   titleSimilarity,
 } from "@/server/services/external-events";
 import { adminStats } from "@/server/services/reports";
-import { searchEvents } from "@/server/services/catalog";
+import { getPublicCity, listCities, searchEvents } from "@/server/services/catalog";
+import { suggestSearch } from "@/server/services/search";
 import { db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 import { duoEventHtml, duoListingHtml, fakeFetcher } from "../support/external-fixtures";
 
@@ -250,5 +259,155 @@ describe("público e separação do checkout", () => {
     expect(statsAfter.orders).toEqual(statsBefore.orders);
     expect(await db.order.count()).toBe(0);
     expect(await db.financialLedgerEntry.count()).toBe(0);
+  });
+});
+
+describe("busca, sugestões e cidades", () => {
+  it("cidade só com evento externo publicado aparece nas sugestões e na busca; some quando ele sai do ar", async () => {
+    await sources();
+    const admin = await makeUser({ admin: true });
+    await run(site({ "1201": { title: "Baile Lotado Externo", date: "20/12/2026", place: "Campinas | São Paulo" } }));
+    const e = await db.externalEvent.findFirstOrThrow();
+    // Em revisão: a cidade ainda não é pública.
+    expect((await listCities(db, { now: NOW })).map((c) => c.slug)).not.toContain("campinas-sp");
+    expect(await suggestSearch(db, "campin", NOW)).toEqual([]);
+
+    await adminReviewExternalEvent(db, admin, e.id, "PUBLISHED");
+    expect((await listCities(db, { now: NOW })).map((c) => c.slug)).toContain("campinas-sp");
+    expect(await getPublicCity(db, "campinas-sp", NOW)).not.toBeNull();
+    const groups = await suggestSearch(db, "campin", NOW);
+    expect(groups.find((g) => g.kind === "city")?.items).toEqual([expect.objectContaining({ citySlug: "campinas-sp" })]);
+    // Termo + cidade: combinação sugerida; e o evento externo no grupo de eventos.
+    const combo = await suggestSearch(db, "baile em camp", NOW);
+    expect(combo.find((g) => g.kind === "combo")?.items[0]).toMatchObject({ citySlug: "campinas-sp" });
+    const ev = (await suggestSearch(db, "baile lotado", NOW)).find((g) => g.kind === "event");
+    expect(ev?.items[0]).toMatchObject({ label: "Baile Lotado Externo", detail: expect.stringContaining("Evento externo") });
+    expect((await listPublicExternalEvents(db, { cityId: e.cityId! }, NOW)).map((x) => x.id)).toEqual([e.id]);
+
+    // Ocultar tira a cidade das sugestões; excluir também.
+    await adminReviewExternalEvent(db, admin, e.id, "HIDDEN");
+    expect((await listCities(db, { now: NOW })).map((c) => c.slug)).not.toContain("campinas-sp");
+    await adminReviewExternalEvent(db, admin, e.id, "PUBLISHED");
+    await adminDeleteExternalEvent(db, admin, e.id);
+    expect(await db.externalEvent.count()).toBe(0);
+    expect(await getPublicCity(db, "campinas-sp", NOW)).toBeNull();
+  });
+
+  it("filtros da busca valem para os externos: data, preço e categoria", async () => {
+    await sources();
+    const admin = await makeUser({ admin: true });
+    await run(site({ "1301": { title: "Show Data Perto", date: "07/11/2026" }, "1302": { title: "Show Data Longe", date: "20/12/2026" } }));
+    for (const e of await db.externalEvent.findMany()) await adminReviewExternalEvent(db, admin, e.id, "PUBLISHED");
+    const titles = async (f: Parameters<typeof listPublicExternalEvents>[1]) => (await listPublicExternalEvents(db, f, NOW)).map((e) => e.title).sort();
+    expect(await titles({})).toEqual(["Show Data Longe", "Show Data Perto"]);
+    // 05/11/2026 é quinta: o fim de semana é 07–08/11.
+    expect(await titles({ date: "fim-de-semana" })).toEqual(["Show Data Perto"]);
+    expect(await titles({ date: "hoje" })).toEqual([]);
+    // Preço não informado nunca entra num filtro de preço; com preço informado, entra.
+    expect(await titles({ price: "gratis" })).toEqual([]);
+    await db.externalEvent.updateMany({ where: { title: "Show Data Longe" }, data: { priceStatus: "FREE" } });
+    expect(await titles({ price: "gratis" })).toEqual(["Show Data Longe"]);
+    // A fonte não informa categoria: com categoria escolhida, nenhum externo aparece.
+    expect(await titles({ categorySlug: "shows" })).toEqual([]);
+  });
+
+  it("cidade antiga com o nome escrito diferente (caixa, acentos, espaços) é reaproveitada; UF diferente não", async () => {
+    await sources();
+    const legacy = await db.city.create({ data: { name: "CAMPINAS ", state: "SP", slug: "campinas-legado", timezone: "America/Sao_Paulo" } });
+    const otherUf = await db.city.create({ data: { name: "Campinas", state: "RJ", slug: "campinas-rj-legado", timezone: "America/Sao_Paulo" } });
+    await run(site({ "1401": { title: "Sem Cidade Duplicada", date: "20/12/2026", place: "campinas | São Paulo" } }));
+    const e = await db.externalEvent.findFirstOrThrow();
+    expect(e.cityId).toBe(legacy.id);
+    expect(await db.city.count({ where: { state: "SP" } })).toBe(1);
+    expect(await db.city.findUniqueOrThrow({ where: { id: legacy.id } })).toMatchObject({ ibgeCode: "3509502" });
+    expect(await db.city.findUniqueOrThrow({ where: { id: otherUf.id } })).toMatchObject({ ibgeCode: null });
+  });
+});
+
+describe("destaque", () => {
+  it("só quem modera destaca; exige publicado; despublicar tira o destaque", async () => {
+    await sources();
+    const moderator = await adminWith(["MODERATION"]);
+    const support = await adminWith(["SUPPORT"]);
+    await run(site({ "1501": { title: "Destaque Externo", date: "20/12/2026" } }));
+    const e = await db.externalEvent.findFirstOrThrow();
+    await expect(adminSetExternalFeatured(db, moderator, e.id, true)).rejects.toMatchObject({ code: "INVALID_STATE" });
+    await adminReviewExternalEvent(db, moderator, e.id, "PUBLISHED");
+    await expect(adminSetExternalFeatured(db, support, e.id, true)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await adminSetExternalFeatured(db, moderator, e.id, true);
+    const featured = await featuredExternalEvents(db, {}, NOW);
+    expect(featured.map((x) => x.id)).toEqual([e.id]);
+    expect(await featuredExternalEvents(db, { cityId: e.cityId! }, NOW)).toHaveLength(1);
+
+    await adminReviewExternalEvent(db, moderator, e.id, "HIDDEN");
+    expect(await db.externalEvent.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({ isFeatured: false });
+    expect(await featuredExternalEvents(db, {}, NOW)).toHaveLength(0);
+    await adminReviewExternalEvent(db, moderator, e.id, "PUBLISHED");
+    expect(await featuredExternalEvents(db, {}, NOW)).toHaveLength(0);
+
+    await adminSetExternalFeatured(db, moderator, e.id, true);
+    await adminSetExternalFeatured(db, moderator, e.id, false);
+    expect(await featuredExternalEvents(db, {}, NOW)).toHaveLength(0);
+    const meta = (await db.auditLog.findMany({ where: { actorUserId: moderator.id, action: "external_event.featured" }, orderBy: { createdAt: "asc" } })).map((a) => a.metadata);
+    expect(meta).toEqual([{ featured: true }, { featured: true }, { featured: false }]);
+  });
+});
+
+describe("capa e cadastro por link", () => {
+  function png(width: number, height: number) {
+    const b = new Uint8Array(64);
+    b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+    const dv = new DataView(b.buffer);
+    dv.setUint32(16, width);
+    dv.setUint32(20, height);
+    return b;
+  }
+  const deps = (routes: Record<string, () => Response>) => ({
+    resolveHost: async () => ["104.18.10.10"],
+    sleep: noSleep,
+    fetchImpl: (async (u: string | URL) => routes[String(u)]?.() ?? new Response("", { status: 404 })) as unknown as typeof fetch,
+  });
+
+  it("prévia não grava; confirmar copia para o armazenamento; upload e remoção; tudo auditado", async () => {
+    await sources();
+    const admin = await adminWith(["MODERATION"]);
+    const support = await adminWith(["SUPPORT"]);
+    await run(site({ "1601": { title: "Capa Externa", date: "20/12/2026" } }));
+    const e = await db.externalEvent.findFirstOrThrow();
+    const IMG = "https://imagedelivery.net/acc/abc/capa";
+    const d = deps({ [IMG]: () => new Response(png(800, 400), { headers: { "content-type": "image/png" } }) });
+
+    await expect(adminPreviewExternalCover(db, support, e.id, IMG, d)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const preview = await adminPreviewExternalCover(db, admin, e.id, IMG, d);
+    expect(preview).toMatchObject({ kind: "direct", candidates: [{ url: IMG, width: 800, height: 400 }] });
+    expect((await db.externalEvent.findUniqueOrThrow({ where: { id: e.id } })).coverImageUrl).toBeNull();
+
+    const stored = await adminSetExternalCoverFromUrl(db, admin, e.id, IMG, d);
+    // URL própria da plataforma: a página não carrega a imagem do site de terceiros.
+    expect(stored.url).toMatch(/^\/uploads\/events\/external\/.+\.png$/);
+    expect((await db.externalEvent.findUniqueOrThrow({ where: { id: e.id } })).coverImageUrl).toBe(stored.url);
+    await expect(adminSetExternalCoverFromUrl(db, admin, e.id, "https://127.0.0.1/x.png", d)).rejects.toMatchObject({ code: "VALIDATION" });
+
+    const uploaded = await adminUploadExternalCover(db, admin, e.id, new File([png(1200, 600)], "capa.png", { type: "image/png" }));
+    expect(uploaded).toMatch(/^\/uploads\/events\/external\//);
+    await expect(adminUploadExternalCover(db, admin, e.id, new File(["<svg/>"], "x.png", { type: "image/png" }))).rejects.toMatchObject({ code: "VALIDATION" });
+    await adminRemoveExternalCover(db, admin, e.id);
+    expect((await db.externalEvent.findUniqueOrThrow({ where: { id: e.id } })).coverImageUrl).toBeNull();
+    const actions = (await db.auditLog.findMany({ where: { actorUserId: admin.id }, orderBy: { createdAt: "asc" } })).map((a) => a.action);
+    expect(actions).toEqual(["external_event.cover_imported", "external_event.cover_uploaded", "external_event.cover_removed"]);
+  });
+
+  it("cadastro por link: só fonte autorizada com página de evento; cria em revisão e não duplica", async () => {
+    await sources("PAUSED");
+    const admin = await adminWith(["MODERATION"]);
+    const link = url("1701");
+    const fetcher = fakeFetcher({ [link]: duoEventHtml({ title: "Por Link", date: "20/12/2026" }) });
+    await expect(adminImportExternalEventByUrl(db, admin, "https://evil.example/evento/1/x", { fetcher, now: NOW })).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(adminImportExternalEventByUrl(db, admin, "https://duoticket.com.br/ajuda", { fetcher, now: NOW })).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(adminImportExternalEventByUrl(db, admin, "isso não é link", { fetcher, now: NOW })).rejects.toMatchObject({ code: "VALIDATION" });
+    const first = await adminImportExternalEventByUrl(db, admin, link, { fetcher, now: NOW });
+    const again = await adminImportExternalEventByUrl(db, admin, link, { fetcher, now: NOW });
+    expect(again.id).toBe(first.id);
+    expect(await db.externalEvent.findUniqueOrThrow({ where: { id: first.id } })).toMatchObject({ title: "Por Link", review: "PENDING_REVIEW" });
   });
 });

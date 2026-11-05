@@ -19,8 +19,8 @@ test.describe("eventos externos", () => {
     const starts = new Date(Date.now() + 10 * 86_400_000);
     starts.setUTCHours(3, 0, 0, 0);
     await client.query(
-      `INSERT INTO "ExternalEvent" (id, "sourceId", "sourceEventId", "sourceUrl", slug, title, "startsAt", "hasTime", timezone, "venueName", "cityName", state, "cityId", review, "contentHash", "publishedAt", "updatedAt")
-       VALUES ($1, 'extsrc_duoticket', $2, $3, $4, $5, $6, false, 'America/Sao_Paulo', 'Salão de Testes', 'São Paulo', 'SP', $7, 'PUBLISHED', 'e2e', now(), now())`,
+      `INSERT INTO "ExternalEvent" (id, "sourceId", "sourceEventId", "sourceUrl", slug, title, "startsAt", "hasTime", timezone, "venueName", "cityName", state, "cityId", review, "isFeatured", "contentHash", "publishedAt", "updatedAt")
+       VALUES ($1, 'extsrc_duoticket', $2, $3, $4, $5, $6, false, 'America/Sao_Paulo', 'Salão de Testes', 'São Paulo', 'SP', $7, 'PUBLISHED', true, 'e2e', now(), now())`,
       [`ext_${SLUG}`.slice(0, 30), SLUG.slice(-12), `https://duoticket.com.br/evento/999999/${SLUG}`, SLUG, TITLE, starts, rows[0]?.id ?? null],
     );
     await client.end();
@@ -46,8 +46,12 @@ test.describe("eventos externos", () => {
     expect(res.headers()["location"]).toBe(`https://duoticket.com.br/evento/999999/${SLUG}`);
 
     await page.goto(`/eventos?q=${encodeURIComponent("Baile de Teste")}`);
-    const section = page.getByRole("region", { name: /Também acontecendo/ });
+    const section = page.getByRole("region", { name: /ingressos em outros sites/ });
     await expect(section.getByRole("link", { name: new RegExp(TITLE) })).toHaveAttribute("href", `/eventos-externos/${SLUG}`);
+
+    // Destaque externo na home: junto dos nativos, leva ao link externo (pela saída /ir).
+    await page.goto("/");
+    await expect(page.getByRole("link", { name: new RegExp(`${TITLE} — evento externo`) }).first()).toHaveAttribute("href", `/eventos-externos/${SLUG}/ir`);
 
     await page.goto("/cidades/sao-paulo-sp");
     await expect(page.getByRole("region", { name: /Também em São Paulo/ }).getByText(TITLE)).toBeVisible();

@@ -13,7 +13,10 @@ import { AppError } from "../errors";
 import { adapterFor } from "../external/registry";
 import { ExternalFetchError, safeFetchHtml } from "../external/safe-fetch";
 import type { ExternalEventInput, ExternalSourceAdapter, Fetcher } from "../external/types";
+import { importCoverImage, previewCover, storeUploadedCover } from "../external/cover";
 import { resolveCityFromIbge } from "./cities";
+import { publicExternalWhere } from "./external-visibility";
+import { dateFilterRange, type DateFilter, type PriceFilter } from "./catalog";
 
 // Descoberta de eventos externos: importação idempotente por fonte, revisão antes de
 // publicar e páginas públicas que levam ao site original. Nada aqui passa por pedidos,
@@ -386,38 +389,179 @@ export async function adminReviewExternalEvent(db: Db, admin: Actor, eventId: st
   if (event.review === review) return event;
   const updated = await db.externalEvent.update({
     where: { id: eventId },
-    data: { review, reviewedById: admin.id, publishedAt: review === "PUBLISHED" ? (event.publishedAt ?? new Date()) : event.publishedAt },
+    // Sair de "publicado" tira o destaque: republicar não volta a destacar sem querer.
+    data: { review, reviewedById: admin.id, publishedAt: review === "PUBLISHED" ? (event.publishedAt ?? new Date()) : event.publishedAt, ...(review !== "PUBLISHED" ? { isFeatured: false } : {}) },
   });
   await audit(db, { actorUserId: admin.id, action: REVIEW_ACTION[review], entityType: "ExternalEvent", entityId: eventId, metadata: { from: event.review, to: review } });
   return updated;
+}
+
+export async function adminGetExternalEvent(db: Db, admin: Actor, eventId: string) {
+  assertAdminPermission(admin, PERM);
+  const event = await db.externalEvent.findUnique({ where: { id: eventId }, include: { source: { select: { name: true, key: true, status: true } }, city: { select: { name: true, state: true, slug: true } } } });
+  if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
+  return event;
+}
+
+/** Destaque: mesma permissão do destaque de eventos nativos; destacar exige evento publicado. */
+export async function adminSetExternalFeatured(db: Db, admin: Actor, eventId: string, featured: boolean) {
+  assertAdminPermission(admin, PERM);
+  const event = await db.externalEvent.findUnique({ where: { id: eventId }, select: { review: true, isFeatured: true } });
+  if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
+  if (featured && event.review !== "PUBLISHED") throw new AppError("INVALID_STATE", "Publique o evento antes de destacá-lo.");
+  if (event.isFeatured === featured) return;
+  await db.externalEvent.update({ where: { id: eventId }, data: { isFeatured: featured } });
+  await audit(db, { actorUserId: admin.id, action: "external_event.featured", entityType: "ExternalEvent", entityId: eventId, metadata: { featured } });
+}
+
+/**
+ * Cadastro manual pelo link da página do evento numa fonte autorizada (com adaptador):
+ * lê a página com as proteções da coleta, extrai os dados factuais e cria (ou atualiza)
+ * o evento em revisão. Funciona com a fonte pausada (ação explícita do admin), nunca
+ * numa fonte que depende de autorização.
+ */
+export async function adminImportExternalEventByUrl(db: Db, admin: Actor, rawUrl: string, deps: ImportDeps = {}) {
+  assertAdminPermission(admin, PERM);
+  let url: URL;
+  try {
+    url = new URL(String(rawUrl).trim());
+  } catch {
+    throw new AppError("VALIDATION", "Cole o link completo da página do evento (https://…).");
+  }
+  const sources = await db.externalSource.findMany({ where: { status: { not: "NEEDS_AUTHORIZATION" } } });
+  const match = sources.map((src) => ({ src, adapter: adapterFor(src.key) })).find(({ adapter }) => adapter?.allowedHosts.includes(url.hostname.toLowerCase()));
+  if (!match?.adapter) {
+    const names = sources.filter((src) => adapterFor(src.key)).map((src) => src.name).join(", ");
+    throw new AppError("VALIDATION", `Esse site não é uma fonte autorizada. Fontes com cadastro por link: ${names || "nenhuma"}.`);
+  }
+  const { src: source, adapter } = match;
+  const id = /\/evento\/(\d{1,9})\//.exec(url.pathname)?.[1];
+  if (url.protocol !== "https:" || !id) throw new AppError("VALIDATION", "O link não é de uma página de evento dessa fonte.");
+  const fetcher = deps.fetcher ?? defaultFetcher(adapter);
+  const now = deps.now ?? new Date();
+  let n: Normalized;
+  try {
+    const page = await fetcher.html(url.toString());
+    n = normalizeExternalInput(adapter.parseEvent(page.html, { sourceEventId: id, url: url.toString() }), adapter, now);
+  } catch (e) {
+    throw new AppError("VALIDATION", `Não foi possível ler o evento: ${errorMessage(e)}`);
+  }
+  const result = await upsertExternalEvent(db, source.id, source.key, n, now);
+  const event = await db.externalEvent.findUniqueOrThrow({ where: { sourceId_sourceEventId: { sourceId: source.id, sourceEventId: n.sourceEventId } } });
+  await audit(db, { actorUserId: admin.id, action: "external_event.imported_by_url", entityType: "ExternalEvent", entityId: event.id, metadata: { source: source.key, result } });
+  return { id: event.id, result };
+}
+
+type CoverDeps = Parameters<typeof previewCover>[2];
+
+/** Prévia da capa (URL direta ou página): nada é gravado aqui. */
+export async function adminPreviewExternalCover(db: Db, admin: Actor, eventId: string, url: string, deps?: CoverDeps) {
+  assertAdminPermission(admin, PERM);
+  const event = await db.externalEvent.findUnique({ where: { id: eventId }, select: { title: true } });
+  if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
+  if (!String(url ?? "").trim()) throw new AppError("VALIDATION", "Cole a URL da imagem ou o link da página do evento.");
+  return previewCover(String(url), event.title, deps);
+}
+
+/** Confirma a capa: baixa de novo (validando), copia para o armazenamento e grava a URL própria. */
+export async function adminSetExternalCoverFromUrl(db: Db, admin: Actor, eventId: string, imageUrl: string, deps?: CoverDeps) {
+  assertAdminPermission(admin, PERM);
+  const event = await db.externalEvent.findUnique({ where: { id: eventId }, select: { id: true } });
+  if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
+  const stored = await importCoverImage(String(imageUrl ?? ""), deps);
+  await db.externalEvent.update({ where: { id: eventId }, data: { coverImageUrl: stored.url } });
+  await audit(db, { actorUserId: admin.id, action: "external_event.cover_imported", entityType: "ExternalEvent", entityId: eventId, metadata: { from: String(imageUrl).slice(0, 300), width: stored.width, height: stored.height } });
+  return stored;
+}
+
+export async function adminUploadExternalCover(db: Db, admin: Actor, eventId: string, file: File) {
+  assertAdminPermission(admin, PERM);
+  const event = await db.externalEvent.findUnique({ where: { id: eventId }, select: { id: true } });
+  if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
+  const url = await storeUploadedCover(file);
+  await db.externalEvent.update({ where: { id: eventId }, data: { coverImageUrl: url } });
+  await audit(db, { actorUserId: admin.id, action: "external_event.cover_uploaded", entityType: "ExternalEvent", entityId: eventId });
+  return url;
+}
+
+export async function adminRemoveExternalCover(db: Db, admin: Actor, eventId: string) {
+  assertAdminPermission(admin, PERM);
+  await db.externalEvent.update({ where: { id: eventId }, data: { coverImageUrl: null } });
+  await audit(db, { actorUserId: admin.id, action: "external_event.cover_removed", entityType: "ExternalEvent", entityId: eventId });
+}
+
+/**
+ * Exclusão do registro (é só a nossa cópia do anúncio; não há pedido nem dinheiro ligado).
+ * Some da busca, das cidades e dos destaques na hora. Uma nova coleta da fonte pode trazê-lo
+ * de volta em revisão; para não voltar, prefira "Ocultar".
+ */
+export async function adminDeleteExternalEvent(db: Db, admin: Actor, eventId: string) {
+  assertAdminPermission(admin, PERM);
+  const event = await db.externalEvent.findUnique({ where: { id: eventId }, select: { id: true, sourceUrl: true } });
+  if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
+  await db.externalEvent.delete({ where: { id: eventId } });
+  await audit(db, { actorUserId: admin.id, action: "external_event.deleted", entityType: "ExternalEvent", entityId: eventId, metadata: { sourceUrl: event.sourceUrl } });
 }
 
 // ---------------------------------------------------------------------------
 // Público
 // ---------------------------------------------------------------------------
 
-/** Publicado, visto na última coleta (não ausente, não cancelado) e ainda não terminado. */
-export const publicExternalWhere = (now = new Date()): Prisma.ExternalEventWhereInput => ({
-  review: "PUBLISHED",
-  sourceStatus: "ACTIVE",
-  // Sem horário: vale até o fim do dia local (margem de 24 h a partir da meia-noite).
-  startsAt: { gt: new Date(now.getTime() - 24 * 3600_000) },
-  source: { status: { not: "NEEDS_AUTHORIZATION" } },
-});
+export { publicExternalWhere };
 
-export async function listPublicExternalEvents(db: Db, filter: { cityId?: string; q?: string; take?: number } = {}, now = new Date()) {
+export interface ExternalListFilter {
+  cityId?: string;
+  q?: string;
+  /** Filtros da busca. Eventos externos não têm categoria: com categoria, nenhum aparece. */
+  date?: DateFilter;
+  price?: PriceFilter;
+  categorySlug?: string;
+  featuredOnly?: boolean;
+  take?: number;
+}
+
+/** Faixa de preço → condição. Preço desconhecido nunca entra num filtro de preço. */
+function priceWhere(price: PriceFilter): Prisma.ExternalEventWhereInput {
+  if (price === "gratis") return { priceStatus: "FREE" };
+  const range = price === "ate-50" ? { lte: 5000 } : price === "50-150" ? { gte: 5000, lte: 15000 } : { gte: 15000 };
+  return { priceStatus: "PAID", minPriceCents: range };
+}
+
+export async function listPublicExternalEvents(db: Db, filter: ExternalListFilter = {}, now = new Date()) {
+  if (filter.categorySlug) return [];
   const q = filter.q?.trim().slice(0, 80);
+  const and: Prisma.ExternalEventWhereInput[] = [publicExternalWhere(now)];
+  if (filter.cityId) and.push({ cityId: filter.cityId });
+  if (filter.featuredOnly) and.push({ isFeatured: true });
+  if (q) and.push({ OR: [{ title: { contains: q, mode: "insensitive" } }, { venueName: { contains: q, mode: "insensitive" } }, { cityName: { contains: q, mode: "insensitive" } }] });
+  if (filter.date) {
+    const range = dateFilterRange(filter.date, now);
+    // Sem horário de término na fonte: conta pelo início dentro da janela.
+    and.push({ startsAt: { gte: range.from, lt: range.to } });
+  }
+  if (filter.price) and.push(priceWhere(filter.price));
   return db.externalEvent.findMany({
-    where: {
-      ...publicExternalWhere(now),
-      ...(filter.cityId ? { cityId: filter.cityId } : {}),
-      ...(q
-        ? { OR: [{ title: { contains: q, mode: "insensitive" } }, { venueName: { contains: q, mode: "insensitive" } }, { cityName: { contains: q, mode: "insensitive" } }] }
-        : {}),
-    },
+    where: { AND: and },
     orderBy: { startsAt: "asc" },
     take: Math.min(filter.take ?? 8, 24),
     include: { source: { select: { name: true } } },
+  });
+}
+
+/** Destaques externos públicos (home e cidade), mesma regra de visibilidade. */
+export async function featuredExternalEvents(db: Db, opts: { cityId?: string; limit?: number } = {}, now = new Date()) {
+  return listPublicExternalEvents(db, { cityId: opts.cityId, featuredOnly: true, take: opts.limit ?? 6 }, now);
+}
+
+/** Eventos externos públicos cujo título combina com o texto (sugestões da busca). */
+export async function suggestExternalEvents(db: Db, text: string, opts: { cityId?: string; take?: number } = {}, now = new Date()) {
+  const q = text.trim().slice(0, 80);
+  if (q.length < 2) return [];
+  return db.externalEvent.findMany({
+    where: { AND: [publicExternalWhere(now), { title: { contains: q, mode: "insensitive" } }, ...(opts.cityId ? [{ cityId: opts.cityId }] : [])] },
+    orderBy: { startsAt: "asc" },
+    take: opts.take ?? 4,
+    select: { id: true, title: true, venueName: true, cityId: true, cityName: true, state: true },
   });
 }
 

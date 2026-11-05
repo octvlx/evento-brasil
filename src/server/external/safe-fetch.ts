@@ -21,8 +21,11 @@ export class ExternalFetchError extends Error {
 }
 
 export interface SafeFetchOptions {
-  /** Hosts exatos permitidos (minúsculos), ex.: ["duoticket.com.br", "www.duoticket.com.br"]. */
-  allowedHosts: readonly string[];
+  /**
+   * Hosts exatos permitidos (minúsculos), ex.: ["duoticket.com.br", "www.duoticket.com.br"],
+   * ou "public": qualquer host com nome (nunca IP literal) que resolva só para endereços públicos.
+   */
+  allowedHosts: readonly string[] | "public";
   timeoutMs?: number;
   maxBytes?: number;
   /** Tentativas extras para falhas temporárias (rede, 429, 5xx). */
@@ -84,8 +87,9 @@ export async function assertFetchableUrl(raw: string, opts: Pick<SafeFetchOption
   if (url.protocol !== "https:") throw new ExternalFetchError("Só HTTPS é permitido.", "blocked");
   if (url.username || url.password) throw new ExternalFetchError("URL com credenciais não é permitida.", "blocked");
   if (url.port && url.port !== "443") throw new ExternalFetchError("Porta não permitida.", "blocked");
-  const host = url.hostname.toLowerCase();
-  if (net.isIP(host) || !opts.allowedHosts.includes(host)) throw new ExternalFetchError(`Host não autorizado: ${host}`, "blocked");
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const listed = opts.allowedHosts === "public" ? /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) && host !== "localhost" && !host.endsWith(".localhost") && !host.endsWith(".local") && !host.endsWith(".internal") : opts.allowedHosts.includes(host);
+  if (net.isIP(host) || !listed) throw new ExternalFetchError(`Host não autorizado: ${host}`, "blocked");
   const addresses = await (opts.resolveHost ?? defaultResolve)(host).catch(() => {
     throw new ExternalFetchError(`Não foi possível resolver ${host}.`, "network");
   });
@@ -93,10 +97,10 @@ export async function assertFetchableUrl(raw: string, opts: Pick<SafeFetchOption
   return url;
 }
 
-async function readLimited(res: Response, maxBytes: number): Promise<string> {
+async function readLimited(res: Response, maxBytes: number): Promise<Uint8Array> {
   const declared = Number(res.headers.get("content-length") ?? "0");
   if (declared > maxBytes) throw new ExternalFetchError("Resposta grande demais.", "too_large");
-  if (!res.body) return "";
+  if (!res.body) return new Uint8Array();
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -110,13 +114,22 @@ async function readLimited(res: Response, maxBytes: number): Promise<string> {
     }
     chunks.push(value);
   }
-  return new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks));
+  return new Uint8Array(Buffer.concat(chunks));
 }
 
 const sleepDefault = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** GET de uma página HTML com todas as proteções acima. Devolve o HTML e a URL final. */
-export async function safeFetchHtml(raw: string, options: SafeFetchOptions): Promise<{ url: string; html: string }> {
+export interface FetchedResource {
+  url: string;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+/**
+ * GET com todas as proteções acima. `accept` decide os tipos de conteúdo aceitos
+ * (o conteúdo de imagens ainda é conferido pela assinatura do arquivo por quem chama).
+ */
+export async function safeFetchResource(raw: string, options: SafeFetchOptions & { accept: RegExp }): Promise<FetchedResource> {
   const o = { ...defaults, ...options };
   const doFetch = o.fetchImpl ?? fetch;
   const sleep = o.sleep ?? sleepDefault;
@@ -133,7 +146,7 @@ export async function safeFetchHtml(raw: string, options: SafeFetchOptions): Pro
           res = await doFetch(url, {
             method: "GET",
             redirect: "manual",
-            headers: { "user-agent": o.userAgent ?? EXTERNAL_USER_AGENT, accept: "text/html,application/xhtml+xml" },
+            headers: { "user-agent": o.userAgent ?? EXTERNAL_USER_AGENT, accept: ACCEPT_HEADER },
             signal: AbortSignal.timeout(o.timeoutMs),
             cache: "no-store",
           });
@@ -148,9 +161,9 @@ export async function safeFetchHtml(raw: string, options: SafeFetchOptions): Pro
           continue;
         }
         if (!res.ok) throw new ExternalFetchError(`HTTP ${res.status}`, "http", res.status);
-        const type = res.headers.get("content-type") ?? "";
-        if (!/^text\/html|application\/xhtml\+xml/i.test(type)) throw new ExternalFetchError(`Conteúdo não é HTML (${type.slice(0, 40)}).`, "content_type");
-        return { url: url.toString(), html: await readLimited(res, o.maxBytes) };
+        const type = (res.headers.get("content-type") ?? "").toLowerCase();
+        if (!o.accept.test(type)) throw new ExternalFetchError(`Tipo de conteúdo não aceito (${type.slice(0, 40) || "não informado"}).`, "content_type");
+        return { url: url.toString(), contentType: type, bytes: await readLimited(res, o.maxBytes) };
       }
     } catch (error) {
       lastError = error instanceof ExternalFetchError ? error : new ExternalFetchError("Falha inesperada.", "network");
@@ -159,4 +172,18 @@ export async function safeFetchHtml(raw: string, options: SafeFetchOptions): Pro
     }
   }
   throw lastError ?? new ExternalFetchError("Falha inesperada.", "network");
+}
+
+/**
+ * Só formatos que sabemos validar. Sem "image/avif": CDNs de imagem com negociação
+ * (ex.: Cloudflare Images) entregariam AVIF, que a checagem por assinatura recusa.
+ */
+export const ACCEPT_HEADER = "text/html,application/xhtml+xml,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5";
+
+export const HTML_TYPES = /^(text\/html|application\/xhtml\+xml)/;
+
+/** GET de uma página HTML com todas as proteções acima. Devolve o HTML e a URL final. */
+export async function safeFetchHtml(raw: string, options: SafeFetchOptions): Promise<{ url: string; html: string }> {
+  const r = await safeFetchResource(raw, { ...options, accept: HTML_TYPES });
+  return { url: r.url, html: new TextDecoder("utf-8", { fatal: false }).decode(r.bytes) };
 }

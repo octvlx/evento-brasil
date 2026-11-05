@@ -146,12 +146,27 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
     params.set("pagina", String(p));
     return `/eventos?${params}`;
   };
+  // Eventos externos publicados com os mesmos filtros aplicáveis (cidade, texto, data, preço;
+  // com categoria nenhum aparece, porque a fonte não informa). Só na primeira página.
+  const externals =
+    page === 1
+      ? await listPublicExternalEvents(db, {
+          q: plan.text || undefined,
+          cityId: plan.city?.id ?? (sp.cidade ? (await db.city.findUnique({ where: { slug: sp.cidade }, select: { id: true } }))?.id ?? "__nenhuma__" : undefined),
+          categorySlug: sp.categoria || undefined,
+          date: pick(sp.data, DATE_OPTIONS),
+          price: pick(sp.preco, PRICE_OPTIONS),
+          take: 12,
+        })
+      : [];
+  const found = res.total + externals.length;
   return (
     <>
       <SearchSummary plan={plan} sp={sp} />
       <p className="mb-4 text-sm text-muted-foreground" aria-live="polite">
-        {res.total === 1 ? "1 evento encontrado" : `${res.total} eventos encontrados`}
+        {found === 1 ? "1 evento encontrado" : `${found} eventos encontrados`}
       </p>
+      {res.total === 0 && externals.length > 0 ? null : (
       <EventGrid
         events={res.events}
         emptyText={
@@ -160,6 +175,7 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
             : "Nenhum evento com esses filtros. Tente ampliar a data ou trocar a cidade."
         }
       />
+      )}
       {res.pageCount > 1 && (
         <nav className="mt-8 flex items-center justify-center gap-2" aria-label="Paginação">
           {page > 1 && (
@@ -177,19 +193,9 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
           )}
         </nav>
       )}
-      {/* Eventos externos: só sem filtro de categoria, preço ou data (não têm esses dados confirmados). */}
-      {page === 1 && !sp.categoria && !sp.preco && !sp.data && (
-        <ExternalResults q={plan.text || undefined} cityId={plan.city?.id} citySlug={plan.city ? undefined : sp.cidade || undefined} />
-      )}
+      <ExternalEventsSection events={externals} title={res.total ? "Também acontecendo (ingressos em outros sites)" : "Eventos com ingressos em outros sites"} />
     </>
   );
-}
-
-async function ExternalResults({ q, cityId, citySlug }: { q?: string; cityId?: string; citySlug?: string }) {
-  const id = cityId ?? (citySlug ? (await db.city.findUnique({ where: { slug: citySlug }, select: { id: true } }))?.id : undefined);
-  if (citySlug && !id) return null;
-  const events = await listPublicExternalEvents(db, { q, cityId: id, take: 8 });
-  return <ExternalEventsSection events={events} />;
 }
 
 /** Como a frase foi entendida: termo, cidade (com opção de tirar) e homônimos para escolher. */

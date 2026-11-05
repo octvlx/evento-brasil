@@ -7,6 +7,7 @@ import { CalendarDays, ExternalLink, Info, MapPin, Ticket } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge, Skeleton } from "@/components/ui/primitives";
 import { ExternalViewBeacon } from "@/features/external/view-beacon";
+import { EventCover } from "@/components/site/event-cover";
 import { BRAND } from "@/lib/brand";
 import { formatDateLong, formatDateShort, formatTime, timezoneLabel } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
@@ -28,6 +29,7 @@ export async function generateMetadata({ params }: PageProps<"/eventos-externos/
     title: `${e.title}${where}`,
     description: `${e.title}${where}, ${formatDateShort(e.startsAt, e.timezone)}. Evento externo com ingressos vendidos pela ${e.source.name}.`,
     alternates: { canonical: `/eventos-externos/${e.slug}` },
+    ...(e.coverImageUrl ? { openGraph: { images: [e.coverImageUrl] } } : {}),
     // Só indexa com conteúdo suficiente (publicado, ativo, futuro, com cidade e UF).
     robots: isIndexableExternal(e) ? { index: true, follow: false } : { index: false, follow: false },
   };
@@ -83,9 +85,17 @@ async function Content({ params }: { params: PageProps<"/eventos-externos/[slug]
         › <span className="text-foreground">Evento externo</span>
       </nav>
 
-      <div className="bg-hero relative overflow-hidden rounded-3xl p-6 text-white sm:p-8">
-        <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
-        <div className="relative">
+      <div className={`relative overflow-hidden rounded-3xl text-white ${e.coverImageUrl ? "aspect-[2/1] min-h-56 bg-night" : "bg-hero p-6 sm:p-8"}`}>
+        {e.coverImageUrl ? (
+          <>
+            {/* Capa copiada para o armazenamento da plataforma (não carrega de terceiros). */}
+            <EventCover src={e.coverImageUrl} alt={`Capa de ${e.title}`} priority />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" aria-hidden />
+          </>
+        ) : (
+          <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
+        )}
+        <div className={e.coverImageUrl ? "absolute inset-x-0 bottom-0 p-5 sm:p-8" : "relative"}>
           <div className="mb-3 flex flex-wrap gap-2">
             <Badge className="bg-lime text-night">Evento externo</Badge>
             <Badge className="bg-white/15 text-white">Ingressos na {e.source.name}</Badge>

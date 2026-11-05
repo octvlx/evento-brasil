@@ -4,7 +4,7 @@ import { refresh } from "next/cache";
 import { commissionRuleInputSchema } from "@/features/schemas";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
-import { toActionResult, type ActionResult } from "@/server/errors";
+import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { getPaymentAdapter } from "@/server/payments";
 import { cancelEvent } from "@/server/services/cancellation";
 import { setCommissionRule } from "@/server/services/commission";
@@ -15,7 +15,19 @@ import { setAdminRoles, setUserSuspended } from "@/server/services/users";
 import { adminResetTwoFactor } from "@/server/services/two-factor";
 import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { rateLimit } from "@/server/rate-limit";
-import { adminReviewExternalEvent, adminRunExternalImport, adminSetSourceStatus } from "@/server/services/external-events";
+import {
+  adminDeleteExternalEvent,
+  adminImportExternalEventByUrl,
+  adminPreviewExternalCover,
+  adminRemoveExternalCover,
+  adminReviewExternalEvent,
+  adminRunExternalImport,
+  adminSetExternalCoverFromUrl,
+  adminSetExternalFeatured,
+  adminSetSourceStatus,
+  adminUploadExternalCover,
+} from "@/server/services/external-events";
+import type { CoverPreview } from "@/server/external/cover";
 
 async function run(fn: (admin: Awaited<ReturnType<typeof requireAdmin>>) => Promise<unknown>): Promise<ActionResult> {
   const admin = await requireAdmin();
@@ -87,4 +99,39 @@ export const runExternalImportAction = async (sourceId: string, maxEvents: numbe
   });
 export const reviewExternalEventAction = async (eventId: string, review: "PUBLISHED" | "HIDDEN" | "PENDING_REVIEW") =>
   run((a) => adminReviewExternalEvent(db, a, eventId, review));
+export const featureExternalEventAction = async (eventId: string, featured: boolean) => run((a) => adminSetExternalFeatured(db, a, eventId, featured === true));
+export const deleteExternalEventAction = async (eventId: string) => run((a) => adminDeleteExternalEvent(db, a, eventId));
+export const removeExternalCoverAction = async (eventId: string) => run((a) => adminRemoveExternalCover(db, a, eventId));
 
+/** Cadastro por link: devolve o id do evento para abrir a edição. */
+export async function importExternalByUrlAction(url: string): Promise<ActionResult<{ id: string }>> {
+  const admin = await requireAdmin();
+  return toActionResult(async () => {
+    await rateLimit(`external-url:${admin.id}`, 30, 60 * 60_000);
+    const { id } = await adminImportExternalEventByUrl(db, admin, String(url));
+    return { id };
+  });
+}
+
+/** Prévia da capa: só busca e mostra candidatas (nada é gravado). */
+export async function previewExternalCoverAction(eventId: string, url: string): Promise<ActionResult<CoverPreview>> {
+  const admin = await requireAdmin();
+  return toActionResult(async () => {
+    await rateLimit(`external-cover:${admin.id}`, 40, 60 * 60_000);
+    return adminPreviewExternalCover(db, admin, eventId, String(url));
+  });
+}
+
+export const saveExternalCoverAction = async (eventId: string, imageUrl: string) =>
+  run(async (a) => {
+    await rateLimit(`external-cover:${a.id}`, 40, 60 * 60_000);
+    await adminSetExternalCoverFromUrl(db, a, eventId, String(imageUrl));
+  });
+
+export async function uploadExternalCoverAction(eventId: string, formData: FormData): Promise<ActionResult> {
+  const file = formData.get("file");
+  return run(async (a) => {
+    if (!(file instanceof File) || file.size === 0) throw new AppError("VALIDATION", "Escolha um arquivo de imagem.");
+    await adminUploadExternalCover(db, a, eventId, file);
+  });
+}

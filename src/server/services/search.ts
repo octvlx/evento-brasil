@@ -7,6 +7,7 @@ import { cityLabel, cityMatchesPrefix, interpretSearch, matchCategory, normalize
 import type { Db } from "../db";
 import { listCategories, listCities } from "./catalog";
 import { citiesWithMatchingEvents, publicVenuesMatching, rankPublicEvents } from "./search-ranking";
+import { suggestExternalEvents } from "./external-events";
 
 type PublicCity = Awaited<ReturnType<typeof listCities>>[number];
 
@@ -60,6 +61,8 @@ export async function suggestSearch(db: Db, rawInput: unknown, now = new Date())
   const partial = splitPartialLocation(raw);
   if (partial?.text) {
     const withEvents = await citiesWithMatchingEvents(db, partial.text, { now });
+    // Eventos externos publicados também valem para a combinação "termo em cidade".
+    for (const e of await suggestExternalEvents(db, partial.text, { take: 50 }, now)) if (e.cityId) withEvents.add(e.cityId);
     const combos = byPrefix(partial.partialCity)
       .filter(([, c]) => withEvents.has(c.id))
       .slice(0, MAX_PER_GROUP)
@@ -92,6 +95,22 @@ export async function suggestSearch(db: Db, rawInput: unknown, now = new Date())
           return { kind: "event", label: e.title, detail: [e.venue?.name, city && cityLabel(city)].filter(Boolean).join(" · ") || "Online", q: e.title };
         });
       groups.push({ kind: "event", title: "Eventos", items });
+    }
+    // Eventos externos publicados: entram depois dos vendidos aqui, marcados como externos.
+    const room = MAX_PER_GROUP - (groups.find((g) => g.kind === "event")?.items.length ?? 0);
+    if (room > 0) {
+      const external = await suggestExternalEvents(db, text, { cityId: interp.city?.id, take: room }, now);
+      const items = external.map((e): Suggestion => ({
+        kind: "event",
+        label: e.title,
+        detail: ["Evento externo", e.venueName, e.cityName && cityLabel({ name: e.cityName, state: e.state ?? "" })].filter(Boolean).join(" · "),
+        q: e.title,
+      }));
+      if (items.length) {
+        const group = groups.find((g) => g.kind === "event");
+        if (group) group.items.push(...items);
+        else groups.push({ kind: "event", title: "Eventos", items });
+      }
     }
     const venues = await publicVenuesMatching(db, text, MAX_PER_GROUP, now);
     if (venues.length) groups.push({ kind: "venue", title: "Locais", items: venues.map((v): Suggestion => ({ kind: "venue", label: v.name, detail: cityLabel({ name: v.city, state: v.state }), q: v.name })) });

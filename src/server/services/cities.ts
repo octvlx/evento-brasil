@@ -1,6 +1,7 @@
 import "server-only";
 import { defaultTimezoneForUF } from "@/lib/br";
 import { findMunicipality, findMunicipalityByName, validateMunicipality, type Municipality } from "@/lib/municipalities";
+import { normalizeMunicipalityName } from "@/lib/municipality-search";
 import { slugify } from "@/lib/utils";
 import type { Tx } from "../db";
 import { AppError } from "../errors";
@@ -38,7 +39,12 @@ export async function resolveCityFromIbge(tx: Tx, ibgeCode: unknown, uf: unknown
 }
 
 async function adoptLegacyCity(tx: Tx, m: Municipality) {
-  const legacy = await tx.city.findUnique({ where: { name_state: { name: m.nome, state: m.uf } } });
+  // Nome exato primeiro; senão, cidade antiga da MESMA UF com nome equivalente
+  // (maiúsculas, acentos e espaços: "SAO  PAULO" = "São Paulo"). UFs nunca se misturam.
+  const legacy =
+    (await tx.city.findUnique({ where: { name_state: { name: m.nome, state: m.uf } } })) ??
+    (await tx.city.findMany({ where: { state: m.uf, ibgeCode: null } })).find((c) => normalizeMunicipalityName(c.name) === normalizeMunicipalityName(m.nome)) ??
+    null;
   if (!legacy) return null;
   if (legacy.ibgeCode === String(m.id)) return legacy;
   if (legacy.ibgeCode) throw new AppError("CONFLICT", `A cidade ${m.nome} – ${m.uf} já está cadastrada com outro código IBGE.`);

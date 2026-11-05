@@ -51,14 +51,41 @@ afiliados da Sympla, ou um acordo ou feed com a Q2. Com isso, cria-se um adaptad
   - fontes, com ativar ou pausar; fontes que precisam de autorização não podem ser ativadas;
   - importação limitada;
   - últimas execuções, com os erros;
-  - revisão: publicar, ocultar, voltar para revisão e link para conferir a página original.
+  - revisão: publicar, ocultar, voltar para revisão e link para conferir a página original;
+  - **cadastro por link**: cola o link de um evento numa fonte autorizada (com adaptador);
+    ele entra em revisão (ou é atualizado, sem duplicar) e abre a edição;
+  - **edição** (`/admin/eventos-externos/[id]`): capa, destaque, publicar/ocultar e excluir.
+  - **Capa:** cola a URL direta da imagem (com ou sem extensão) ou o link da página do
+    evento. Na página, os candidatos vêm dos metadados (`og:image`, `twitter:image`,
+    `image_src`) e das imagens da página (inclusive `data-src`/`srcset`); a imagem com o
+    nome do evento no `alt` e formato largo ganha dos metadados, logos e perfis. Na
+    Duoticket o `og:image` é uma versão quadrada "perfil"; a capa exibida é a "capa" 2:1.
+    O admin vê a prévia e confirma; a imagem é baixada de novo, validada pelo conteúdo
+    (JPG, PNG ou WebP, dimensões mínimas 200×100, até 5 MB) e **copiada para o
+    armazenamento da plataforma**. Sem imagem válida, dá para colar outra URL ou enviar o
+    arquivo. A busca usa as mesmas proteções da coleta (só HTTPS, sem IP literal, DNS e
+    cada redirecionamento conferidos contra redes internas, tempo e tamanho limitados),
+    mas para qualquer host público. O cabeçalho `Accept` não pede AVIF, porque CDNs com
+    negociação (Cloudflare Images) entregariam um formato que não validamos.
+  - **Destaque:** só para evento publicado; ocultar ou voltar para revisão tira o
+    destaque; excluir tira de tudo.
   
   Tudo fica na auditoria.
 - **Público:**
-  - página `/eventos-externos/[slug]` com texto factual próprio, sem copiar descrição nem
-    imagem;
-  - seção "Também acontecendo" na busca (sem filtros de categoria, preço ou data) e
-    "Também em {cidade}" nas cidades;
+  - página `/eventos-externos/[slug]` com texto factual próprio, sem copiar descrição; a
+    capa, quando definida pelo admin, vem do armazenamento próprio;
+  - busca: os externos entram com os mesmos filtros (data por `startsAt`; preço só quando
+    a fonte informou: preço desconhecido nunca entra num filtro de preço; com categoria,
+    nenhum entra, porque a fonte não informa). Com resultados nativos, aparecem em "Também
+    acontecendo"; sem eles, em "Eventos com ingressos em outros sites";
+  - cidades e sugestões: evento externo publicado e visível torna a cidade pública
+    (sugestões da busca inteligente, filtro de cidade, `/cidades/[slug]`, "Perto de você"
+    na home). Ocultar, excluir, a fonte perder a autorização ou o evento passar fazem a
+    cidade sumir de novo se não houver outro evento. A regra fica em
+    `src/server/services/external-visibility.ts`, usada por todos;
+  - destaques: entram no carrossel da home e na prateleira "Em destaque" da cidade, junto
+    dos nativos e ordenados por data; o card destacado leva direto ao link externo pela
+    saída `/ir`;
   - saída por `/eventos-externos/[slug]/ir`, que só redireciona para a URL original HTTPS
     de host da fonte.
 - **SEO:**
@@ -89,5 +116,9 @@ afiliados da Sympla, ou um acordo ou feed com a Q2. Com isso, cria-se um adaptad
   local, e o texto é mantido como veio.
 - A home da Duoticket mostra cerca de 100 próximos eventos e é a única listagem usada.
 - O DNS é conferido antes da conexão, sem fixar o IP. A lista de hosts limita o alcance.
-- Categorias não são importadas, porque a fonte não informa; os eventos externos não entram
-  nos filtros de categoria, preço e data da busca.
+- Categorias não são importadas, porque a fonte não informa: com filtro de categoria, os
+  externos não aparecem.
+- Cidades equivalentes: a cidade vem do município do IBGE (nome comparado sem acentos,
+  caixa ou espaços extras, sempre na mesma UF). Cidade antiga sem código IBGE com nome
+  equivalente na mesma UF é reaproveitada em vez de duplicada.
+- A capa não é reprocessada (sem `sharp`): o arquivo validado é guardado como veio.

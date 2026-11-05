@@ -1540,6 +1540,10 @@ model ExternalEvent {
   categoryName        String?                   @db.VarChar(80)
   priceStatus         ExternalPriceStatus       @default(UNKNOWN)
   minPriceCents       Int?
+  // Capa copiada para o armazenamento da plataforma (nunca a URL de terceiros).
+  coverImageUrl       String?                   @db.VarChar(500)
+  // Destaque: mesmas regras dos eventos nativos (só aparece publicado e visível).
+  isFeatured          Boolean                   @default(false)
   review              ExternalEventReview       @default(PENDING_REVIEW)
   sourceStatus        ExternalEventSourceStatus @default(ACTIVE)
   // Hash dos campos coletados: detecta mudança sem comparar campo a campo.
@@ -1563,6 +1567,7 @@ model ExternalEvent {
   @@unique([sourceId, sourceEventId])
   @@index([review, startsAt])
   @@index([cityId, review, startsAt])
+  @@index([isFeatured, review, startsAt])
 }
 
 model ExternalImportRun {
