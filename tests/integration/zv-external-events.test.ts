@@ -6,6 +6,10 @@ import type { AdminRole } from "@/generated/prisma/client";
 import { duoticketAdapter } from "@/server/external/adapters/duoticket";
 import {
   adminAutoCoverExternalEvent,
+  adminExternalCityOptions,
+  adminListExternalEvents,
+  adminPublishExternalEvents,
+  BULK_PUBLISH_MAX,
   adminExternalCounts,
   pagePublicExternalEvents,
   adminDeleteExternalEvent,
@@ -523,6 +527,74 @@ describe("paginação da busca e números do admin", () => {
     // Depois do dia do 1º destaque, ele continua marcado mas não aparece mais no destaque.
     expect(await adminExternalCounts(db, admin, new Date("2026-12-02T12:00:00Z"))).toMatchObject({ featured: 2, featuredVisible: 1 });
     await expect(adminExternalCounts(db, await adminWith(["SUPPORT"]), NOW)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("filtros e publicação em lote no admin", () => {
+  async function seedMany() {
+    await sources();
+    await run(
+      site({
+        "2201": { title: "Samba na Praça", date: "10/12/2026", place: "Campinas | São Paulo" },
+        "2202": { title: "Samba de Roda", date: "20/12/2026", place: "Santos | São Paulo" },
+        "2203": { title: "Rock no Parque", date: "15/12/2026", place: "Campinas | São Paulo" },
+        "2204": { title: "Forró Pé de Serra", date: "05/01/2027", place: "Campinas | São Paulo" },
+      }),
+    );
+    return Object.fromEntries((await db.externalEvent.findMany()).map((e) => [e.title, e]));
+  }
+
+  it("filtra por nome, cidade e período, com total e opções de cidade", async () => {
+    const ev = await seedMany();
+    const admin = await adminWith(["MODERATION"]);
+    const titles = async (f: Parameters<typeof adminListExternalEvents>[4]) => (await adminListExternalEvents(db, admin, "PENDING_REVIEW", 500, f)).map((e) => e.title);
+    expect(await titles({ q: "samba" })).toEqual(["Samba na Praça", "Samba de Roda"]);
+    expect(await titles({ city: "SP:Campinas" })).toEqual(["Samba na Praça", "Rock no Parque", "Forró Pé de Serra"]);
+    expect(await titles({ from: "2026-12-12", to: "2026-12-31" })).toEqual(["Rock no Parque", "Samba de Roda"]);
+    expect(await titles({ to: "2026-12-10" })).toEqual(["Samba na Praça"]); // o dia "até" é incluído
+    expect(await titles({ q: "samba", city: "SP:Campinas" })).toEqual(["Samba na Praça"]);
+    // Valores inválidos são ignorados, sem erro.
+    expect(await titles({ city: "x", from: "ontem" })).toHaveLength(4);
+    const list = await adminListExternalEvents(db, admin, "PENDING_REVIEW", 2, {});
+    expect(list).toHaveLength(2);
+    expect(list.total).toBe(4);
+    expect(await adminExternalCityOptions(db, admin, "PENDING_REVIEW")).toEqual([
+      { value: "SP:Campinas", label: "Campinas – SP", count: 3 },
+      { value: "SP:Santos", label: "Santos – SP", count: 1 },
+    ]);
+    // Situação também filtra: publicados não aparecem em revisão.
+    await adminReviewExternalEvent(db, admin, ev["Rock no Parque"].id, "PUBLISHED");
+    expect(await titles({ city: "SP:Campinas" })).toEqual(["Samba na Praça", "Forró Pé de Serra"]);
+  });
+
+  it("publica só os selecionados, pelo serviço de publicação; falhas e já publicados vêm por evento", async () => {
+    const ev = await seedMany();
+    const admin = await adminWith(["MODERATION"]);
+    await adminReviewExternalEvent(db, admin, ev["Samba de Roda"].id, "PUBLISHED");
+    const res = await adminPublishExternalEvents(db, admin, [ev["Samba na Praça"].id, ev["Samba de Roda"].id, "naoexiste", ev["Samba na Praça"].id]);
+    expect(res).toEqual([
+      { id: ev["Samba na Praça"].id, title: "Samba na Praça", status: "published" },
+      { id: ev["Samba de Roda"].id, title: "Samba de Roda", status: "already" },
+      { id: "naoexiste", title: "(evento não encontrado)", status: "failed", error: "Evento externo não encontrado." },
+    ]);
+    // Os não selecionados continuam em revisão.
+    const states = Object.fromEntries((await db.externalEvent.findMany()).map((e) => [e.title, e.review]));
+    expect(states).toEqual({ "Samba na Praça": "PUBLISHED", "Samba de Roda": "PUBLISHED", "Rock no Parque": "PENDING_REVIEW", "Forró Pé de Serra": "PENDING_REVIEW" });
+    // Mesma auditoria da publicação individual.
+    expect(await db.auditLog.count({ where: { actorUserId: admin.id, action: "external_event.published" } })).toBe(2);
+  });
+
+  it("recusa sem permissão, sem seleção e acima do limite", async () => {
+    const ev = await seedMany();
+    const support = await adminWith(["SUPPORT"]);
+    const admin = await adminWith(["MODERATION"]);
+    await expect(adminPublishExternalEvents(db, support, [ev["Samba na Praça"].id])).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(adminPublishExternalEvents(db, admin, [])).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(adminPublishExternalEvents(db, admin, "tudo")).rejects.toMatchObject({ code: "VALIDATION" });
+    const many = Array.from({ length: BULK_PUBLISH_MAX + 1 }, (_, i) => `id${i}`);
+    await expect(adminPublishExternalEvents(db, admin, many)).rejects.toMatchObject({ code: "VALIDATION" });
+    expect(await db.externalEvent.count({ where: { review: "PUBLISHED" } })).toBe(0);
+    await expect(adminListExternalEvents(db, support, "PENDING_REVIEW")).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 

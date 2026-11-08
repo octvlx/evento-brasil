@@ -67,3 +67,54 @@ test.describe("eventos externos", () => {
     await expect(page.getByRole("listitem").filter({ hasText: "duoticket.com.br" }).getByRole("button", { name: "Ativar" })).toBeVisible();
   });
 });
+
+test.describe("publicação em lote no admin", () => {
+  test.skip(process.env.E2E_ISOLATED !== "1", "Insere eventos externos: só no banco descartável do E2E isolado.");
+  const tag = Date.now().toString(36);
+  const names = [`Lote ${tag} Alfa`, `Lote ${tag} Beta`, `Outro ${tag} Gama`];
+
+  test.beforeAll(async () => {
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    const starts = new Date(Date.now() + 12 * 86_400_000);
+    for (const [i, title] of names.entries()) {
+      const slug = `lote-${tag}-${i}`;
+      // Com capa já definida: a publicação não precisa buscar nada na internet.
+      await client.query(
+        `INSERT INTO "ExternalEvent" (id, "sourceId", "sourceEventId", "sourceUrl", slug, title, "startsAt", "hasTime", timezone, "cityName", state, review, "contentHash", "coverImageUrl", "updatedAt")
+         VALUES ($1, 'extsrc_duoticket', $2, $3, $4, $5, $6, false, 'America/Sao_Paulo', 'Campinas', 'SP', 'PENDING_REVIEW', 'e2e', '/placeholder/lote.svg', now())`,
+        [`lote_${tag}_${i}`, `l${tag}${i}`, `https://duoticket.com.br/evento/99${i}/${slug}`, slug, title, starts],
+      );
+    }
+    await client.end();
+  });
+
+  test("filtra, seleciona todos os filtrados, confirma com os nomes e publica só eles", async ({ page }) => {
+    await login(page, USERS.admin, "/admin/eventos-externos");
+    await page.waitForURL(/\/admin\/eventos-externos/);
+    const publish = page.getByRole("button", { name: "Publicar selecionados" });
+    await expect(publish).toBeDisabled();
+
+    await page.getByLabel("Nome").fill(`Lote ${tag}`);
+    await page.getByRole("button", { name: "Filtrar" }).click();
+    await page.waitForURL(new RegExp(`q=Lote`));
+    await expect(page.getByText("2 eventos com esses filtros.")).toBeVisible();
+
+    await page.getByLabel(/Selecionar todos os resultados filtrados \(2\)/).check();
+    await expect(page.getByText("2 eventos selecionados")).toBeVisible();
+    await publish.click();
+    const dialog = page.getByRole("dialog", { name: "Publicar 2 eventos?" });
+    await expect(dialog.getByRole("listitem")).toHaveText([names[0], names[1]]);
+    await dialog.getByRole("button", { name: "Publicar 2" }).click();
+
+    await expect(page.getByRole("status").filter({ hasText: "2 eventos publicados" })).toBeVisible();
+    // A lista foi atualizada: os publicados saíram de "Em revisão".
+    await expect(page.getByText("0 eventos com esses filtros.")).toBeVisible();
+
+    // O evento fora do filtro continua em revisão; os dois estão em Publicados.
+    await page.goto(`/admin/eventos-externos?aba=PENDING_REVIEW&q=${encodeURIComponent(`Outro ${tag}`)}`);
+    await expect(page.getByText(names[2])).toBeVisible();
+    await page.goto(`/admin/eventos-externos?aba=PUBLISHED&q=${encodeURIComponent(`Lote ${tag}`)}`);
+    await expect(page.getByText("2 eventos com esses filtros.")).toBeVisible();
+  });
+});
