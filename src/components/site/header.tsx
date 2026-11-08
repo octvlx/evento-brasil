@@ -7,6 +7,7 @@ import { getActiveMembership, getCurrentUser } from "@/server/auth/current";
 import { logoutAction } from "@/features/auth/actions";
 import { Logo } from "./logo";
 import { HeaderSearch, HeaderSearchMobile } from "./header-search";
+import { HoverDetails } from "./hover-details";
 
 export function SiteHeader() {
   return (
@@ -58,7 +59,8 @@ async function UserMenu() {
       <Link href="/meus-ingressos" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "hidden sm:inline-flex")}>
         <Ticket aria-hidden /> Meus ingressos
       </Link>
-      <details className="group relative">
+      {/* Abre com o mouse em cima e recolhe ao sair; toque e teclado abrem pelo resumo. */}
+      <HoverDetails className="group relative">
         <summary className="flex h-10 cursor-pointer list-none items-center gap-1.5 rounded-full border border-border px-2.5 text-sm font-semibold hover:bg-muted [&::-webkit-details-marker]:hidden">
           <span className="grid size-7 place-items-center rounded-full bg-secondary text-xs font-bold text-secondary-foreground">
             {user.name.slice(0, 1).toUpperCase()}
@@ -66,7 +68,9 @@ async function UserMenu() {
           <ChevronDown className="size-4 transition group-open:rotate-180" aria-hidden />
           <span className="sr-only">Menu da conta</span>
         </summary>
-        <nav className="absolute right-0 mt-2 w-60 overflow-hidden rounded-2xl border border-border bg-card p-1.5 shadow-xl">
+        {/* pt-2 (não mt-2): o espaço até o menu faz parte dele, e o mouse não "sai" no caminho. */}
+        <div className="absolute right-0 top-full z-50 w-60 pt-2">
+        <nav className="overflow-hidden rounded-2xl border border-border bg-card p-1.5 shadow-xl">
           <p className="truncate px-3 py-2 text-xs text-muted-foreground">
             <UserRound className="mr-1 inline size-3.5" aria-hidden />
             {user.email}
@@ -81,7 +85,8 @@ async function UserMenu() {
             <button className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-destructive hover:bg-muted">Sair</button>
           </form>
         </nav>
-      </details>
+        </div>
+      </HoverDetails>
     </div>
   );
 }
