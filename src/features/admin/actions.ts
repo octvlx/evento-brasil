@@ -17,6 +17,7 @@ import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { rateLimit } from "@/server/rate-limit";
 import {
   adminAutoCoverExternalEvent,
+  adminPublishExternalEvents,
   adminDeleteExternalEvent,
   adminImportExternalEventByUrl,
   adminPreviewExternalCover,
@@ -28,6 +29,7 @@ import {
   adminSetSourceStatus,
   adminUploadExternalCover,
 } from "@/server/services/external-events";
+import type { BulkPublishItem } from "@/server/services/external-events";
 import type { CoverPreview } from "@/server/external/cover";
 
 async function run(fn: (admin: Awaited<ReturnType<typeof requireAdmin>>) => Promise<unknown>): Promise<ActionResult> {
@@ -112,20 +114,47 @@ export const runExternalImportAction = async (sourceId: string, maxEvents: numbe
     await rateLimit(`external-import:${a.id}`, 6, 60 * 60_000);
     await adminRunExternalImport(db, a, sourceId, Number(maxEvents));
   });
+/**
+ * Publicar já busca a capa na página original (sem capa ainda). Falha aqui não desfaz
+ * a publicação: o admin pode definir a capa depois, na edição.
+ */
+async function autoCoverAfterPublish(admin: Awaited<ReturnType<typeof requireAdmin>>, eventId: string): Promise<"set" | "kept" | "none"> {
+  try {
+    // Orçamento próprio: publicar em lote não pode esgotar o "Buscar capa" manual.
+    await rateLimit(`external-autocover:${admin.id}`, AUTO_COVER_PER_HOUR, 60 * 60_000);
+    return await adminAutoCoverExternalEvent(db, admin, eventId);
+  } catch (e) {
+    console.warn("Capa automática do evento externo falhou:", e instanceof Error ? e.message : e);
+    return "none";
+  }
+}
+
 export const reviewExternalEventAction = async (eventId: string, review: "PUBLISHED" | "HIDDEN" | "PENDING_REVIEW") =>
   run(async (a) => {
     await adminReviewExternalEvent(db, a, eventId, review);
-    if (review !== "PUBLISHED") return;
-    // Publicar já busca a capa na página original (sem capa ainda). Falha aqui não
-    // desfaz a publicação: o admin pode definir a capa depois, na edição.
-    try {
-      // Orçamento próprio: publicar em lote não pode esgotar o "Buscar capa" manual.
-      await rateLimit(`external-autocover:${a.id}`, AUTO_COVER_PER_HOUR, 60 * 60_000);
-      await adminAutoCoverExternalEvent(db, a, eventId);
-    } catch (e) {
-      console.warn("Capa automática do evento externo falhou:", e instanceof Error ? e.message : e);
-    }
+    if (review === "PUBLISHED") await autoCoverAfterPublish(a, eventId);
   });
+
+export type BulkPublishResult = (BulkPublishItem & { cover?: "set" | "kept" | "none" })[];
+
+/**
+ * Publicação em lote: só os ids enviados (a seleção explícita do admin), pelo mesmo
+ * serviço da publicação individual. Depois busca as capas, 4 por vez, sem bloquear
+ * o resultado da publicação. Uma única Server Action: o cliente as executa em fila.
+ */
+export async function publishExternalEventsAction(ids: string[]): Promise<ActionResult<BulkPublishResult>> {
+  const admin = await requireAdmin();
+  const res = await toActionResult(async () => {
+    const results: BulkPublishResult = await adminPublishExternalEvents(db, admin, ids);
+    const toCover = results.filter((r) => r.status === "published");
+    for (let i = 0; i < toCover.length; i += 4) {
+      await Promise.all(toCover.slice(i, i + 4).map(async (r) => (r.cover = await autoCoverAfterPublish(admin, r.id))));
+    }
+    return results;
+  });
+  if (res.ok) refresh();
+  return res;
+}
 export const featureExternalEventAction = async (eventId: string, featured: boolean) => run((a) => adminSetExternalFeatured(db, a, eventId, featured === true));
 export const deleteExternalEventAction = async (eventId: string) => run((a) => adminDeleteExternalEvent(db, a, eventId));
 export const removeExternalCoverAction = async (eventId: string) => run((a) => adminRemoveExternalCover(db, a, eventId));

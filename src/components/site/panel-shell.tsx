@@ -27,7 +27,7 @@ export function PanelShell({
     >
       <aside
         className={cn(
-          collapsible ? "group/menu relative md:sticky md:top-20 md:z-30 md:self-start" : "lg:sticky lg:top-20 lg:self-start",
+          collapsible ? "group/menu relative min-w-0 md:sticky md:top-20 md:z-30 md:self-start" : "lg:sticky lg:top-20 lg:self-start",
         )}
       >
         {collapsible && (

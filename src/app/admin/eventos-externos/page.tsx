@@ -7,10 +7,22 @@ import { PageTitle } from "@/components/site/panel-shell";
 import { AdminActionButton } from "@/features/admin/controls";
 import { featureExternalEventAction, reviewExternalEventAction, runExternalImportAction, setExternalSourceStatusAction } from "@/features/admin/actions";
 import { ImportExternalByUrlForm } from "@/features/admin/external-controls";
+import { ExternalBulkPublishList } from "@/features/admin/external-bulk-publish";
+import { buttonVariants } from "@/components/ui/button";
+import { Input, Label, Select } from "@/components/ui/primitives";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { formatDateShort, formatEventDateTime } from "@/lib/datetime";
-import { ADMIN_RUN_MAX_EVENTS, adminExternalCounts, adminListExternalEvents, adminListExternalSources, adminListImportRuns } from "@/server/services/external-events";
+import {
+  ADMIN_RUN_MAX_EVENTS,
+  BULK_PUBLISH_MAX,
+  adminExternalCityOptions,
+  adminExternalCounts,
+  adminListExternalEvents,
+  adminListExternalSources,
+  adminListImportRuns,
+  type AdminExternalFilter,
+} from "@/server/services/external-events";
 import type { ExternalEventReview } from "@/generated/prisma/client";
 
 export const metadata: Metadata = { title: "Eventos externos — admin", robots: { index: false } };
@@ -43,13 +55,20 @@ export default function AdminExternalEvents({ searchParams }: PageProps<"/admin/
 
 async function Content({ searchParams }: { searchParams: PageProps<"/admin/eventos-externos">["searchParams"] }) {
   const admin = await requireAdmin("events:moderate");
-  const { aba } = await searchParams;
-  const tab = (TABS.find(([k]) => k === aba)?.[0] ?? "PENDING_REVIEW") as ExternalEventReview;
-  const [sources, runs, events, counts] = await Promise.all([
+  const sp = await searchParams;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const tab = (TABS.find(([k]) => k === sp.aba)?.[0] ?? "PENDING_REVIEW") as ExternalEventReview;
+  // Filtros (GET): nome, cidade e período; a situação de publicação são as abas.
+  const filter: AdminExternalFilter = { q: str(sp.q), city: str(sp.cidade), from: str(sp.de), to: str(sp.ate) };
+  const filtered = Boolean(filter.q || filter.city || filter.from || filter.to);
+  const keep = new URLSearchParams(Object.entries({ q: filter.q, cidade: filter.city, de: filter.from, ate: filter.to }).filter(([, v]) => v) as [string, string][]);
+  const tabHref = (k: ExternalEventReview) => `/admin/eventos-externos?${new URLSearchParams([["aba", k], ...keep])}`;
+  const [sources, runs, events, counts, cities] = await Promise.all([
     adminListExternalSources(db, admin),
     adminListImportRuns(db, admin),
-    adminListExternalEvents(db, admin, tab, 500),
+    adminListExternalEvents(db, admin, tab, 500, filter),
     adminExternalCounts(db, admin),
+    adminExternalCityOptions(db, admin, tab),
   ]);
   const tabCount: Record<ExternalEventReview, number> = { PENDING_REVIEW: counts.pending, PUBLISHED: counts.published, HIDDEN: counts.hidden };
 
@@ -164,7 +183,7 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
           {TABS.map(([k, label]) => (
             <Link
               key={k}
-              href={`/admin/eventos-externos?aba=${k}`}
+              href={tabHref(k)}
               aria-current={k === tab ? "page" : undefined}
               className={k === tab ? "rounded-full bg-night px-3 py-1 font-semibold text-white" : "rounded-full border border-border px-3 py-1 hover:bg-muted"}
             >
@@ -172,6 +191,45 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
             </Link>
           ))}
         </nav>
+        <form method="get" action="/admin/eventos-externos" aria-label="Filtrar eventos externos" className="mb-3 grid gap-3 rounded-2xl border border-border bg-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-[1.4fr_1.2fr_0.9fr_0.9fr_auto]">
+          <input type="hidden" name="aba" value={tab} />
+          <div className="space-y-1">
+            <Label htmlFor="filtro-nome">Nome</Label>
+            <Input id="filtro-nome" name="q" defaultValue={filter.q} placeholder="Parte do nome do evento" maxLength={80} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="filtro-cidade">Cidade</Label>
+            <Select id="filtro-cidade" name="cidade" defaultValue={filter.city}>
+              <option value="">Todas as cidades</option>
+              {cities.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label} ({c.count})
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="filtro-de">De</Label>
+            <Input id="filtro-de" name="de" type="date" defaultValue={filter.from} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="filtro-ate">Até</Label>
+            <Input id="filtro-ate" name="ate" type="date" defaultValue={filter.to} />
+          </div>
+          <div className="flex items-end gap-2">
+            <button type="submit" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+              Filtrar
+            </button>
+            {filtered && (
+              <Link href={`/admin/eventos-externos?aba=${tab}`} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+                Limpar
+              </Link>
+            )}
+          </div>
+        </form>
+        <p className="mb-3 text-sm text-muted-foreground" aria-live="polite">
+          {events.total === 1 ? "1 evento" : `${events.total} eventos`} {filtered ? "com esses filtros" : "nesta situação"}.
+        </p>
         {tab === "PUBLISHED" && (
           <dl className="mb-3 grid max-w-xl grid-cols-3 gap-3 text-center" aria-label="Números dos eventos publicados">
             <div className="rounded-2xl border border-border bg-card p-3 shadow-card">
@@ -188,12 +246,17 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
             </div>
           </dl>
         )}
-        {events.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Nenhum evento nesta lista.</p>
-        ) : (
-          <ul className="divide-y divide-border rounded-2xl border border-border bg-card">
-            {events.map((e) => (
-              <li key={e.id} className="flex flex-wrap items-start justify-between gap-3 p-4">
+        <ExternalBulkPublishList
+          // Filtros ou aba diferentes: componente novo, seleção vazia.
+          key={`${tab}?${keep}`}
+          total={events.total}
+          max={BULK_PUBLISH_MAX}
+          rows={events.map((e) => ({
+            id: e.id,
+            title: e.title,
+            selectable: e.review !== "PUBLISHED",
+            content: (
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-semibold">
                     <Link href={`/admin/eventos-externos/${e.id}`} className="hover:underline">
@@ -233,10 +296,10 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
                     <AdminActionButton label={e.isFeatured ? "Remover destaque" : "Destacar"} variant="ghost" action={featureExternalEventAction.bind(null, e.id, !e.isFeatured)} />
                   )}
                 </div>
-              </li>
-            ))}
-          </ul>
-        )}
+              </div>
+            ),
+          }))}
+        />
       </section>
     </>
   );

@@ -386,14 +386,82 @@ export async function adminExternalCounts(db: Db, admin: Actor, now = new Date()
   return { published, featured, featuredVisible, pending, hidden };
 }
 
-export async function adminListExternalEvents(db: Db, admin: Actor, review: ExternalEventReview, take = 100) {
+/** Filtros da lista do admin (todos opcionais). Datas no formato AAAA-MM-DD, dia local de Brasília. */
+export interface AdminExternalFilter {
+  q?: string;
+  /** "UF:Nome da cidade", como em adminExternalCityOptions. */
+  city?: string;
+  from?: string;
+  to?: string;
+}
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function adminExternalWhere(review: ExternalEventReview, f: AdminExternalFilter = {}): Prisma.ExternalEventWhereInput {
+  const and: Prisma.ExternalEventWhereInput[] = [{ review }];
+  const q = f.q?.trim().slice(0, 80);
+  if (q) and.push({ title: { contains: q, mode: "insensitive" } });
+  const city = f.city?.match(/^([A-Z]{2}):(.{1,120})$/);
+  if (city) and.push({ state: city[1], cityName: city[2] });
+  if (f.from && DAY_RE.test(f.from)) and.push({ startsAt: { gte: zonedLocalToUtc(`${f.from}T00:00`, "America/Sao_Paulo") } });
+  if (f.to && DAY_RE.test(f.to)) and.push({ startsAt: { lt: new Date(zonedLocalToUtc(`${f.to}T00:00`, "America/Sao_Paulo").getTime() + 86_400_000) } });
+  return { AND: and };
+}
+
+export async function adminListExternalEvents(db: Db, admin: Actor, review: ExternalEventReview, take = 100, filter: AdminExternalFilter = {}) {
   assertAdminPermission(admin, PERM);
-  return db.externalEvent.findMany({
-    where: { review },
-    orderBy: [{ startsAt: "asc" }],
-    take,
-    include: { source: { select: { name: true } } },
-  });
+  const where = adminExternalWhere(review, filter);
+  const [events, total] = await Promise.all([
+    db.externalEvent.findMany({ where, orderBy: [{ startsAt: "asc" }, { id: "asc" }], take, include: { source: { select: { name: true } } } }),
+    db.externalEvent.count({ where }),
+  ]);
+  return Object.assign(events, { total });
+}
+
+/** Cidades presentes na situação escolhida, para o filtro (valor "UF:Nome"). */
+export async function adminExternalCityOptions(db: Db, admin: Actor, review: ExternalEventReview) {
+  assertAdminPermission(admin, PERM);
+  const rows = await db.externalEvent.groupBy({ by: ["state", "cityName"], where: { review, cityName: { not: null }, state: { not: null } }, _count: { _all: true } });
+  return rows
+    .map((r) => ({ value: `${r.state}:${r.cityName}`, label: `${r.cityName} – ${r.state}`, count: r._count._all }))
+    .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+}
+
+/** Máximo de eventos por publicação em lote (cada um pode buscar capa na fonte). */
+export const BULK_PUBLISH_MAX = 50;
+
+export type BulkPublishItem = { id: string; title: string; status: "published" | "already" | "failed"; error?: string };
+
+/**
+ * Publica só os eventos indicados, um a um, pelo mesmo serviço da publicação individual
+ * (mesmas validações, permissão e auditoria). Falha de um não interrompe os outros.
+ */
+export async function adminPublishExternalEvents(db: Db, admin: Actor, ids: unknown): Promise<BulkPublishItem[]> {
+  assertAdminPermission(admin, PERM);
+  const list = Array.isArray(ids) ? [...new Set(ids.filter((i): i is string => typeof i === "string" && i.length > 0 && i.length <= 40))] : [];
+  if (!list.length) throw new AppError("VALIDATION", "Selecione ao menos um evento.");
+  if (list.length > BULK_PUBLISH_MAX) throw new AppError("VALIDATION", `Selecione no máximo ${BULK_PUBLISH_MAX} eventos por vez.`);
+  const rows = await db.externalEvent.findMany({ where: { id: { in: list } }, select: { id: true, title: true, review: true } });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const results: BulkPublishItem[] = [];
+  for (const id of list) {
+    const row = byId.get(id);
+    if (!row) {
+      results.push({ id, title: "(evento não encontrado)", status: "failed", error: "Evento externo não encontrado." });
+      continue;
+    }
+    if (row.review === "PUBLISHED") {
+      results.push({ id, title: row.title, status: "already" });
+      continue;
+    }
+    try {
+      await adminReviewExternalEvent(db, admin, id, "PUBLISHED");
+      results.push({ id, title: row.title, status: "published" });
+    } catch (e) {
+      results.push({ id, title: row.title, status: "failed", error: e instanceof AppError ? e.message : "Erro inesperado." });
+    }
+  }
+  return results;
 }
 
 const REVIEW_ACTION: Record<ExternalEventReview, string> = {
