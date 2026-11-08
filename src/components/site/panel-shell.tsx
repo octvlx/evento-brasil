@@ -15,27 +15,26 @@ export function PanelShell({
   nav: [string, string][];
   aside?: React.ReactNode;
   children: React.ReactNode;
-  /** Telas grandes: menu recolhido numa faixa estreita; abre com o mouse em cima ou com foco pelo teclado. */
+  /** A partir de tablets (md): menu recolhido numa faixa estreita; abre com o mouse em cima ou com foco pelo teclado. */
   collapsible?: boolean;
 }) {
   return (
     <div
       className={cn(
         "mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6",
-        collapsible ? "lg:grid-cols-[44px_1fr]" : "lg:grid-cols-[220px_1fr]",
+        collapsible ? "md:grid-cols-[44px_1fr]" : "lg:grid-cols-[220px_1fr]",
       )}
     >
       <aside
         className={cn(
-          "lg:sticky lg:top-20 lg:self-start",
-          collapsible && "group/menu relative lg:z-30",
+          collapsible ? "group/menu relative md:sticky md:top-20 md:z-30 md:self-start" : "lg:sticky lg:top-20 lg:self-start",
         )}
       >
         {collapsible && (
           <button
             type="button"
             aria-label={`Abrir menu: ${title}`}
-            className="hidden size-11 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground shadow-card transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:flex"
+            className="hidden size-11 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground shadow-card transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex"
           >
             <Menu className="size-5" aria-hidden />
           </button>
@@ -43,7 +42,7 @@ export function PanelShell({
         <div
           className={cn(
             collapsible &&
-              "lg:pointer-events-none lg:absolute lg:left-0 lg:top-0 lg:w-60 lg:-translate-x-2 lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:p-2 lg:opacity-0 lg:shadow-lift lg:transition lg:duration-150 lg:group-has-[:focus-visible]/menu:pointer-events-auto lg:group-has-[:focus-visible]/menu:translate-x-0 lg:group-has-[:focus-visible]/menu:opacity-100 lg:group-hover/menu:pointer-events-auto lg:group-hover/menu:translate-x-0 lg:group-hover/menu:opacity-100 motion-reduce:lg:transition-none",
+              "md:pointer-events-none md:absolute md:left-0 md:top-0 md:w-60 md:-translate-x-2 md:rounded-2xl md:border md:border-border md:bg-card md:p-2 md:opacity-0 md:shadow-lift md:transition md:duration-150 md:group-has-[:focus-visible]/menu:pointer-events-auto md:group-has-[:focus-visible]/menu:translate-x-0 md:group-has-[:focus-visible]/menu:opacity-100 md:group-hover/menu:pointer-events-auto md:group-hover/menu:translate-x-0 md:group-hover/menu:opacity-100 motion-reduce:md:transition-none md:[&_nav]:mx-0 md:[&_nav]:flex-col md:[&_nav]:px-0",
           )}
         >
           <p className="mb-2 px-3 text-xs font-bold uppercase tracking-widest text-secondary">
