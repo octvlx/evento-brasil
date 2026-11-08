@@ -1584,6 +1584,7 @@ model ExternalImportRun {
   created       Int                     @default(0)
   updated       Int                     @default(0)
   unchanged     Int                     @default(0)
+  skippedPast   Int                     @default(0)
   failed        Int                     @default(0)
   // Erros resumidos (URL e mensagem), no máximo algumas dezenas; nunca segredos.
   errors        Json                    @default("[]")

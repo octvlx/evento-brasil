@@ -146,14 +146,17 @@ async function HeroCategories() {
 // Largura do card por breakpoint (1 / 2 / 3 / 4 por tela), para o srcset da capa.
 const CAROUSEL_IMAGE_SIZES = "(min-width: 1280px) 300px, (min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw";
 
+/** Carrossel de destaques: até 99 eventos (nativos e externos), do mais próximo ao mais distante. */
+const FEATURED_MAX = 99;
+
 async function Featured() {
   await connection();
   // Mesmos critérios de antes: destaque, publicado, de organização aprovada e não encerrado.
   // Destaques externos (publicados e visíveis) entram junto, por data, e levam ao link externo.
-  const [events, external] = await Promise.all([featuredEvents(db, 12), featuredExternalEvents(db, { limit: 12 })]);
+  const [events, external] = await Promise.all([featuredEvents(db, FEATURED_MAX), featuredExternalEvents(db, { limit: FEATURED_MAX })]);
   const items = [...events.map((e) => ({ kind: "native" as const, at: e.startsAt.getTime(), e })), ...external.map((e) => ({ kind: "external" as const, at: e.startsAt.getTime(), e }))]
     .sort((a, b) => a.at - b.at)
-    .slice(0, 12);
+    .slice(0, FEATURED_MAX);
   if (!items.length) return <EventGrid events={[]} emptyText="Nenhum evento em destaque no momento." />;
   return (
     <EventCarousel label="Eventos em destaque">

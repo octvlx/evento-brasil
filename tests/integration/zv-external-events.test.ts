@@ -456,3 +456,36 @@ describe("capa automática ao publicar", () => {
     await expect(adminAutoCoverExternalEvent(db, await adminWith(["SUPPORT"]), e.id, ok)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
+
+describe("eventos que já aconteceram", () => {
+  it("Importar agora só traz eventos de hoje em diante; os passados são contados como ignorados", async () => {
+    await sources();
+    // NOW = 05/11/2026 12:00 UTC (manhã em Brasília).
+    const res = await run(site({ "1901": { title: "Ontem", date: "04/11/2026" }, "1902": { title: "Hoje", date: "05/11/2026" }, "1903": { title: "Depois", date: "20/12/2026" } }));
+    expect(res).toMatchObject({ created: 2, skippedPast: 1, failed: 0 });
+    expect((await db.externalEvent.findMany({ orderBy: { title: "asc" } })).map((e) => e.title)).toEqual(["Depois", "Hoje"]);
+    expect(await db.externalImportRun.findFirstOrThrow()).toMatchObject({ skippedPast: 1, created: 2 });
+
+    const admin = await adminWith(["MODERATION"]);
+    const link = url("1904");
+    const fetcher = fakeFetcher({ [link]: duoEventHtml({ title: "Passado Por Link", date: "01/11/2026" }) });
+    await expect(adminImportExternalEventByUrl(db, admin, link, { fetcher, now: NOW })).rejects.toThrow(/já aconteceu/);
+  });
+
+  it("destaque some sozinho quando o dia do evento passa", async () => {
+    await sources();
+    const admin = await adminWith(["MODERATION"]);
+    await run(site({ "2001": { title: "Destaque Do Dia", date: "05/11/2026" }, "2002": { title: "Destaque Futuro", date: "20/12/2026" } }));
+    for (const e of await db.externalEvent.findMany()) {
+      await adminReviewExternalEvent(db, admin, e.id, "PUBLISHED");
+      await adminSetExternalFeatured(db, admin, e.id, true);
+    }
+    const titles = async (now: Date) => (await featuredExternalEvents(db, { limit: 99 }, now)).map((e) => e.title);
+    // No dia: os dois, em ordem cronológica.
+    expect(await titles(NOW)).toEqual(["Destaque Do Dia", "Destaque Futuro"]);
+    expect(await titles(new Date("2026-11-06T02:30:00Z"))).toEqual(["Destaque Do Dia", "Destaque Futuro"]); // 23:30 em Brasília
+    // Dia seguinte em Brasília: o do dia anterior sai do destaque.
+    expect(await titles(new Date("2026-11-06T03:30:00Z"))).toEqual(["Destaque Futuro"]);
+  });
+});
+

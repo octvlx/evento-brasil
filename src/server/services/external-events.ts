@@ -15,7 +15,7 @@ import { ExternalFetchError, safeFetchHtml } from "../external/safe-fetch";
 import type { ExternalEventInput, ExternalSourceAdapter, Fetcher } from "../external/types";
 import { importCoverImage, previewCover, storeUploadedCover } from "../external/cover";
 import { resolveCityFromIbge } from "./cities";
-import { publicExternalWhere } from "./external-visibility";
+import { externalEventIsPast, externalTodayStart, publicExternalWhere } from "./external-visibility";
 import { dateFilterRange, type DateFilter, type PriceFilter } from "./catalog";
 
 // Descoberta de eventos externos: importação idempotente por fonte, revisão antes de
@@ -174,6 +174,8 @@ export type ImportSummary = {
   unchanged: number;
   failed: number;
   markedMissing: number;
+  /** Eventos cujo dia já passou: não são importados nem atualizados. */
+  skippedPast: number;
 };
 
 function defaultFetcher(adapter: ExternalSourceAdapter): Fetcher {
@@ -209,7 +211,7 @@ export async function runExternalImport(db: Db, sourceKey: string, limits: Impor
   if (busy) throw new AppError("CONFLICT", "Já existe uma importação em andamento para esta fonte.");
   const run = await db.externalImportRun.create({ data: { sourceId: source.id, trigger, triggeredById } });
 
-  const s = { pagesFetched: 0, eventsSeen: 0, created: 0, updated: 0, unchanged: 0, failed: 0, markedMissing: 0 };
+  const s = { pagesFetched: 0, eventsSeen: 0, created: 0, updated: 0, unchanged: 0, failed: 0, markedMissing: 0, skippedPast: 0 };
   const errors: { url: string; error: string }[] = [];
   const logError = (url: string, e: unknown) => {
     s.failed++;
@@ -227,6 +229,11 @@ export async function runExternalImport(db: Db, sourceKey: string, limits: Impor
         s.pagesFetched++;
         const n = normalizeExternalInput(adapter.parseEvent(page.html, d), adapter, now);
         s.eventsSeen++;
+        // Só eventos de hoje em diante entram (ou são atualizados); os que já aconteceram ficam de fora.
+        if (externalEventIsPast(n, now)) {
+          s.skippedPast++;
+          continue;
+        }
         const result = await upsertExternalEvent(db, source.id, source.key, n, now);
         s[result]++;
       } catch (e) {
@@ -251,7 +258,7 @@ export async function runExternalImport(db: Db, sourceKey: string, limits: Impor
 
   await db.externalImportRun.update({
     where: { id: run.id },
-    data: { status, finishedAt: new Date(), pagesFetched: s.pagesFetched, eventsSeen: s.eventsSeen, created: s.created, updated: s.updated, unchanged: s.unchanged, failed: s.failed, errors },
+    data: { status, finishedAt: new Date(), pagesFetched: s.pagesFetched, eventsSeen: s.eventsSeen, created: s.created, updated: s.updated, unchanged: s.unchanged, failed: s.failed, skippedPast: s.skippedPast, errors },
   });
   await db.externalSource.update({ where: { id: source.id }, data: { lastRunAt: now } });
   return { runId: run.id, status, ...s };
@@ -446,6 +453,7 @@ export async function adminImportExternalEventByUrl(db: Db, admin: Actor, rawUrl
   } catch (e) {
     throw new AppError("VALIDATION", `Não foi possível ler o evento: ${errorMessage(e)}`);
   }
+  if (externalEventIsPast(n, now)) throw new AppError("VALIDATION", "Esse evento já aconteceu: só importamos eventos de hoje em diante.");
   const result = await upsertExternalEvent(db, source.id, source.key, n, now);
   const event = await db.externalEvent.findUniqueOrThrow({ where: { sourceId_sourceEventId: { sourceId: source.id, sourceEventId: n.sourceEventId } } });
   await audit(db, { actorUserId: admin.id, action: "external_event.imported_by_url", entityType: "ExternalEvent", entityId: event.id, metadata: { source: source.key, result } });
@@ -560,7 +568,8 @@ export async function listPublicExternalEvents(db: Db, filter: ExternalListFilte
   const q = filter.q?.trim().slice(0, 80);
   const and: Prisma.ExternalEventWhereInput[] = [publicExternalWhere(now)];
   if (filter.cityId) and.push({ cityId: filter.cityId });
-  if (filter.featuredOnly) and.push({ isFeatured: true });
+  // Destaque só de hoje em diante: evento que já aconteceu sai sozinho do destaque.
+  if (filter.featuredOnly) and.push({ isFeatured: true, startsAt: { gte: externalTodayStart(now) } });
   if (q) and.push({ OR: [{ title: { contains: q, mode: "insensitive" } }, { venueName: { contains: q, mode: "insensitive" } }, { cityName: { contains: q, mode: "insensitive" } }] });
   if (filter.date) {
     const range = dateFilterRange(filter.date, now);
@@ -571,12 +580,15 @@ export async function listPublicExternalEvents(db: Db, filter: ExternalListFilte
   return db.externalEvent.findMany({
     where: { AND: and },
     orderBy: { startsAt: "asc" },
-    take: Math.min(filter.take ?? 8, 24),
+    take: Math.min(filter.take ?? 8, MAX_EXTERNAL_LIST),
     include: { source: { select: { name: true } } },
   });
 }
 
 /** Destaques externos públicos (home e cidade), mesma regra de visibilidade. */
+/** Teto de uma listagem pública (o carrossel de destaques da home usa até 99). */
+const MAX_EXTERNAL_LIST = 99;
+
 export async function featuredExternalEvents(db: Db, opts: { cityId?: string; limit?: number } = {}, now = new Date()) {
   return listPublicExternalEvents(db, { cityId: opts.cityId, featuredOnly: true, take: opts.limit ?? 6 }, now);
 }

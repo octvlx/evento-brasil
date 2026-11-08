@@ -68,7 +68,14 @@ afiliados da Sympla, ou um acordo ou feed com a Q2. Com isso, cria-se um adaptad
     mas para qualquer host público. O cabeçalho `Accept` não pede AVIF, porque CDNs com
     negociação (Cloudflare Images) entregariam um formato que não validamos.
   - **Destaque:** só para evento publicado; ocultar ou voltar para revisão tira o
-    destaque; excluir tira de tudo.
+    destaque; excluir tira de tudo. Evento que já aconteceu (dia anterior a hoje) sai
+    do destaque sozinho. O carrossel da home mostra até 99 destaques, em ordem
+    cronológica.
+  - **Importação:** só entram eventos de hoje em diante; os que já aconteceram são
+    ignorados e contados na execução ("já aconteceram (ignorados)"). O cadastro por link
+    também recusa evento passado.
+  - **Capa automática ao publicar:** sem capa, publicar busca a imagem 300×300 da página
+    original (ou outra quadrada, ou a melhor candidata). Falha não impede a publicação.
   
   Tudo fica na auditoria.
 - **Público:**

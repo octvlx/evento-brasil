@@ -129,7 +129,7 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
                     </span>
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {r.pagesFetched} páginas · {r.eventsSeen} eventos lidos · {r.created} novos · {r.updated} atualizados · {r.unchanged} sem mudança · {r.failed} com erro
+                    {r.pagesFetched} páginas · {r.eventsSeen} eventos lidos · {r.created} novos · {r.updated} atualizados · {r.unchanged} sem mudança · {r.skippedPast} já aconteceram (ignorados) · {r.failed} com erro
                   </p>
                   {errors.length > 0 && (
                     <details className="mt-2">
