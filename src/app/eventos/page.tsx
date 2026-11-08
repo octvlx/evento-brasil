@@ -7,7 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Select } from "@/components/ui/primitives";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { ExternalEventsSection } from "@/components/site/external-event-card";
-import { listPublicExternalEvents } from "@/server/services/external-events";
+import { pagePublicExternalEvents } from "@/server/services/external-events";
 import { db } from "@/server/db";
 import { BackButton } from "@/components/site/back-button";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
@@ -46,7 +46,7 @@ const PRICE_OPTIONS: [PriceFilter, string][] = [
   ["150-mais", "Acima de R$ 150"],
 ];
 
-type Search = { q?: string; cidade?: string; categoria?: string; data?: string; preco?: string; pagina?: string };
+type Search = { q?: string; cidade?: string; categoria?: string; data?: string; preco?: string; pagina?: string; externos?: string };
 
 export default function EventsPage({ searchParams }: PageProps<"/eventos">) {
   return (
@@ -141,25 +141,28 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
     price: pick(sp.preco, PRICE_OPTIONS),
     page,
   });
-  const qs = (p: number) => {
-    const params = new URLSearchParams(Object.entries(sp).filter(([k, v]) => k !== "pagina" && typeof v === "string" && v) as [string, string][]);
-    params.set("pagina", String(p));
-    return `/eventos?${params}`;
+  // Cada lista tem a sua página: "pagina" (vendidos aqui) e "externos" (outros sites).
+  const qs = (key: "pagina" | "externos", p: number, hash = "") => {
+    const params = new URLSearchParams(Object.entries(sp).filter(([k, v]) => k !== key && typeof v === "string" && v) as [string, string][]);
+    if (p > 1) params.set(key, String(p));
+    const s = params.toString();
+    return `/eventos${s ? `?${s}` : ""}${hash}`;
   };
   // Eventos externos publicados com os mesmos filtros aplicáveis (cidade, texto, data, preço;
-  // com categoria nenhum aparece, porque a fonte não informa). Só na primeira página.
-  const externals =
-    page === 1
-      ? await listPublicExternalEvents(db, {
-          q: plan.text || undefined,
-          cityId: plan.city?.id ?? (sp.cidade ? (await db.city.findUnique({ where: { slug: sp.cidade }, select: { id: true } }))?.id ?? "__nenhuma__" : undefined),
-          categorySlug: sp.categoria || undefined,
-          date: pick(sp.data, DATE_OPTIONS),
-          price: pick(sp.preco, PRICE_OPTIONS),
-          take: 12,
-        })
-      : [];
-  const found = res.total + externals.length;
+  // com categoria nenhum aparece, porque a fonte não informa), em páginas de 12.
+  const ext = await pagePublicExternalEvents(
+    db,
+    {
+      q: plan.text || undefined,
+      cityId: plan.city?.id ?? (sp.cidade ? (await db.city.findUnique({ where: { slug: sp.cidade }, select: { id: true } }))?.id ?? "__nenhuma__" : undefined),
+      categorySlug: sp.categoria || undefined,
+      date: pick(sp.data, DATE_OPTIONS),
+      price: pick(sp.preco, PRICE_OPTIONS),
+    },
+    Number(sp.externos) || 1,
+  );
+  const externals = ext.events;
+  const found = res.total + ext.total;
   return (
     <>
       <SearchSummary plan={plan} sp={sp} />
@@ -179,7 +182,7 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
       {res.pageCount > 1 && (
         <nav className="mt-8 flex items-center justify-center gap-2" aria-label="Paginação">
           {page > 1 && (
-            <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={qs(page - 1)}>
+            <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={qs("pagina", page - 1)}>
               Anterior
             </Link>
           )}
@@ -187,13 +190,35 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
             Página {page} de {res.pageCount}
           </span>
           {page < res.pageCount && (
-            <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={qs(page + 1)}>
+            <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={qs("pagina", page + 1)}>
               Próxima
             </Link>
           )}
         </nav>
       )}
-      <ExternalEventsSection events={externals} title={res.total ? "Também acontecendo (ingressos em outros sites)" : "Eventos com ingressos em outros sites"} />
+      <ExternalEventsSection
+        events={externals}
+        title={res.total ? "Também acontecendo (ingressos em outros sites)" : "Eventos com ingressos em outros sites"}
+        footer={
+          ext.pageCount > 1 && (
+            <nav className="mt-8 flex items-center justify-center gap-2" aria-label="Paginação dos eventos em outros sites">
+              {ext.page > 1 && (
+                <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={qs("externos", ext.page - 1, "#externos-titulo")}>
+                  Anterior
+                </Link>
+              )}
+              <span className="text-sm text-muted-foreground">
+                Página {ext.page} de {ext.pageCount} · {ext.total} eventos
+              </span>
+              {ext.page < ext.pageCount && (
+                <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={qs("externos", ext.page + 1, "#externos-titulo")}>
+                  Próxima
+                </Link>
+              )}
+            </nav>
+          )
+        }
+      />
     </>
   );
 }

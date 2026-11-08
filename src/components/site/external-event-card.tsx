@@ -93,11 +93,19 @@ export function ExternalEventCard({ event, className, outbound, imageSizes }: { 
 }
 
 /** Seção de eventos externos: só aparece com eventos; nunca mistura com os vendidos aqui. */
-export function ExternalEventsSection({ events, title = "Também acontecendo (ingressos em outros sites)" }: { events: ExternalEventCardData[]; title?: string }) {
+export function ExternalEventsSection({
+  events,
+  title = "Também acontecendo (ingressos em outros sites)",
+  footer,
+}: {
+  events: ExternalEventCardData[];
+  title?: string;
+  footer?: React.ReactNode;
+}) {
   if (!events.length) return null;
   return (
     <section aria-labelledby="externos-titulo" className="mt-12">
-      <h2 id="externos-titulo" className="font-display text-xl font-extrabold sm:text-2xl">
+      <h2 id="externos-titulo" className="scroll-mt-24 font-display text-xl font-extrabold sm:text-2xl">
         {title}
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">Eventos vendidos em outras plataformas. A compra é feita no site oficial de cada um.</p>
@@ -106,6 +114,7 @@ export function ExternalEventsSection({ events, title = "Também acontecendo (in
           <ExternalEventCard key={e.slug} event={e} />
         ))}
       </div>
+      {footer}
     </section>
   );
 }

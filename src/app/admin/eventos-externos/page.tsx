@@ -10,7 +10,7 @@ import { ImportExternalByUrlForm } from "@/features/admin/external-controls";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { formatDateShort, formatEventDateTime } from "@/lib/datetime";
-import { ADMIN_RUN_MAX_EVENTS, adminListExternalEvents, adminListExternalSources, adminListImportRuns } from "@/server/services/external-events";
+import { ADMIN_RUN_MAX_EVENTS, adminExternalCounts, adminListExternalEvents, adminListExternalSources, adminListImportRuns } from "@/server/services/external-events";
 import type { ExternalEventReview } from "@/generated/prisma/client";
 
 export const metadata: Metadata = { title: "Eventos externos — admin", robots: { index: false } };
@@ -45,7 +45,13 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
   const admin = await requireAdmin("events:moderate");
   const { aba } = await searchParams;
   const tab = (TABS.find(([k]) => k === aba)?.[0] ?? "PENDING_REVIEW") as ExternalEventReview;
-  const [sources, runs, events] = await Promise.all([adminListExternalSources(db, admin), adminListImportRuns(db, admin), adminListExternalEvents(db, admin, tab)]);
+  const [sources, runs, events, counts] = await Promise.all([
+    adminListExternalSources(db, admin),
+    adminListImportRuns(db, admin),
+    adminListExternalEvents(db, admin, tab, 500),
+    adminExternalCounts(db, admin),
+  ]);
+  const tabCount: Record<ExternalEventReview, number> = { PENDING_REVIEW: counts.pending, PUBLISHED: counts.published, HIDDEN: counts.hidden };
 
   return (
     <>
@@ -162,10 +168,26 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
               aria-current={k === tab ? "page" : undefined}
               className={k === tab ? "rounded-full bg-night px-3 py-1 font-semibold text-white" : "rounded-full border border-border px-3 py-1 hover:bg-muted"}
             >
-              {label}
+              {label} ({tabCount[k]})
             </Link>
           ))}
         </nav>
+        {tab === "PUBLISHED" && (
+          <dl className="mb-3 grid max-w-xl grid-cols-3 gap-3 text-center" aria-label="Números dos eventos publicados">
+            <div className="rounded-2xl border border-border bg-card p-3 shadow-card">
+              <dt className="text-xs text-muted-foreground">Publicados</dt>
+              <dd className="font-display text-2xl font-extrabold">{counts.published}</dd>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-3 shadow-card">
+              <dt className="text-xs text-muted-foreground">Destacados</dt>
+              <dd className="font-display text-2xl font-extrabold">{counts.featured}</dd>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-3 shadow-card">
+              <dt className="text-xs text-muted-foreground">Aparecendo no destaque</dt>
+              <dd className="font-display text-2xl font-extrabold">{counts.featuredVisible}</dd>
+            </div>
+          </dl>
+        )}
         {events.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Nenhum evento nesta lista.</p>
         ) : (

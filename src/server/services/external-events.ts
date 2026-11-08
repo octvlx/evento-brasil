@@ -372,6 +372,20 @@ export async function adminListImportRuns(db: Db, admin: Actor, take = 15) {
   return db.externalImportRun.findMany({ orderBy: { startedAt: "desc" }, take, include: { source: { select: { name: true } } } });
 }
 
+/** Números do painel: publicados, em destaque (publicados e marcados), em revisão e ocultos. */
+export async function adminExternalCounts(db: Db, admin: Actor, now = new Date()) {
+  assertAdminPermission(admin, PERM);
+  const [published, featured, featuredVisible, pending, hidden] = await Promise.all([
+    db.externalEvent.count({ where: { review: "PUBLISHED" } }),
+    db.externalEvent.count({ where: { review: "PUBLISHED", isFeatured: true } }),
+    // Os que aparecem agora nos destaques (visíveis e de hoje em diante).
+    db.externalEvent.count({ where: { AND: [publicExternalWhere(now), { isFeatured: true, startsAt: { gte: externalTodayStart(now) } }] } }),
+    db.externalEvent.count({ where: { review: "PENDING_REVIEW" } }),
+    db.externalEvent.count({ where: { review: "HIDDEN" } }),
+  ]);
+  return { published, featured, featuredVisible, pending, hidden };
+}
+
 export async function adminListExternalEvents(db: Db, admin: Actor, review: ExternalEventReview, take = 100) {
   assertAdminPermission(admin, PERM);
   return db.externalEvent.findMany({
@@ -563,8 +577,9 @@ function priceWhere(price: PriceFilter): Prisma.ExternalEventWhereInput {
   return { priceStatus: "PAID", minPriceCents: range };
 }
 
-export async function listPublicExternalEvents(db: Db, filter: ExternalListFilter = {}, now = new Date()) {
-  if (filter.categorySlug) return [];
+/** Filtros públicos (mesmas regras da busca). null = nenhum externo pode aparecer (categoria). */
+function externalListWhere(filter: ExternalListFilter, now: Date): Prisma.ExternalEventWhereInput | null {
+  if (filter.categorySlug) return null;
   const q = filter.q?.trim().slice(0, 80);
   const and: Prisma.ExternalEventWhereInput[] = [publicExternalWhere(now)];
   if (filter.cityId) and.push({ cityId: filter.cityId });
@@ -577,12 +592,37 @@ export async function listPublicExternalEvents(db: Db, filter: ExternalListFilte
     and.push({ startsAt: { gte: range.from, lt: range.to } });
   }
   if (filter.price) and.push(priceWhere(filter.price));
+  return { AND: and };
+}
+
+export async function listPublicExternalEvents(db: Db, filter: ExternalListFilter = {}, now = new Date()) {
+  const where = externalListWhere(filter, now);
+  if (!where) return [];
   return db.externalEvent.findMany({
-    where: { AND: and },
-    orderBy: { startsAt: "asc" },
+    where,
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     take: Math.min(filter.take ?? 8, MAX_EXTERNAL_LIST),
     include: { source: { select: { name: true } } },
   });
+}
+
+export const EXTERNAL_PAGE_SIZE = 12;
+
+/** Resultados paginados da busca (seção de eventos externos com "Anterior/Próxima"). */
+export async function pagePublicExternalEvents(db: Db, filter: ExternalListFilter, page: number, now = new Date()) {
+  const where = externalListWhere(filter, now);
+  if (!where) return { events: [], total: 0, page: 1, pageCount: 1 };
+  const total = await db.externalEvent.count({ where });
+  const pageCount = Math.max(1, Math.ceil(total / EXTERNAL_PAGE_SIZE));
+  const current = Math.min(Math.max(1, Math.floor(page) || 1), pageCount);
+  const events = await db.externalEvent.findMany({
+    where,
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+    skip: (current - 1) * EXTERNAL_PAGE_SIZE,
+    take: EXTERNAL_PAGE_SIZE,
+    include: { source: { select: { name: true } } },
+  });
+  return { events, total, page: current, pageCount };
 }
 
 /** Destaques externos públicos (home e cidade), mesma regra de visibilidade. */

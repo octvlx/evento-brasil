@@ -6,6 +6,8 @@ import type { AdminRole } from "@/generated/prisma/client";
 import { duoticketAdapter } from "@/server/external/adapters/duoticket";
 import {
   adminAutoCoverExternalEvent,
+  adminExternalCounts,
+  pagePublicExternalEvents,
   adminDeleteExternalEvent,
   adminImportExternalEventByUrl,
   adminPreviewExternalCover,
@@ -486,6 +488,41 @@ describe("eventos que já aconteceram", () => {
     expect(await titles(new Date("2026-11-06T02:30:00Z"))).toEqual(["Destaque Do Dia", "Destaque Futuro"]); // 23:30 em Brasília
     // Dia seguinte em Brasília: o do dia anterior sai do destaque.
     expect(await titles(new Date("2026-11-06T03:30:00Z"))).toEqual(["Destaque Futuro"]);
+  });
+});
+
+describe("paginação da busca e números do admin", () => {
+  it("todos os externos são alcançáveis página a página, em ordem de data, sem repetir", async () => {
+    await sources();
+    const admin = await adminWith(["MODERATION"]);
+    const events: Record<string, Parameters<typeof duoEventHtml>[0]> = {};
+    for (let i = 1; i <= 26; i++) events[String(2100 + i)] = { title: `Paginado ${i}`, date: `${String(i).padStart(2, "0")}/12/2026` };
+    await run(site(events), { maxPages: 1, maxEvents: 50 });
+    for (const e of await db.externalEvent.findMany()) await adminReviewExternalEvent(db, admin, e.id, "PUBLISHED");
+
+    const p1 = await pagePublicExternalEvents(db, {}, 1, NOW);
+    expect(p1).toMatchObject({ total: 26, page: 1, pageCount: 3 });
+    expect(p1.events).toHaveLength(12);
+    const p3 = await pagePublicExternalEvents(db, {}, 3, NOW);
+    expect(p3.events.map((e) => e.title)).toEqual(["Paginado 25", "Paginado 26"]);
+    // Página fora do intervalo cai na última; lixo cai na primeira.
+    expect((await pagePublicExternalEvents(db, {}, 99, NOW)).page).toBe(3);
+    expect((await pagePublicExternalEvents(db, {}, Number("abc"), NOW)).page).toBe(1);
+    const all = [...p1.events, ...(await pagePublicExternalEvents(db, {}, 2, NOW)).events, ...p3.events].map((e) => e.title);
+    expect(new Set(all).size).toBe(26);
+    expect(all.slice(0, 3)).toEqual(["Paginado 1", "Paginado 2", "Paginado 3"]);
+    // Filtros continuam valendo (categoria: nenhum).
+    expect((await pagePublicExternalEvents(db, { categorySlug: "shows" }, 1, NOW)).total).toBe(0);
+    expect((await pagePublicExternalEvents(db, { q: "Paginado 2" }, 1, NOW)).total).toBe(8); // 2, 20–26
+
+    const [a, b] = await db.externalEvent.findMany({ take: 2, orderBy: { startsAt: "asc" } });
+    await adminSetExternalFeatured(db, admin, a.id, true);
+    await adminSetExternalFeatured(db, admin, b.id, true);
+    await adminReviewExternalEvent(db, admin, (await db.externalEvent.findFirstOrThrow({ where: { title: "Paginado 26" } })).id, "HIDDEN");
+    expect(await adminExternalCounts(db, admin, NOW)).toEqual({ published: 25, featured: 2, featuredVisible: 2, pending: 0, hidden: 1 });
+    // Depois do dia do 1º destaque, ele continua marcado mas não aparece mais no destaque.
+    expect(await adminExternalCounts(db, admin, new Date("2026-12-02T12:00:00Z"))).toMatchObject({ featured: 2, featuredVisible: 1 });
+    await expect(adminExternalCounts(db, await adminWith(["SUPPORT"]), NOW)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 
