@@ -16,6 +16,7 @@ import { adminResetTwoFactor } from "@/server/services/two-factor";
 import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { rateLimit } from "@/server/rate-limit";
 import {
+  adminAutoCoverExternalEvent,
   adminDeleteExternalEvent,
   adminImportExternalEventByUrl,
   adminPreviewExternalCover,
@@ -98,7 +99,18 @@ export const runExternalImportAction = async (sourceId: string, maxEvents: numbe
     await adminRunExternalImport(db, a, sourceId, Number(maxEvents));
   });
 export const reviewExternalEventAction = async (eventId: string, review: "PUBLISHED" | "HIDDEN" | "PENDING_REVIEW") =>
-  run((a) => adminReviewExternalEvent(db, a, eventId, review));
+  run(async (a) => {
+    await adminReviewExternalEvent(db, a, eventId, review);
+    if (review !== "PUBLISHED") return;
+    // Publicar já busca a capa na página original (sem capa ainda). Falha aqui não
+    // desfaz a publicação: o admin pode definir a capa depois, na edição.
+    try {
+      await rateLimit(`external-cover:${a.id}`, 40, 60 * 60_000);
+      await adminAutoCoverExternalEvent(db, a, eventId);
+    } catch (e) {
+      console.warn("Capa automática do evento externo falhou:", e instanceof Error ? e.message : e);
+    }
+  });
 export const featureExternalEventAction = async (eventId: string, featured: boolean) => run((a) => adminSetExternalFeatured(db, a, eventId, featured === true));
 export const deleteExternalEventAction = async (eventId: string) => run((a) => adminDeleteExternalEvent(db, a, eventId));
 export const removeExternalCoverAction = async (eventId: string) => run((a) => adminRemoveExternalCover(db, a, eventId));

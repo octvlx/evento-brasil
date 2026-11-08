@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AdminRole } from "@/generated/prisma/client";
 import { duoticketAdapter } from "@/server/external/adapters/duoticket";
 import {
+  adminAutoCoverExternalEvent,
   adminDeleteExternalEvent,
   adminImportExternalEventByUrl,
   adminPreviewExternalCover,
@@ -409,5 +410,49 @@ describe("capa e cadastro por link", () => {
     const again = await adminImportExternalEventByUrl(db, admin, link, { fetcher, now: NOW });
     expect(again.id).toBe(first.id);
     expect(await db.externalEvent.findUniqueOrThrow({ where: { id: first.id } })).toMatchObject({ title: "Por Link", review: "PENDING_REVIEW" });
+  });
+});
+
+describe("capa automática ao publicar", () => {
+  function png(width: number, height: number) {
+    const b = new Uint8Array(64);
+    b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+    const dv = new DataView(b.buffer);
+    dv.setUint32(16, width);
+    dv.setUint32(20, height);
+    return b;
+  }
+  const PERFIL = "https://imagedelivery.net/acc/p1/perfil";
+  const CAPA = "https://imagedelivery.net/acc/c1/capa";
+  const page = `<html><head><meta property="og:image" content="${PERFIL}"></head><body><img data-src="${CAPA}" alt="Auto Capa"></body></html>`;
+  const deps = (routes: Record<string, () => Response>) => ({
+    resolveHost: async () => ["104.18.10.10"],
+    sleep: noSleep,
+    fetchImpl: (async (u: string | URL) => routes[String(u)]?.() ?? new Response("", { status: 404 })) as unknown as typeof fetch,
+  });
+
+  it("usa a imagem 300×300 da página original; não troca capa existente; falha não quebra", async () => {
+    await sources();
+    const admin = await adminWith(["MODERATION"]);
+    await run(site({ "1801": { title: "Auto Capa", date: "20/12/2026" } }));
+    const e = await db.externalEvent.findFirstOrThrow();
+    const ok = deps({
+      [e.sourceUrl]: () => new Response(page, { headers: { "content-type": "text/html" } }),
+      [CAPA]: () => new Response(png(800, 400), { headers: { "content-type": "image/png" } }),
+      [PERFIL]: () => new Response(png(300, 300), { headers: { "content-type": "image/png" } }),
+    });
+    expect(await adminAutoCoverExternalEvent(db, admin, e.id, ok)).toBe("set");
+    const cover = (await db.externalEvent.findUniqueOrThrow({ where: { id: e.id } })).coverImageUrl;
+    expect(cover).toMatch(/^\/uploads\/events\/external\//);
+    const log = await db.auditLog.findFirstOrThrow({ where: { action: "external_event.cover_auto" } });
+    expect(log.metadata).toMatchObject({ from: PERFIL, width: 300, height: 300 });
+
+    expect(await adminAutoCoverExternalEvent(db, admin, e.id, ok)).toBe("kept");
+    expect((await db.externalEvent.findUniqueOrThrow({ where: { id: e.id } })).coverImageUrl).toBe(cover);
+
+    await db.externalEvent.update({ where: { id: e.id }, data: { coverImageUrl: null } });
+    expect(await adminAutoCoverExternalEvent(db, admin, e.id, deps({}))).toBe("none");
+    expect((await db.externalEvent.findUniqueOrThrow({ where: { id: e.id } })).coverImageUrl).toBeNull();
+    await expect(adminAutoCoverExternalEvent(db, await adminWith(["SUPPORT"]), e.id, ok)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

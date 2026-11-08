@@ -474,6 +474,34 @@ export async function adminSetExternalCoverFromUrl(db: Db, admin: Actor, eventId
   return stored;
 }
 
+/**
+ * Capa automática ao publicar: se o evento ainda não tem capa, lê a página original
+ * (mesmas proteções da coleta), prefere a imagem quadrada de 300×300 (na Duoticket, a
+ * "perfil" do og:image), depois qualquer quadrada, depois a melhor candidata, e copia
+ * para o armazenamento próprio. Nunca troca uma capa já definida e nunca impede a
+ * publicação: sem imagem válida, devolve "none" e o admin pode definir à mão.
+ */
+export async function adminAutoCoverExternalEvent(db: Db, admin: Actor, eventId: string, deps?: CoverDeps): Promise<"set" | "kept" | "none"> {
+  assertAdminPermission(admin, PERM);
+  const event = await db.externalEvent.findUnique({ where: { id: eventId }, select: { title: true, sourceUrl: true, coverImageUrl: true } });
+  if (!event) throw new AppError("NOT_FOUND", "Evento externo não encontrado.");
+  if (event.coverImageUrl) return "kept";
+  let pick;
+  try {
+    const { candidates } = await previewCover(event.sourceUrl, event.title, deps);
+    pick = candidates.find((c) => c.width === 300 && c.height === 300) ?? candidates.find((c) => c.width === c.height) ?? candidates[0];
+  } catch {
+    return "none";
+  }
+  if (!pick) return "none";
+  const stored = await importCoverImage(pick.url, deps);
+  // Outro pedido pode ter definido a capa enquanto baixávamos: não sobrescreve.
+  const { count } = await db.externalEvent.updateMany({ where: { id: eventId, coverImageUrl: null }, data: { coverImageUrl: stored.url } });
+  if (!count) return "kept";
+  await audit(db, { actorUserId: admin.id, action: "external_event.cover_auto", entityType: "ExternalEvent", entityId: eventId, metadata: { from: pick.url.slice(0, 300), width: stored.width, height: stored.height } });
+  return "set";
+}
+
 export async function adminUploadExternalCover(db: Db, admin: Actor, eventId: string, file: File) {
   assertAdminPermission(admin, PERM);
   const event = await db.externalEvent.findUnique({ where: { id: eventId }, select: { id: true } });
