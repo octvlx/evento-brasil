@@ -15,6 +15,7 @@ import { requireAdmin } from "@/server/auth/current";
 import { formatDateShort, formatEventDateTime } from "@/lib/datetime";
 import {
   ADMIN_RUN_MAX_EVENTS,
+  BULK_FEATURE_MAX,
   BULK_PUBLISH_MAX,
   adminExternalCityOptions,
   adminExternalCounts,
@@ -250,11 +251,13 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
           // Filtros ou aba diferentes: componente novo, seleção vazia.
           key={`${tab}?${keep}`}
           total={events.total}
-          max={BULK_PUBLISH_MAX}
+          // Publicados: seleção para destacar; demais abas: para publicar.
+          mode={tab === "PUBLISHED" ? "feature" : "publish"}
+          max={tab === "PUBLISHED" ? BULK_FEATURE_MAX : BULK_PUBLISH_MAX}
           rows={events.map((e) => ({
             id: e.id,
             title: e.title,
-            selectable: e.review !== "PUBLISHED",
+            selectable: tab === "PUBLISHED" || e.review !== "PUBLISHED",
             content: (
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">

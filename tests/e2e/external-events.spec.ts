@@ -118,3 +118,49 @@ test.describe("publicação em lote no admin", () => {
     await expect(page.getByText("2 eventos com esses filtros.")).toBeVisible();
   });
 });
+
+test.describe("destaque em lote no admin", () => {
+  test.skip(process.env.E2E_ISOLATED !== "1", "Insere eventos externos: só no banco descartável do E2E isolado.");
+  const tag = `d${Date.now().toString(36)}`;
+  const names = [`Vitrine ${tag} Um`, `Vitrine ${tag} Dois`, `Vitrine ${tag} Tres`];
+  const day = new Date(Date.now() + 20 * 86_400_000);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  test.beforeAll(async () => {
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    for (const [i, title] of names.entries()) {
+      const slug = `vitrine-${tag}-${i}`;
+      await client.query(
+        `INSERT INTO "ExternalEvent" (id, "sourceId", "sourceEventId", "sourceUrl", slug, title, "startsAt", "hasTime", timezone, "cityName", state, review, "isFeatured", "contentHash", "coverImageUrl", "publishedAt", "updatedAt")
+         VALUES ($1, 'extsrc_duoticket', $2, $3, $4, $5, $6, false, 'America/Sao_Paulo', 'Campinas', 'SP', 'PUBLISHED', $7, 'e2e', '/placeholder/vitrine.svg', now(), now())`,
+        [`vit_${tag}_${i}`, `v${tag}${i}`, `https://duoticket.com.br/evento/98${i}/${slug}`, slug, title, day, i === 1],
+      );
+    }
+    await client.end();
+  });
+
+  test("seleciona os publicados da página, destaca, mostra o resultado e limpa a seleção", async ({ page }) => {
+    const qs = `aba=PUBLISHED&q=${encodeURIComponent(`Vitrine ${tag}`)}&de=${iso(new Date(day.getTime() - 86_400_000))}&ate=${iso(new Date(day.getTime() + 86_400_000))}`;
+    await login(page, USERS.admin, `/admin/eventos-externos?${qs}`);
+    await page.waitForURL(/aba=PUBLISHED/);
+    // Filtros de situação e período preservados.
+    await expect(page.locator("#filtro-de")).toHaveValue(iso(new Date(day.getTime() - 86_400_000)));
+    const feature = page.getByRole("button", { name: "Destacar selecionados" });
+    await expect(feature).toBeDisabled();
+
+    await page.getByLabel(/Selecionar todos os eventos desta página \(3\)/).check();
+    await expect(page.getByText("3 eventos selecionados")).toBeVisible();
+    await feature.click();
+    const dialog = page.getByRole("dialog", { name: "Destacar 3 eventos?" });
+    await expect(dialog.getByRole("listitem")).toHaveText(names);
+    await dialog.getByRole("button", { name: "Destacar 3" }).click();
+
+    await expect(page.getByRole("status").filter({ hasText: "2 eventos destacados · 1 já estava em destaque" })).toBeVisible();
+    await expect(page.getByText("0 eventos selecionados")).toBeVisible();
+    await expect(feature).toBeDisabled();
+    // Lista atualizada: os três com o selo de destaque e o botão individual invertido.
+    for (const n of names) await expect(page.getByRole("listitem").filter({ hasText: n }).getByText("Destaque", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Remover destaque" })).toHaveCount(3);
+  });
+});

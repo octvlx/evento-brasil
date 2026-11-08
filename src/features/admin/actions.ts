@@ -17,6 +17,7 @@ import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { rateLimit } from "@/server/rate-limit";
 import {
   adminAutoCoverExternalEvent,
+  adminFeatureExternalEvents,
   adminPublishExternalEvents,
   adminDeleteExternalEvent,
   adminImportExternalEventByUrl,
@@ -29,7 +30,7 @@ import {
   adminSetSourceStatus,
   adminUploadExternalCover,
 } from "@/server/services/external-events";
-import type { BulkPublishItem } from "@/server/services/external-events";
+import type { BulkFeatureItem, BulkPublishItem } from "@/server/services/external-events";
 import type { CoverPreview } from "@/server/external/cover";
 
 async function run(fn: (admin: Awaited<ReturnType<typeof requireAdmin>>) => Promise<unknown>): Promise<ActionResult> {
@@ -156,6 +157,14 @@ export async function publishExternalEventsAction(ids: string[]): Promise<Action
   return res;
 }
 export const featureExternalEventAction = async (eventId: string, featured: boolean) => run((a) => adminSetExternalFeatured(db, a, eventId, featured === true));
+
+/** Destaque em lote: só os ids enviados, pelo serviço do destaque individual; atualiza a lista. */
+export async function featureExternalEventsAction(ids: string[]): Promise<ActionResult<BulkFeatureItem[]>> {
+  const admin = await requireAdmin();
+  const res = await toActionResult(() => adminFeatureExternalEvents(db, admin, ids));
+  if (res.ok) refresh();
+  return res;
+}
 export const deleteExternalEventAction = async (eventId: string) => run((a) => adminDeleteExternalEvent(db, a, eventId));
 export const removeExternalCoverAction = async (eventId: string) => run((a) => adminRemoveExternalCover(db, a, eventId));
 

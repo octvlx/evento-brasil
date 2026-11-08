@@ -432,15 +432,56 @@ export const BULK_PUBLISH_MAX = 50;
 
 export type BulkPublishItem = { id: string; title: string; status: "published" | "already" | "failed"; error?: string };
 
+/** Máximo de eventos por destaque em lote (só grava no banco: o teto da lista basta). */
+export const BULK_FEATURE_MAX = 500;
+
+export type BulkFeatureItem = { id: string; title: string; status: "featured" | "already" | "failed"; error?: string };
+
+function bulkIds(ids: unknown, max: number): string[] {
+  const list = Array.isArray(ids) ? [...new Set(ids.filter((i): i is string => typeof i === "string" && i.length > 0 && i.length <= 40))] : [];
+  if (!list.length) throw new AppError("VALIDATION", "Selecione ao menos um evento.");
+  if (list.length > max) throw new AppError("VALIDATION", `Selecione no máximo ${max} eventos por vez.`);
+  return list;
+}
+
+/**
+ * Destaca só os eventos indicados, pelo mesmo serviço do destaque individual (exige
+ * publicado, audita). Já destacado não é regravado; quem saiu de "publicado" entre a
+ * seleção e o envio falha com o motivo. Falha de um não interrompe os outros.
+ */
+export async function adminFeatureExternalEvents(db: Db, admin: Actor, ids: unknown): Promise<BulkFeatureItem[]> {
+  assertAdminPermission(admin, PERM);
+  const list = bulkIds(ids, BULK_FEATURE_MAX);
+  const rows = await db.externalEvent.findMany({ where: { id: { in: list } }, select: { id: true, title: true, review: true, isFeatured: true } });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const results: BulkFeatureItem[] = [];
+  for (const id of list) {
+    const row = byId.get(id);
+    if (!row) {
+      results.push({ id, title: "(evento não encontrado)", status: "failed", error: "Evento externo não encontrado." });
+      continue;
+    }
+    if (row.review === "PUBLISHED" && row.isFeatured) {
+      results.push({ id, title: row.title, status: "already" });
+      continue;
+    }
+    try {
+      await adminSetExternalFeatured(db, admin, id, true);
+      results.push({ id, title: row.title, status: "featured" });
+    } catch (e) {
+      results.push({ id, title: row.title, status: "failed", error: e instanceof AppError ? e.message : "Erro inesperado." });
+    }
+  }
+  return results;
+}
+
 /**
  * Publica só os eventos indicados, um a um, pelo mesmo serviço da publicação individual
  * (mesmas validações, permissão e auditoria). Falha de um não interrompe os outros.
  */
 export async function adminPublishExternalEvents(db: Db, admin: Actor, ids: unknown): Promise<BulkPublishItem[]> {
   assertAdminPermission(admin, PERM);
-  const list = Array.isArray(ids) ? [...new Set(ids.filter((i): i is string => typeof i === "string" && i.length > 0 && i.length <= 40))] : [];
-  if (!list.length) throw new AppError("VALIDATION", "Selecione ao menos um evento.");
-  if (list.length > BULK_PUBLISH_MAX) throw new AppError("VALIDATION", `Selecione no máximo ${BULK_PUBLISH_MAX} eventos por vez.`);
+  const list = bulkIds(ids, BULK_PUBLISH_MAX);
   const rows = await db.externalEvent.findMany({ where: { id: { in: list } }, select: { id: true, title: true, review: true } });
   const byId = new Map(rows.map((r) => [r.id, r]));
   const results: BulkPublishItem[] = [];
