@@ -239,7 +239,8 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
 
 export async function featuredEvents(db: Db, limit = 6, now = new Date()) {
   const rows = await db.event.findMany({
-    where: { ...publicEventWhere(now), isFeatured: true },
+    // Destaque só com venda aberta: encerrou a venda (ou o evento), sai do destaque sozinho.
+    where: { ...publicEventWhere(now), isFeatured: true, salesEndAt: { gt: now } },
     select: cardSelect,
     orderBy: { startsAt: "asc" },
     take: limit,
@@ -275,7 +276,7 @@ export async function cityShowcase(db: Db, citySlug: string, perShelf = 10, now 
     if (entry.rows.length < perShelf) entry.rows.push(r);
     byCategory.set(r.category.slug, entry);
   }
-  const featuredRows = rows.filter((r) => r.isFeatured).slice(0, 5);
+  const featuredRows = rows.filter((r) => r.isFeatured && r.salesEndAt > now).slice(0, 5);
   const groups = [...byCategory.values()].sort((a, b) => a.sortOrder - b.sortOrder);
   // Só os eventos exibidos precisam de preço com taxa.
   const rules = await rulesFor(db, [...featuredRows, ...groups.flatMap((g) => g.rows)], now);
