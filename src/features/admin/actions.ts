@@ -92,6 +92,20 @@ export async function saveCommissionRuleAction(_prev: ActionResult | undefined, 
 }
 
 // Eventos externos (descoberta): permissão de moderação conferida nos serviços.
+// Cada busca de capa faz o servidor baixar a página e até 5 imagens de um site público
+// qualquer: o limite evita uso do servidor como "baixador" em massa e bloqueio pelos
+// sites. Busca manual e capa automática ao publicar têm orçamentos separados.
+const COVER_PER_HOUR = 150;
+const AUTO_COVER_PER_HOUR = 500;
+async function coverLimit(adminId: string) {
+  try {
+    await rateLimit(`external-cover:${adminId}`, COVER_PER_HOUR, 60 * 60_000);
+  } catch (e) {
+    if (e instanceof AppError && e.code === "RATE_LIMITED")
+      throw new AppError("RATE_LIMITED", `Limite de ${COVER_PER_HOUR} buscas de capa por hora atingido. Aguarde um pouco ou envie o arquivo da imagem (o envio não tem esse limite).`);
+    throw e;
+  }
+}
 export const setExternalSourceStatusAction = async (sourceId: string, status: "ACTIVE" | "PAUSED") => run((a) => adminSetSourceStatus(db, a, sourceId, status));
 export const runExternalImportAction = async (sourceId: string, maxEvents: number) =>
   run(async (a) => {
@@ -105,7 +119,8 @@ export const reviewExternalEventAction = async (eventId: string, review: "PUBLIS
     // Publicar já busca a capa na página original (sem capa ainda). Falha aqui não
     // desfaz a publicação: o admin pode definir a capa depois, na edição.
     try {
-      await rateLimit(`external-cover:${a.id}`, 40, 60 * 60_000);
+      // Orçamento próprio: publicar em lote não pode esgotar o "Buscar capa" manual.
+      await rateLimit(`external-autocover:${a.id}`, AUTO_COVER_PER_HOUR, 60 * 60_000);
       await adminAutoCoverExternalEvent(db, a, eventId);
     } catch (e) {
       console.warn("Capa automática do evento externo falhou:", e instanceof Error ? e.message : e);
@@ -129,14 +144,14 @@ export async function importExternalByUrlAction(url: string): Promise<ActionResu
 export async function previewExternalCoverAction(eventId: string, url: string): Promise<ActionResult<CoverPreview>> {
   const admin = await requireAdmin();
   return toActionResult(async () => {
-    await rateLimit(`external-cover:${admin.id}`, 40, 60 * 60_000);
+    await coverLimit(admin.id);
     return adminPreviewExternalCover(db, admin, eventId, String(url));
   });
 }
 
 export const saveExternalCoverAction = async (eventId: string, imageUrl: string) =>
   run(async (a) => {
-    await rateLimit(`external-cover:${a.id}`, 40, 60 * 60_000);
+    await coverLimit(a.id);
     await adminSetExternalCoverFromUrl(db, a, eventId, String(imageUrl));
   });
 

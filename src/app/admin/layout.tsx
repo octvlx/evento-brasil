@@ -9,6 +9,7 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
     <PanelShell
       title="Administração"
       nav={[]}
+      collapsible
       aside={
         <Suspense fallback={null}>
           <AdminNav />
