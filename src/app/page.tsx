@@ -5,6 +5,8 @@ import { connection } from "next/server";
 import { ArrowRight, BadgePercent, Megaphone, QrCode, ShieldCheck, Zap } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCard, EventGrid, EventGridSkeleton } from "@/components/site/event-card";
+import { ExternalEventCard } from "@/components/site/external-event-card";
+import { featuredExternalEvents, listPublicExternalEvents } from "@/server/services/external-events";
 import { CategoryChips } from "@/components/site/category-chips";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
@@ -144,16 +146,27 @@ async function HeroCategories() {
 // Largura do card por breakpoint (1 / 2 / 3 / 4 por tela), para o srcset da capa.
 const CAROUSEL_IMAGE_SIZES = "(min-width: 1280px) 300px, (min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw";
 
+/** Carrossel de destaques: até 99 eventos (nativos e externos), do mais próximo ao mais distante. */
+const FEATURED_MAX = 99;
+
 async function Featured() {
   await connection();
   // Mesmos critérios de antes: destaque, publicado, de organização aprovada e não encerrado.
-  const events = await featuredEvents(db, 12);
-  if (!events.length) return <EventGrid events={[]} emptyText="Nenhum evento em destaque no momento." />;
+  // Destaques externos (publicados e visíveis) entram junto, por data, e levam ao link externo.
+  const [events, external] = await Promise.all([featuredEvents(db, FEATURED_MAX), featuredExternalEvents(db, { limit: FEATURED_MAX })]);
+  const items = [...events.map((e) => ({ kind: "native" as const, at: e.startsAt.getTime(), e })), ...external.map((e) => ({ kind: "external" as const, at: e.startsAt.getTime(), e }))]
+    .sort((a, b) => a.at - b.at)
+    .slice(0, FEATURED_MAX);
+  if (!items.length) return <EventGrid events={[]} emptyText="Nenhum evento em destaque no momento." />;
   return (
     <EventCarousel label="Eventos em destaque">
-      {events.map((e, i) => (
-        <EventCard key={e.slug} event={e} priority={i < 4} imageSizes={CAROUSEL_IMAGE_SIZES} className="h-full" />
-      ))}
+      {items.map((it, i) =>
+        it.kind === "native" ? (
+          <EventCard key={it.e.slug} event={it.e} priority={i < 4} imageSizes={CAROUSEL_IMAGE_SIZES} className="h-full" />
+        ) : (
+          <ExternalEventCard key={`ext-${it.e.slug}`} event={it.e} outbound imageSizes={CAROUSEL_IMAGE_SIZES} className="h-full" />
+        ),
+      )}
     </EventCarousel>
   );
 }
@@ -165,9 +178,22 @@ async function NearbySection() {
   const target = city ?? (await getPublicCity(db, "sao-paulo-sp"));
   if (!target) return null;
   const events = await eventsInCity(db, target.slug, 4);
+  // Completa com eventos externos publicados da cidade (cidade só com externos não aparece vazia).
+  const external = events.length < 4 ? await listPublicExternalEvents(db, { cityId: target.id, take: 4 - events.length }) : [];
   return (
     <Section title={`Perto de você em ${target.name}`} subtitle={city ? "Com base na cidade escolhida" : "Escolha sua cidade no topo para personalizar"} href={`/cidades/${target.slug}`}>
-      <EventGrid events={events} emptyText={`Ainda não há eventos publicados em ${target.name}.`} />
+      {external.length ? (
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {events.map((e) => (
+            <EventCard key={e.slug} event={e} />
+          ))}
+          {external.map((e) => (
+            <ExternalEventCard key={`ext-${e.slug}`} event={e} />
+          ))}
+        </div>
+      ) : (
+        <EventGrid events={events} emptyText={`Ainda não há eventos publicados em ${target.name}.`} />
+      )}
     </Section>
   );
 }

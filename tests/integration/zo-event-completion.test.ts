@@ -87,6 +87,21 @@ describe("reconhecimento em tempo real (sem depender do job)", () => {
     expect(groups.flatMap((g) => g.items).filter((i) => i.kind === "event")).toEqual([]);
   });
 
+  it("destaque sai sozinho quando a venda encerra, mesmo com o evento ainda acontecendo", async () => {
+    const { event } = await paidEvent();
+    const city = await db.city.findUniqueOrThrow({ where: { id: event.cityId! } });
+    expect((await featuredEvents(db)).map((e) => e.id)).toContain(event.id);
+    expect((await cityShowcase(db, city.slug)).featured.map((e) => e.id)).toContain(event.id);
+
+    // Venda encerrada, evento ainda não terminou: some do destaque, continua na busca e na cidade.
+    await db.event.update({ where: { id: event.id }, data: { salesEndAt: ago(1000) } });
+    expect(await featuredEvents(db)).toEqual([]);
+    const showcase = await cityShowcase(db, city.slug);
+    expect(showcase.featured).toEqual([]);
+    expect(showcase.total).toBe(1);
+    expect((await searchEvents(db, {})).events.map((e) => e.id)).toContain(event.id);
+  });
+
   it("página individual continua acessível, marcada como encerrada e sem venda", async () => {
     const { event } = await paidEvent();
     expect(await getPublicEvent(db, event.slug)).toMatchObject({ ended: false });

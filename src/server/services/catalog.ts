@@ -18,6 +18,7 @@ import type { Db } from "../db";
 import { resolveCommissionRule, resolveCommissionRules } from "./commission";
 import { halfPriceEventInput } from "./half-price";
 import { rankPublicEventPage, type RankOptions } from "./search-ranking";
+import { publicExternalWhere } from "./external-visibility";
 
 export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
@@ -188,23 +189,27 @@ export interface SearchParams {
 
 export const PAGE_SIZE = 12;
 
+/** Janela de um filtro de data (fuso de Brasília), a mesma para eventos nativos e externos. */
+export function dateFilterRange(date: DateFilter, now = new Date()) {
+  const tz = "America/Sao_Paulo";
+  return date === "hoje"
+    ? localDayRange(now, tz)
+    : date === "amanha"
+      ? localDayRange(now, tz, 1)
+      : date === "fim-de-semana"
+        ? weekendRange(now, tz)
+        : localDayRange(now, tz, 0, date === "7-dias" ? 7 : 30);
+}
+
 export async function searchEvents(db: Db, params: SearchParams, now = new Date()) {
   const and: Prisma.EventWhereInput[] = [publicEventWhere(now)];
-  const tz = "America/Sao_Paulo";
   // Texto: relevância e acentos no banco (search-ranking.ts); a ordem vem do ranking.
   const q = params.q?.trim().slice(0, 80) ?? "";
   const rankFilters: RankOptions = { citySlug: params.citySlug, categorySlug: params.categorySlug, categoryId: params.matchCategoryId, now };
   if (params.citySlug) and.push({ OR: [{ city: { slug: params.citySlug } }, { venue: { city: { slug: params.citySlug } } }] });
   if (params.categorySlug) and.push({ category: { slug: params.categorySlug } });
   if (params.date) {
-    const range =
-      params.date === "hoje"
-        ? localDayRange(now, tz)
-        : params.date === "amanha"
-          ? localDayRange(now, tz, 1)
-          : params.date === "fim-de-semana"
-            ? weekendRange(now, tz)
-            : localDayRange(now, tz, 0, params.date === "7-dias" ? 7 : 30);
+    const range = dateFilterRange(params.date, now);
     // Eventos que acontecem (ao menos em parte) dentro da janela.
     and.push({ startsAt: { lt: range.to }, endsAt: { gt: range.from } });
     rankFilters.dateRange = range;
@@ -234,7 +239,8 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
 
 export async function featuredEvents(db: Db, limit = 6, now = new Date()) {
   const rows = await db.event.findMany({
-    where: { ...publicEventWhere(now), isFeatured: true },
+    // Destaque só com venda aberta: encerrou a venda (ou o evento), sai do destaque sozinho.
+    where: { ...publicEventWhere(now), isFeatured: true, salesEndAt: { gt: now } },
     select: cardSelect,
     orderBy: { startsAt: "asc" },
     take: limit,
@@ -270,7 +276,7 @@ export async function cityShowcase(db: Db, citySlug: string, perShelf = 10, now 
     if (entry.rows.length < perShelf) entry.rows.push(r);
     byCategory.set(r.category.slug, entry);
   }
-  const featuredRows = rows.filter((r) => r.isFeatured).slice(0, 5);
+  const featuredRows = rows.filter((r) => r.isFeatured && r.salesEndAt > now).slice(0, 5);
   const groups = [...byCategory.values()].sort((a, b) => a.sortOrder - b.sortOrder);
   // Só os eventos exibidos precisam de preço com taxa.
   const rules = await rulesFor(db, [...featuredRows, ...groups.flatMap((g) => g.rows)], now);
@@ -296,7 +302,12 @@ export async function listCategories(db: Db) {
  * rascunho só aparece no site quando o evento for publicado.
  */
 export const cityWithPublicEventsWhere = (now = new Date()): Prisma.CityWhereInput => ({
-  OR: [{ events: { some: publicEventWhere(now) } }, { venues: { some: { events: { some: publicEventWhere(now) } } } }],
+  OR: [
+    { events: { some: publicEventWhere(now) } },
+    { venues: { some: { events: { some: publicEventWhere(now) } } } },
+    // Evento externo publicado também torna a cidade pública (sugestões, filtros, página da cidade).
+    { externalEvents: { some: publicExternalWhere(now) } },
+  ],
 });
 
 /** Cidades para seletores e filtros públicos: só as com evento público. Destaques primeiro. */

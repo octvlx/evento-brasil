@@ -11,6 +11,8 @@ import { EventShelf } from "@/components/site/event-shelf";
 import { db } from "@/server/db";
 import { cityShowcase, getPublicCity, listCategories, searchEvents, type DateFilter } from "@/server/services/catalog";
 import { cn } from "@/lib/utils";
+import { ExternalEventsSection } from "@/components/site/external-event-card";
+import { featuredExternalEvents, listPublicExternalEvents } from "@/server/services/external-events";
 
 type CitySearch = { categoria?: string; data?: string };
 
@@ -92,15 +94,22 @@ async function CityContent({ params, searchParams }: { params: Promise<{ slug: s
 }
 
 async function Showcase({ slug, cityName }: { slug: string; cityName: string }) {
-  const { total, featured, shelves } = await cityShowcase(db, slug);
-  if (!total) return <EventGrid events={[]} emptyText={`Ainda não há eventos publicados em ${cityName}. Volte em breve!`} />;
+  const city = await db.city.findUnique({ where: { slug }, select: { id: true } });
+  const [{ total, featured, shelves }, externalFeatured, external] = await Promise.all([
+    cityShowcase(db, slug),
+    city ? featuredExternalEvents(db, { cityId: city.id, limit: 5 }) : [],
+    city ? listPublicExternalEvents(db, { cityId: city.id, take: 8 }) : [],
+  ]);
+  if (!total && !external.length) return <EventGrid events={[]} emptyText={`Ainda não há eventos publicados em ${cityName}. Volte em breve!`} />;
+  const count = total + external.length;
   return (
     <>
-      <p className="mb-8 text-muted-foreground">{total === 1 ? "1 evento publicado" : `${total} eventos publicados`}</p>
-      {featured.length > 0 && <EventShelf id="destaques" title={`Em destaque em ${cityName}`} events={featured} />}
+      <p className="mb-8 text-muted-foreground">{count === 1 ? "1 evento publicado" : `${count} eventos publicados`}</p>
+      {(featured.length > 0 || externalFeatured.length > 0) && <EventShelf id="destaques" title={`Em destaque em ${cityName}`} events={featured} externalEvents={externalFeatured} />}
       {shelves.map((s) => (
         <EventShelf key={s.category.slug} id={s.category.slug} title={s.category.name} count={s.total} href={cityHref(slug, { categoria: s.category.slug })} events={s.events} />
       ))}
+      <ExternalEventsSection events={external} title={total ? `Também em ${cityName} (ingressos em outros sites)` : `Em ${cityName} (ingressos em outros sites)`} />
       <div className="mt-12 text-center">
         <Link href={`/eventos?cidade=${slug}`} className={buttonVariants({ variant: "outline" })}>
           Buscar com mais filtros <ArrowRight aria-hidden />
@@ -111,14 +120,21 @@ async function Showcase({ slug, cityName }: { slug: string; cityName: string }) 
 }
 
 async function FilteredResults({ slug, cityName, categoria, data }: { slug: string; cityName: string; categoria?: string; data?: DateFilter }) {
-  const res = await searchEvents(db, { citySlug: slug, categorySlug: categoria, date: data });
+  const city = await db.city.findUnique({ where: { slug }, select: { id: true } });
+  const [res, external] = await Promise.all([
+    searchEvents(db, { citySlug: slug, categorySlug: categoria, date: data }),
+    // Mesmos filtros nos externos (com categoria nenhum aparece: a fonte não informa).
+    city ? listPublicExternalEvents(db, { cityId: city.id, categorySlug: categoria, date: data, take: 12 }) : [],
+  ]);
   const more = new URLSearchParams(Object.entries({ cidade: slug, categoria, data }).filter(([, v]) => v) as [string, string][]);
+  const found = res.total + external.length;
   return (
     <>
       <p className="mb-6 text-muted-foreground" aria-live="polite">
-        {res.total === 1 ? "1 evento encontrado" : `${res.total} eventos encontrados`}
+        {found === 1 ? "1 evento encontrado" : `${found} eventos encontrados`}
       </p>
-      <EventGrid events={res.events} emptyText={`Nenhum evento em ${cityName} com esses filtros. Tente outro dia ou categoria.`} />
+      {(res.total > 0 || !external.length) && <EventGrid events={res.events} emptyText={`Nenhum evento em ${cityName} com esses filtros. Tente outro dia ou categoria.`} />}
+      <ExternalEventsSection events={external} title={res.total ? `Também em ${cityName} (ingressos em outros sites)` : `Em ${cityName} (ingressos em outros sites)`} />
       {res.pageCount > 1 && (
         <div className="mt-10 text-center">
           <Link href={`/eventos?${more}`} className={buttonVariants({ variant: "outline" })}>
@@ -129,3 +145,4 @@ async function FilteredResults({ slug, cityName, categoria, data }: { slug: stri
     </>
   );
 }
+

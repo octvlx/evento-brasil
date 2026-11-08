@@ -139,6 +139,17 @@ async function main() {
     } });
   }
 
+  // Fontes de eventos externos (mesmas da migração 20261106120000_external_events): nenhuma
+  // coleta ativa por padrão; Sympla e Q2 dependem de autorização (motivo em notes).
+  await db.externalSource.createMany({
+    data: [
+      { id: "extsrc_duoticket", key: "duoticket", name: "Duoticket", homeUrl: "https://duoticket.com.br/", status: "PAUSED", notes: "Viável: dados factuais do HTML público (título, data, local, cidade/UF, URL). Sem imagem, descrição ou preço." },
+      { id: "extsrc_sympla", key: "sympla", name: "Sympla", homeUrl: "https://www.sympla.com.br/", status: "NEEDS_AUTHORIZATION", notes: "Depende de autorização: API oficial por conta de produtor; divulgação de terceiros pelo Programa de Afiliados." },
+      { id: "extsrc_q2", key: "q2ingressos", name: "Q2 Ingressos", homeUrl: "https://q2ingressos.com.br/", status: "NEEDS_AUTHORIZATION", notes: "Depende de autorização: app em JavaScript com fila de acesso (queue-it), sem API pública ou feed." },
+    ],
+    skipDuplicates: true,
+  });
+
   await db.commissionRule.create({
     data: { scope: "PLATFORM", percentBps: 700, bearer: "ORGANIZER", processingFeeBearer: "ORGANIZER", policyVersion: "platform:default:v1", createdById: admin.id },
   });

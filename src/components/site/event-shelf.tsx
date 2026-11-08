@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { EventCard, type EventCardData } from "./event-card";
+import { ExternalEventCard, type ExternalEventCardData } from "./external-event-card";
 
 /** Faixa horizontal de eventos com rolagem e encaixe (vitrines da cidade). */
-export function EventShelf({ id, title, count, href, events }: { id: string; title: string; count?: number; href?: string; events: EventCardData[] }) {
+/** `externalEvents`: destaques externos, que levam direto ao link externo do evento. */
+export function EventShelf({ id, title, count, href, events, externalEvents = [] }: { id: string; title: string; count?: number; href?: string; events: EventCardData[]; externalEvents?: ExternalEventCardData[] }) {
   const headingId = `faixa-${id}`;
   return (
     <section aria-labelledby={headingId} className="mt-12 first:mt-0">
@@ -22,6 +24,11 @@ export function EventShelf({ id, title, count, href, events }: { id: string; tit
         {events.map((e) => (
           <li key={e.slug} className="w-[78%] max-w-80 shrink-0 snap-start sm:w-72">
             <EventCard event={e} className="h-full" />
+          </li>
+        ))}
+        {externalEvents.map((e) => (
+          <li key={`ext-${e.slug}`} className="w-[78%] max-w-80 shrink-0 snap-start sm:w-72">
+            <ExternalEventCard event={e} outbound className="h-full" />
           </li>
         ))}
       </ul>

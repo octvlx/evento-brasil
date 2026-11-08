@@ -10,6 +10,7 @@ vi.mock("@/server/services/half-price", () => ({ recordHalfPriceReleases: async 
 vi.mock("@/server/services/transfers", () => ({ expireTicketTransfers: async () => 0 }));
 vi.mock("@/server/services/reconciliation", () => ({ reconcilePayments: mocks.reconcile, checkFinancialInvariants: async () => [] }));
 vi.mock("@/server/services/retention-purge", () => ({ runRetentionPurgeIfDue: async () => null }));
+vi.mock("@/server/services/external-events", () => ({ runExternalSyncIfDue: async () => ({}) }));
 vi.mock("@/server/services/finance-log", () => ({ financeLog: vi.fn() }));
 vi.mock("@/server/email/outbox", () => ({ dispatchEmailOutbox: mocks.email }));
 import { POST } from "@/app/api/cron/maintenance/route";
