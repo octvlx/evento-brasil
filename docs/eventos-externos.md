@@ -76,6 +76,13 @@ afiliados da Sympla, ou um acordo ou feed com a Q2. Com isso, cria-se um adaptad
     também recusa evento passado.
   - **Capa automática ao publicar:** sem capa, publicar busca a imagem 300×300 da página
     original (ou outra quadrada, ou a melhor candidata). Falha não impede a publicação.
+  - **Limites de capa (por admin, por hora):** busca manual ("Buscar capa" e "Usar esta
+    capa") 150; capa automática ao publicar 500, em orçamento separado. Cada busca baixa a
+    página e até 5 imagens de um site público: o limite evita uso em massa do servidor e
+    bloqueio pelas fontes. Envio de arquivo não tem esse limite.
+  - **Busca pública:** a seção de eventos externos em `/eventos` tem paginação própria
+    (`?externos=N`, 12 por página). No admin, cada aba mostra a contagem; em Publicados,
+    também destacados e quantos aparecem agora no destaque.
   
   Tudo fica na auditoria.
 - **Público:**
