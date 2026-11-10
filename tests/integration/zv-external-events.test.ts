@@ -6,6 +6,8 @@ import type { AdminRole } from "@/generated/prisma/client";
 import { duoticketAdapter } from "@/server/external/adapters/duoticket";
 import {
   adminAutoCoverExternalEvent,
+  adminFeatureExternalEvents,
+  BULK_FEATURE_MAX,
   adminExternalCityOptions,
   adminListExternalEvents,
   adminPublishExternalEvents,
@@ -557,7 +559,11 @@ describe("filtros e publicação em lote no admin", () => {
     expect(await titles({ city: "x", from: "ontem" })).toHaveLength(4);
     const list = await adminListExternalEvents(db, admin, "PENDING_REVIEW", 2, {});
     expect(list).toHaveLength(2);
-    expect(list.total).toBe(4);
+    expect(list).toMatchObject({ total: 4, page: 1, pageCount: 2 });
+    // Paginação: a 2ª página traz o resto, em ordem de data; página fora do intervalo vai para a última.
+    expect((await adminListExternalEvents(db, admin, "PENDING_REVIEW", 2, {}, 2)).map((e) => e.title)).toEqual(["Samba de Roda", "Forró Pé de Serra"]);
+    expect((await adminListExternalEvents(db, admin, "PENDING_REVIEW", 2, {}, 9)).page).toBe(2);
+    expect((await adminListExternalEvents(db, admin, "PENDING_REVIEW", 2, {}, Number("x"))).page).toBe(1);
     expect(await adminExternalCityOptions(db, admin, "PENDING_REVIEW")).toEqual([
       { value: "SP:Campinas", label: "Campinas – SP", count: 3 },
       { value: "SP:Santos", label: "Santos – SP", count: 1 },
@@ -595,6 +601,51 @@ describe("filtros e publicação em lote no admin", () => {
     await expect(adminPublishExternalEvents(db, admin, many)).rejects.toMatchObject({ code: "VALIDATION" });
     expect(await db.externalEvent.count({ where: { review: "PUBLISHED" } })).toBe(0);
     await expect(adminListExternalEvents(db, support, "PENDING_REVIEW")).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("destaque em lote no admin", () => {
+  it("destaca só os selecionados pelo serviço de destaque; já destacado não é regravado; despublicado falha", async () => {
+    await sources();
+    const admin = await adminWith(["MODERATION"]);
+    await run(site({ "2301": { title: "Destaque A", date: "10/12/2026" }, "2302": { title: "Destaque B", date: "11/12/2026" }, "2303": { title: "Destaque C", date: "12/12/2026" }, "2304": { title: "Fora", date: "13/12/2026" } }));
+    const ev = Object.fromEntries((await db.externalEvent.findMany()).map((e) => [e.title, e]));
+    for (const t of ["Destaque A", "Destaque B", "Destaque C", "Fora"]) await adminReviewExternalEvent(db, admin, ev[t].id, "PUBLISHED");
+    await adminSetExternalFeatured(db, admin, ev["Destaque B"].id, true);
+    // Saiu de "publicado" depois de selecionado.
+    await adminReviewExternalEvent(db, admin, ev["Destaque C"].id, "HIDDEN");
+    const auditsBefore = await db.auditLog.count({ where: { action: "external_event.featured" } });
+
+    const res = await adminFeatureExternalEvents(db, admin, [ev["Destaque A"].id, ev["Destaque B"].id, ev["Destaque C"].id, "sumiu", ev["Destaque A"].id]);
+    expect(res).toEqual([
+      { id: ev["Destaque A"].id, title: "Destaque A", status: "changed" },
+      { id: ev["Destaque B"].id, title: "Destaque B", status: "already" },
+      { id: ev["Destaque C"].id, title: "Destaque C", status: "failed", error: "Publique o evento antes de destacá-lo." },
+      { id: "sumiu", title: "(evento não encontrado)", status: "failed", error: "Evento externo não encontrado." },
+    ]);
+    const featured = Object.fromEntries((await db.externalEvent.findMany()).map((e) => [e.title, e.isFeatured]));
+    expect(featured).toEqual({ "Destaque A": true, "Destaque B": true, "Destaque C": false, Fora: false });
+    // Uma auditoria nova só (A): o já destacado não gerou operação.
+    expect(await db.auditLog.count({ where: { action: "external_event.featured" } })).toBe(auditsBefore + 1);
+
+    // Remover destaque em lote: só os selecionados; quem não está em destaque fica como está.
+    const off = await adminFeatureExternalEvents(db, admin, [ev["Destaque A"].id, ev["Fora"].id], false);
+    expect(off).toEqual([
+      { id: ev["Destaque A"].id, title: "Destaque A", status: "changed" },
+      { id: ev["Fora"].id, title: "Fora", status: "already" },
+    ]);
+    const after = Object.fromEntries((await db.externalEvent.findMany()).map((e) => [e.title, e.isFeatured]));
+    expect(after).toEqual({ "Destaque A": false, "Destaque B": true, "Destaque C": false, Fora: false });
+    expect(await db.auditLog.count({ where: { action: "external_event.featured" } })).toBe(auditsBefore + 2);
+  });
+
+  it("recusa sem permissão, sem seleção e acima do limite", async () => {
+    await sources();
+    const support = await adminWith(["SUPPORT"]);
+    const admin = await adminWith(["MODERATION"]);
+    await expect(adminFeatureExternalEvents(db, support, ["x"])).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(adminFeatureExternalEvents(db, admin, [])).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(adminFeatureExternalEvents(db, admin, Array.from({ length: BULK_FEATURE_MAX + 1 }, (_, i) => `id${i}`))).rejects.toMatchObject({ code: "VALIDATION" });
   });
 });
 
