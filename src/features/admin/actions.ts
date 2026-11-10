@@ -158,10 +158,10 @@ export async function publishExternalEventsAction(ids: string[]): Promise<Action
 }
 export const featureExternalEventAction = async (eventId: string, featured: boolean) => run((a) => adminSetExternalFeatured(db, a, eventId, featured === true));
 
-/** Destaque em lote: só os ids enviados, pelo serviço do destaque individual; atualiza a lista. */
-export async function featureExternalEventsAction(ids: string[]): Promise<ActionResult<BulkFeatureItem[]>> {
+/** Destaque em lote (ou remoção do destaque): só os ids enviados, pelo serviço do destaque individual. */
+export async function featureExternalEventsAction(ids: string[], featured = true): Promise<ActionResult<BulkFeatureItem[]>> {
   const admin = await requireAdmin();
-  const res = await toActionResult(() => adminFeatureExternalEvents(db, admin, ids));
+  const res = await toActionResult(() => adminFeatureExternalEvents(db, admin, ids, featured !== false));
   if (res.ok) refresh();
   return res;
 }

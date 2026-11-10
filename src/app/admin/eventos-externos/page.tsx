@@ -14,6 +14,7 @@ import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { formatDateShort, formatEventDateTime } from "@/lib/datetime";
 import {
+  ADMIN_EXTERNAL_PAGE_SIZE,
   ADMIN_RUN_MAX_EVENTS,
   BULK_FEATURE_MAX,
   BULK_PUBLISH_MAX,
@@ -64,10 +65,11 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
   const filtered = Boolean(filter.q || filter.city || filter.from || filter.to);
   const keep = new URLSearchParams(Object.entries({ q: filter.q, cidade: filter.city, de: filter.from, ate: filter.to }).filter(([, v]) => v) as [string, string][]);
   const tabHref = (k: ExternalEventReview) => `/admin/eventos-externos?${new URLSearchParams([["aba", k], ...keep])}`;
+  const pageHref = (p: number) => `/admin/eventos-externos?${new URLSearchParams([["aba", tab], ...keep, ...(p > 1 ? [["pagina", String(p)]] : [])])}#revisao`;
   const [sources, runs, events, counts, cities] = await Promise.all([
     adminListExternalSources(db, admin),
     adminListImportRuns(db, admin),
-    adminListExternalEvents(db, admin, tab, 500, filter),
+    adminListExternalEvents(db, admin, tab, ADMIN_EXTERNAL_PAGE_SIZE, filter, Number(str(sp.pagina)) || 1),
     adminExternalCounts(db, admin),
     adminExternalCityOptions(db, admin, tab),
   ]);
@@ -177,7 +179,7 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
       </section>
 
       <section aria-labelledby="revisao">
-        <h2 id="revisao" className="mb-3 font-display text-lg font-bold">
+        <h2 id="revisao" className="mb-3 scroll-mt-24 font-display text-lg font-bold">
           Eventos
         </h2>
         <nav aria-label="Situação dos eventos externos" className="mb-3 flex flex-wrap gap-2 text-sm">
@@ -229,7 +231,8 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
           </div>
         </form>
         <p className="mb-3 text-sm text-muted-foreground" aria-live="polite">
-          {events.total === 1 ? "1 evento" : `${events.total} eventos`} {filtered ? "com esses filtros" : "nesta situação"}.
+          {events.total === 1 ? "1 evento" : `${events.total} eventos`} {filtered ? "com esses filtros" : "nesta situação"}
+          {events.pageCount > 1 && ` · página ${events.page} de ${events.pageCount}`}.
         </p>
         {tab === "PUBLISHED" && (
           <dl className="mb-3 grid max-w-xl grid-cols-3 gap-3 text-center" aria-label="Números dos eventos publicados">
@@ -248,8 +251,8 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
           </dl>
         )}
         <ExternalBulkPublishList
-          // Filtros ou aba diferentes: componente novo, seleção vazia.
-          key={`${tab}?${keep}`}
+          // Filtros, aba ou página diferentes: componente novo, seleção vazia.
+          key={`${tab}?${keep}&p=${events.page}`}
           total={events.total}
           // Publicados: seleção para destacar; demais abas: para publicar.
           mode={tab === "PUBLISHED" ? "feature" : "publish"}
@@ -303,6 +306,23 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin/event
             ),
           }))}
         />
+        {events.pageCount > 1 && (
+          <nav className="mt-4 flex items-center justify-center gap-2" aria-label="Páginas dos eventos externos">
+            {events.page > 1 && (
+              <Link href={pageHref(events.page - 1)} className={buttonVariants({ variant: "outline", size: "sm" })}>
+                Anterior
+              </Link>
+            )}
+            <span className="text-sm text-muted-foreground" aria-current="page">
+              Página {events.page} de {events.pageCount}
+            </span>
+            {events.page < events.pageCount && (
+              <Link href={pageHref(events.page + 1)} className={buttonVariants({ variant: "outline", size: "sm" })}>
+                Próxima
+              </Link>
+            )}
+          </nav>
+        )}
       </section>
     </>
   );

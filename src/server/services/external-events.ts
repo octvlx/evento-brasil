@@ -408,14 +408,24 @@ function adminExternalWhere(review: ExternalEventReview, f: AdminExternalFilter 
   return { AND: and };
 }
 
-export async function adminListExternalEvents(db: Db, admin: Actor, review: ExternalEventReview, take = 100, filter: AdminExternalFilter = {}) {
+/** Eventos por página na lista do admin (mesmo tamanho do lote de publicação). */
+export const ADMIN_EXTERNAL_PAGE_SIZE = 50;
+
+/** Lista paginada; página fora do intervalo vai para a última (ou a primeira). */
+export async function adminListExternalEvents(db: Db, admin: Actor, review: ExternalEventReview, take = ADMIN_EXTERNAL_PAGE_SIZE, filter: AdminExternalFilter = {}, page = 1) {
   assertAdminPermission(admin, PERM);
   const where = adminExternalWhere(review, filter);
-  const [events, total] = await Promise.all([
-    db.externalEvent.findMany({ where, orderBy: [{ startsAt: "asc" }, { id: "asc" }], take, include: { source: { select: { name: true } } } }),
-    db.externalEvent.count({ where }),
-  ]);
-  return Object.assign(events, { total });
+  const total = await db.externalEvent.count({ where });
+  const pageCount = Math.max(1, Math.ceil(total / take));
+  const current = Math.min(Math.max(1, Math.floor(page) || 1), pageCount);
+  const events = await db.externalEvent.findMany({
+    where,
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+    skip: (current - 1) * take,
+    take,
+    include: { source: { select: { name: true } } },
+  });
+  return Object.assign(events, { total, page: current, pageCount });
 }
 
 /** Cidades presentes na situação escolhida, para o filtro (valor "UF:Nome"). */
@@ -435,7 +445,7 @@ export type BulkPublishItem = { id: string; title: string; status: "published" |
 /** Máximo de eventos por destaque em lote (só grava no banco: o teto da lista basta). */
 export const BULK_FEATURE_MAX = 500;
 
-export type BulkFeatureItem = { id: string; title: string; status: "featured" | "already" | "failed"; error?: string };
+export type BulkFeatureItem = { id: string; title: string; status: "changed" | "already" | "failed"; error?: string };
 
 function bulkIds(ids: unknown, max: number): string[] {
   const list = Array.isArray(ids) ? [...new Set(ids.filter((i): i is string => typeof i === "string" && i.length > 0 && i.length <= 40))] : [];
@@ -445,11 +455,12 @@ function bulkIds(ids: unknown, max: number): string[] {
 }
 
 /**
- * Destaca só os eventos indicados, pelo mesmo serviço do destaque individual (exige
- * publicado, audita). Já destacado não é regravado; quem saiu de "publicado" entre a
- * seleção e o envio falha com o motivo. Falha de um não interrompe os outros.
+ * Destaca (ou tira o destaque de) só os eventos indicados, pelo mesmo serviço do destaque
+ * individual (destacar exige publicado; audita). Quem já está no estado pedido não é
+ * regravado; quem saiu de "publicado" entre a seleção e o envio falha com o motivo.
+ * Falha de um não interrompe os outros.
  */
-export async function adminFeatureExternalEvents(db: Db, admin: Actor, ids: unknown): Promise<BulkFeatureItem[]> {
+export async function adminFeatureExternalEvents(db: Db, admin: Actor, ids: unknown, featured = true): Promise<BulkFeatureItem[]> {
   assertAdminPermission(admin, PERM);
   const list = bulkIds(ids, BULK_FEATURE_MAX);
   const rows = await db.externalEvent.findMany({ where: { id: { in: list } }, select: { id: true, title: true, review: true, isFeatured: true } });
@@ -461,13 +472,13 @@ export async function adminFeatureExternalEvents(db: Db, admin: Actor, ids: unkn
       results.push({ id, title: "(evento não encontrado)", status: "failed", error: "Evento externo não encontrado." });
       continue;
     }
-    if (row.review === "PUBLISHED" && row.isFeatured) {
+    if (featured ? row.review === "PUBLISHED" && row.isFeatured : !row.isFeatured) {
       results.push({ id, title: row.title, status: "already" });
       continue;
     }
     try {
-      await adminSetExternalFeatured(db, admin, id, true);
-      results.push({ id, title: row.title, status: "featured" });
+      await adminSetExternalFeatured(db, admin, id, featured);
+      results.push({ id, title: row.title, status: "changed" });
     } catch (e) {
       results.push({ id, title: row.title, status: "failed", error: e instanceof AppError ? e.message : "Erro inesperado." });
     }

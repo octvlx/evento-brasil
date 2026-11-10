@@ -100,7 +100,7 @@ test.describe("publicação em lote no admin", () => {
     await page.waitForURL(new RegExp(`q=Lote`));
     await expect(page.getByText("2 eventos com esses filtros.")).toBeVisible();
 
-    await page.getByLabel(/Selecionar todos os resultados filtrados \(2\)/).check();
+    await page.getByLabel(/Selecionar todos os eventos desta página \(2\)/).check();
     await expect(page.getByText("2 eventos selecionados")).toBeVisible();
     await publish.click();
     const dialog = page.getByRole("dialog", { name: "Publicar 2 eventos?" });
@@ -161,6 +161,17 @@ test.describe("destaque em lote no admin", () => {
     await expect(feature).toBeDisabled();
     // Lista atualizada: os três com o selo de destaque e o botão individual invertido.
     for (const n of names) await expect(page.getByRole("listitem").filter({ hasText: n }).getByText("Destaque", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Remover destaque" })).toHaveCount(3);
+    await expect(page.getByRole("button", { name: "Remover destaque", exact: true })).toHaveCount(3);
+
+    // Remover destaque em lote: seleciona dois e confirma.
+    await page.getByRole("checkbox", { name: `Selecionar ${names[0]}` }).check();
+    await page.getByRole("checkbox", { name: `Selecionar ${names[2]}` }).check();
+    await page.getByRole("button", { name: "Remover destaque dos selecionados" }).click();
+    const off = page.getByRole("dialog", { name: "Remover destaque de 2 eventos?" });
+    await expect(off.getByRole("listitem")).toHaveText([names[0], names[2]]);
+    await off.getByRole("button", { name: "Remover destaque de 2" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "2 eventos saíram do destaque" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Remover destaque", exact: true })).toHaveCount(1);
+    await expect(page.getByText("0 eventos selecionados")).toBeVisible();
   });
 });
