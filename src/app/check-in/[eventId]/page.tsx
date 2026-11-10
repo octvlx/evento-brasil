@@ -47,7 +47,7 @@ async function Content({ params }: { params: Promise<{ eventId: string }> }) {
   return (
     <>
       <h1 className="font-display text-2xl font-extrabold leading-tight">{event.title}</h1>
-      <p className="mb-4 text-sm text-muted-foreground">Validação online — cada QR só é aceito uma vez.</p>
+      <p className="mb-4 text-sm text-muted-foreground">Validação online — cada QR só é aceito uma vez. Sem internet, o leitor usa a lista baixada e confirma tudo ao reconectar.</p>
       <Scanner eventId={eventId} initialCounters={{ admitted, total }} />
       <section className="mt-8">
         <h2 className="mb-2 text-sm font-bold">Últimas leituras</h2>

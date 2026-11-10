@@ -950,6 +950,8 @@ model TicketCheckin {
   scannedById String
   result      CheckinResult
   scannedAt   DateTime      @default(now()) @db.Timestamptz(3)
+  /// Leitura feita sem internet no aparelho e enviada depois (scannedAt = hora do aparelho).
+  offline     Boolean       @default(false)
 
   ticket    IssuedTicket? @relation(fields: [ticketId], references: [id])
   event     Event         @relation(fields: [eventId], references: [id])

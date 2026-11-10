@@ -96,3 +96,46 @@ test("meia-entrada: a portaria vê o aviso para exigir o documento, também no d
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Ingresso JÁ UTILIZADO")).toContainText("Meia-entrada — exigir documento comprobatório");
 });
+
+test("check-in sem internet: valida com a lista baixada, guarda e confirma ao reconectar", async ({ browser }) => {
+  const buyer = await (await browser.newContext()).newPage();
+  await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
+  await buyer.locator("li").filter({ hasText: "Inteira" }).first().getByRole("button", { name: "Aumentar" }).click();
+  await buyer.getByRole("button", { name: "Continuar para revisão" }).click();
+  await proceedThroughReview(buyer);
+  await buyer.getByRole("button", { name: "Gerar PIX" }).click();
+  await buyer.getByRole("button", { name: "Aprovar PIX" }).click();
+  await buyer.waitForURL(/\/pedido\//);
+  const code = (await buyer.locator('a[href^="/ingressos/"]').first().getAttribute("href"))!.split("/").pop()!;
+
+  const ctx = await browser.newContext();
+  const staff = await ctx.newPage();
+  const { payload, eventId } = await qrPayloadFor(code);
+  await openScanner(staff, USERS.producer, eventId);
+  // Sem câmera no teste: a lanterna não aparece (só com câmera que a suporte).
+  await expect(staff.getByRole("button", { name: /lanterna/i })).toHaveCount(0);
+
+  await staff.getByRole("button", { name: "Baixar lista para uso offline" }).click();
+  await expect(staff.getByText(/Lista baixada: \d+ ingressos/)).toBeVisible();
+
+  await ctx.setOffline(true);
+  await expect(staff.getByText(/Sem internet: validando com a lista baixada/)).toBeVisible();
+  const input = staff.getByPlaceholder(/Colar conteúdo do QR/);
+  const result = (text: string) => staff.getByRole("alert").filter({ hasText: text });
+  await input.fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(result("Entrada liberada (offline)")).toBeVisible();
+  await nextScan(staff);
+  await input.fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(result("JÁ UTILIZADO neste aparelho")).toBeVisible();
+  await nextScan(staff);
+  await expect(staff.getByText("2 leituras guardadas para enviar.")).toBeVisible();
+
+  // Conexão de volta: a fila vai sozinha para o servidor, que confirma a entrada.
+  await ctx.setOffline(false);
+  await expect(staff.getByRole("status").filter({ hasText: "2 leituras enviadas" })).toBeVisible();
+  await input.fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(result("Ingresso JÁ UTILIZADO")).toBeVisible();
+});

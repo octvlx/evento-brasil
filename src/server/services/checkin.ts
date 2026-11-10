@@ -1,11 +1,12 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { CheckinResult, EventStatus, TicketKind } from "@/generated/prisma/client";
 import { checkinWindowOpen } from "@/lib/event-lifecycle";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
 import { hashToken } from "../crypto";
-import { notFound } from "../errors";
-import { parseQrPayload } from "./tickets";
+import { AppError, notFound } from "../errors";
+import { parseQrPayload } from "@/lib/qr-payload";
 
 export interface CheckinResponse {
   result: CheckinResult;
@@ -74,13 +75,20 @@ async function replacedByTransfer(tx: Tx, eventId: string, organizationId: strin
  * Validação 100% online e atômica: só uma leitura pode transicionar VALID → CHECKED_IN,
  * e a transição e o registro da leitura (TicketCheckin) são gravados na mesma transação.
  */
-export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPayload: string, now = new Date()): Promise<CheckinResponse> {
+export async function checkInTicket(
+  db: Db,
+  actor: Actor,
+  eventId: string,
+  rawPayload: string,
+  now = new Date(),
+  opts: { offline?: boolean; skipCounters?: boolean } = {},
+): Promise<CheckinResponse> {
   await resolveCheckinAccess(db, actor, eventId);
 
   const outcome = await db.$transaction(
     async (tx): Promise<{ result: CheckinResult; ticket?: CheckinResponse["ticket"] }> => {
       const record = (result: CheckinResult, ticketId: string | null) =>
-        tx.ticketCheckin.create({ data: { eventId, ticketId, scannedById: actor.id, result, scannedAt: now } });
+        tx.ticketCheckin.create({ data: { eventId, ticketId, scannedById: actor.id, result, scannedAt: now, offline: opts.offline === true } });
 
       // 1. Evento (trava compartilhada) e janela de check-in.
       const event = await lockEventForCheckin(tx, eventId);
@@ -151,7 +159,89 @@ export async function checkInTicket(db: Db, actor: Actor, eventId: string, rawPa
 
   // Contadores fora da transação, após o commit.
   const message = outcome.ticket?.qrReplaced ? "QR SUBSTITUÍDO — ingresso transferido" : MESSAGES[outcome.result];
-  return { result: outcome.result, message, ticket: outcome.ticket, counters: await counters(db, eventId) };
+  return { result: outcome.result, message, ticket: outcome.ticket, counters: opts.skipCounters ? { admitted: 0, total: 0 } : await counters(db, eventId) };
+}
+
+// ---------------------------------------------------------------------------
+// Check-in offline
+// ---------------------------------------------------------------------------
+
+/** Validade da lista baixada: depois disso o aparelho não valida offline (precisa baixar de novo). */
+export const OFFLINE_PACKAGE_TTL_MS = 12 * 3600_000;
+/** Leituras por sincronização. */
+export const OFFLINE_SYNC_MAX = 500;
+/** Hora informada pelo aparelho: aceita até 24 h no passado; fora disso vale a hora do servidor. */
+const OFFLINE_MAX_AGE_MS = 24 * 3600_000;
+
+/** SHA-256 (hex) do token do QR: é o que a lista offline guarda, nunca o token. */
+export const offlineTokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+
+export interface OfflinePackage {
+  eventId: string;
+  generatedAt: string;
+  validUntil: string;
+  tickets: { h: string; code: string; status: "VALID" | "CHECKED_IN" | "REVOKED"; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind }[];
+}
+
+/**
+ * Lista para validar sem internet: só o hash do token de cada ingresso do evento (o QR
+ * não pode ser recriado a partir dela), a situação no momento do download e o que a
+ * portaria já vê online (titular e tipo). Mesmas permissões do leitor.
+ */
+export async function checkinOfflinePackage(db: Db, actor: Actor, eventId: string, now = new Date()): Promise<OfflinePackage> {
+  await resolveCheckinAccess(db, actor, eventId);
+  const event = await db.event.findUnique({ where: { id: eventId }, select: { status: true, endsAt: true } });
+  if (!event || !checkinWindowOpen(event, now)) throw new AppError("INVALID_STATE", "O check-in deste evento não está aberto: não há lista para baixar.");
+  const rows = await db.issuedTicket.findMany({
+    where: { eventId },
+    select: { code: true, validationToken: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } } },
+  });
+  return {
+    eventId,
+    generatedAt: now.toISOString(),
+    validUntil: new Date(now.getTime() + OFFLINE_PACKAGE_TTL_MS).toISOString(),
+    tickets: rows.map((t) => ({ h: offlineTokenHash(t.validationToken), code: t.code, status: t.status, holderName: t.holderName, ticketTypeName: t.ticketType.name, ticketKind: t.ticketType.kind })),
+  };
+}
+
+export interface OfflineEntry {
+  payload: string;
+  scannedAt: string;
+  /** O que o aparelho mostrou na hora (sem internet). */
+  localResult: CheckinResult;
+}
+
+export interface OfflineSyncItem {
+  payload: string;
+  localResult: CheckinResult;
+  result: CheckinResult;
+  message: string;
+  /** O aparelho liberou, mas o servidor não admitiu (ex.: já tinha entrado por outro aparelho). */
+  conflict: boolean;
+  code?: string;
+  holderName?: string | null;
+}
+
+/**
+ * Envia as leituras feitas sem internet, na ordem, pelo MESMO checkInTicket atômico do
+ * check-in online: o servidor decide. Um ingresso liberado em dois aparelhos offline só
+ * conta uma entrada; a outra volta como conflito para a portaria conferir.
+ */
+export async function syncOfflineCheckins(db: Db, actor: Actor, eventId: string, raw: unknown, now = new Date()): Promise<{ items: OfflineSyncItem[]; counters: { admitted: number; total: number } }> {
+  await resolveCheckinAccess(db, actor, eventId);
+  if (!Array.isArray(raw) || raw.length === 0) throw new AppError("VALIDATION", "Nenhuma leitura para sincronizar.");
+  if (raw.length > OFFLINE_SYNC_MAX) throw new AppError("VALIDATION", `Envie no máximo ${OFFLINE_SYNC_MAX} leituras por vez.`);
+  const results = new Set<string>(Object.keys(MESSAGES));
+  const items: OfflineSyncItem[] = [];
+  for (const e of raw as Partial<OfflineEntry>[]) {
+    const payload = typeof e?.payload === "string" ? e.payload.slice(0, 200) : "";
+    const localResult = (typeof e?.localResult === "string" && results.has(e.localResult) ? e.localResult : "INVALID") as CheckinResult;
+    const t = typeof e?.scannedAt === "string" ? new Date(e.scannedAt) : new Date(NaN);
+    const at = Number.isFinite(t.getTime()) && t.getTime() <= now.getTime() && now.getTime() - t.getTime() <= OFFLINE_MAX_AGE_MS ? t : now;
+    const r = await checkInTicket(db, actor, eventId, payload, at, { offline: true, skipCounters: true });
+    items.push({ payload, localResult, result: r.result, message: r.message, conflict: localResult === "ADMITTED" && r.result !== "ADMITTED", code: r.ticket?.code, holderName: r.ticket?.holderName });
+  }
+  return { items, counters: await counters(db, eventId) };
 }
 
 export async function checkinHistory(db: Db, actor: Actor, eventId: string, limit = 50) {
