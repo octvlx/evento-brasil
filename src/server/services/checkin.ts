@@ -290,13 +290,26 @@ export interface OfflineDivergenceRow {
 
 /**
  * Leituras offline em que o aparelho e o servidor discordaram, para o organizador conferir
- * (mais recentes primeiro). Só para quem vê o histórico completo do check-in do evento.
+ * (mais recentes primeiro, 50 por página). Só para quem vê o histórico completo do check-in do evento.
  */
-export async function listOfflineDivergences(db: Db, actor: Actor, eventId: string, limit = 200): Promise<OfflineDivergenceRow[]> {
+export async function listOfflineDivergences(
+  db: Db,
+  actor: Actor,
+  eventId: string,
+  opts: { page?: number; pageSize?: number } = {},
+): Promise<{ rows: OfflineDivergenceRow[]; total: number; admittedButRejected: number; page: number; pageCount: number }> {
   const { canSeeAllHistory } = await resolveCheckinAccess(db, actor, eventId);
   if (!canSeeAllHistory) throw forbidden();
+  const pageSize = opts.pageSize ?? 50;
+  const where = { eventId, divergence: { not: null } } as const;
+  const [total, admittedButRejected] = await Promise.all([
+    db.ticketCheckin.count({ where }),
+    db.ticketCheckin.count({ where: { eventId, divergence: "ADMITTED_BUT_REJECTED" } }),
+  ]);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Math.floor(opts.page ?? 1) || 1), pageCount);
   const rows = await db.ticketCheckin.findMany({
-    where: { eventId, divergence: { not: null } },
+    where,
     select: {
       id: true,
       scannedAt: true,
@@ -306,8 +319,15 @@ export async function listOfflineDivergences(db: Db, actor: Actor, eventId: stri
       scannedBy: { select: { name: true } },
       ticket: { select: { code: true, holderName: true, status: true, checkedInAt: true } },
     },
-    orderBy: { scannedAt: "desc" },
-    take: limit,
+    orderBy: [{ scannedAt: "desc" }, { id: "desc" }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
   });
-  return rows.map((r) => ({ id: r.id, scannedAt: r.scannedAt, divergence: r.divergence!, localResult: r.offlineLocalResult, result: r.result, scannedBy: r.scannedBy.name, ticket: r.ticket }));
+  return {
+    rows: rows.map((r) => ({ id: r.id, scannedAt: r.scannedAt, divergence: r.divergence!, localResult: r.offlineLocalResult, result: r.result, scannedBy: r.scannedBy.name, ticket: r.ticket })),
+    total,
+    admittedButRejected,
+    page,
+    pageCount,
+  };
 }

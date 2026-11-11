@@ -21,7 +21,8 @@ export function PanelShell({
   return (
     <div
       className={cn(
-        "mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6",
+        // Coluna única com mínimo 0 no celular: sem isso, tabelas largas alargam a página toda.
+        "mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-6 px-4 py-6 sm:px-6",
         collapsible ? "md:grid-cols-[44px_1fr]" : "lg:grid-cols-[220px_1fr]",
       )}
     >

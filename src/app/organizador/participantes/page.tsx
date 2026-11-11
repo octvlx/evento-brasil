@@ -2,12 +2,13 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Download } from "lucide-react";
-import { Badge, Select, Skeleton } from "@/components/ui/primitives";
+import { Badge, Input, Select, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
-import { listAttendees, listTransferHistory, type TransferHistoryRow } from "@/server/services/reports";
+import { listAttendeesPage, listTransferHistory, type AttendeeStatusFilter, type TransferHistoryRow } from "@/server/services/reports";
+import { adminHref, Pager } from "@/features/admin/pager";
 import { listOfflineDivergences, type OfflineDivergenceRow } from "@/server/services/checkin";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { CHECKIN_RESULT, TICKET_KIND, TICKET_STATUS } from "@/lib/labels";
@@ -17,20 +18,31 @@ export const metadata: Metadata = { title: "Participantes", robots: { index: fal
 export default function AttendeesPage({ searchParams }: PageProps<"/organizador/participantes">) {
   return (
     <Suspense fallback={<Skeleton className="h-96" />}>
-      <Content searchParams={searchParams as Promise<{ evento?: string }>} />
+      <Content searchParams={searchParams as Promise<Params>} />
     </Suspense>
   );
 }
 
-async function Content({ searchParams }: { searchParams: Promise<{ evento?: string }> }) {
-  const { evento } = await searchParams;
+type Params = { evento?: string; q?: string; status?: string; pagina?: string; divergencias?: string };
+const STATUS_FILTERS: AttendeeStatusFilter[] = ["VALID", "CHECKED_IN", "REVOKED"];
+const PATH = "/organizador/participantes";
+
+async function Content({ searchParams }: { searchParams: Promise<Params> }) {
+  const sp = await searchParams;
+  const { evento } = sp;
+  const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 100) : "";
+  const status = STATUS_FILTERS.find((s) => s === sp.status);
   const { user, org, can } = await requireOrganizer("/organizador/participantes");
   if (!can("attendees:read")) redirect("/organizador");
   const events = await db.event.findMany({ where: { organizationId: org.id }, select: { id: true, title: true, timezone: true }, orderBy: { startsAt: "desc" } });
   const selected = events.find((e) => e.id === evento) ?? events[0];
-  const rows = selected ? await listAttendees(db, user, selected.id) : [];
-  const divergences = selected && can("checkin:history") ? await listOfflineDivergences(db, user, selected.id) : [];
-  const history = selected && rows.some((r) => r.transferCount > 0) ? await listTransferHistory(db, user, selected.id) : [];
+  const list = selected ? await listAttendeesPage(db, user, selected.id, { page: Number(sp.pagina) || 1, q, status }) : null;
+  const rows = list?.rows ?? [];
+  const divergences = selected && can("checkin:history") ? await listOfflineDivergences(db, user, selected.id, { page: Number(sp.divergencias) || 1 }) : null;
+  const withTransfers = rows.filter((r) => r.transferCount > 0).map((r) => r.id);
+  const history = selected && withTransfers.length ? await listTransferHistory(db, user, selected.id, withTransfers) : [];
+  // Filtros mantidos ao paginar (cada lista tem sua própria página).
+  const keep = { evento: selected?.id, q: q || undefined, status, divergencias: sp.divergencias, pagina: sp.pagina };
   const historyByTicket = new Map<string, TransferHistoryRow[]>();
   for (const h of history) historyByTicket.set(h.ticketId, [...(historyByTicket.get(h.ticketId) ?? []), h]);
   return (
@@ -49,7 +61,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ evento?: stri
         <p className="text-muted-foreground">Nenhum evento.</p>
       ) : (
         <>
-          <form className="mb-4 flex max-w-lg gap-2">
+          <form className="mb-4 flex max-w-lg gap-2 [&>select]:min-w-0">
             <Select name="evento" defaultValue={selected?.id} aria-label="Evento">
               {events.map((e) => (
                 <option key={e.id} value={e.id}>
@@ -59,10 +71,37 @@ async function Content({ searchParams }: { searchParams: Promise<{ evento?: stri
             </Select>
             <button className={buttonVariants({ variant: "secondary" })}>Ver</button>
           </form>
-          {divergences.length > 0 && <OfflineDivergences items={divergences} timezone={selected!.timezone} />}
-          <p className="mb-3 text-sm text-muted-foreground">
-            {rows.length} ingresso(s) · {rows.filter((r) => r.status === "CHECKED_IN").length} check-in(s) · {rows.filter((r) => r.transferred).length} transferido(s)
-          </p>
+          {divergences && divergences.total > 0 && (
+            <OfflineDivergences list={divergences} timezone={selected!.timezone} pager={<Pager path={PATH} params={{ ...keep, divergencias: undefined }} param="divergencias" anchor="divergencias" page={divergences.page} pageCount={divergences.pageCount} total={divergences.total} />} />
+          )}
+          {list && (
+            <p className="mb-3 text-sm text-muted-foreground">
+              {list.totals.tickets} ingresso(s) · {list.totals.checkedIn} check-in(s) · {list.totals.transferred} transferido(s)
+            </p>
+          )}
+          <form className="mb-3 flex flex-wrap items-end gap-2" role="search" aria-label="Buscar participantes">
+            <input type="hidden" name="evento" value={selected?.id} />
+            <Input name="q" defaultValue={q} placeholder="Nome, e-mail, código do ingresso ou do pedido" aria-label="Buscar por nome, e-mail ou código" className="min-w-0 basis-full sm:max-w-sm sm:flex-1 sm:basis-0" />
+            <Select name="status" defaultValue={status ?? ""} aria-label="Situação" className="w-auto">
+              <option value="">Todas as situações</option>
+              {STATUS_FILTERS.map((st) => (
+                <option key={st} value={st}>
+                  {TICKET_STATUS[st].label}
+                </option>
+              ))}
+            </Select>
+            <button className={buttonVariants({ variant: "secondary" })}>Filtrar</button>
+            {(q || status) && (
+              <a href={adminHref(PATH, { evento: selected?.id })} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+                Limpar
+              </a>
+            )}
+          </form>
+          {list && (q || status) && (
+            <p className="mb-2 text-sm" role="status">
+              {list.matching === 0 ? "Nenhum participante encontrado com esses filtros." : `${list.matching} encontrado(s).`}
+            </p>
+          )}
           <div className="overflow-x-auto rounded-2xl border border-border">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
@@ -104,6 +143,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ evento?: stri
               </tbody>
             </table>
           </div>
+          {list && <Pager path={PATH} params={{ ...keep, pagina: undefined }} page={list.page} pageCount={list.pageCount} total={list.matching} />}
         </>
       )}
     </>
@@ -137,13 +177,14 @@ function TransferHistory({ items, timezone }: { items: TransferHistoryRow[]; tim
 }
 
 /** Leituras sem internet em que o aparelho da portaria e o servidor discordaram. */
-function OfflineDivergences({ items, timezone }: { items: OfflineDivergenceRow[]; timezone: string }) {
-  const admitted = items.filter((d) => d.divergence === "ADMITTED_BUT_REJECTED").length;
-  const refused = items.length - admitted;
+function OfflineDivergences({ list, timezone, pager }: { list: { rows: OfflineDivergenceRow[]; total: number; admittedButRejected: number }; timezone: string; pager: React.ReactNode }) {
+  const items = list.rows;
+  const admitted = list.admittedButRejected;
+  const refused = list.total - admitted;
   return (
     <section id="divergencias" aria-labelledby="divergencias-titulo" className="mb-6 rounded-2xl border border-warning/40 bg-warning-soft p-4 text-sm">
       <h2 id="divergencias-titulo" className="font-bold">
-        Divergências do check-in offline ({items.length})
+        Divergências do check-in offline ({list.total})
       </h2>
       <p className="mt-1 text-muted-foreground">
         Leituras feitas sem internet em que o aparelho da portaria e o servidor discordaram.
@@ -197,6 +238,7 @@ function OfflineDivergences({ items, timezone }: { items: OfflineDivergenceRow[]
           </tbody>
         </table>
       </div>
+      {pager}
     </section>
   );
 }

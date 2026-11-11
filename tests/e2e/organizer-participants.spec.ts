@@ -22,6 +22,23 @@ test("participantes mostram o titular atual, o histórico e exportam CSV", async
   expect(text).toContain('"codigo","titular","email_titular","conta_titular","transferido"');
   expect(text).toMatch(/"amiga@demo\.eventobrasil\.test","[^"]+","sim"/);
 
+  // Busca e filtro: só a titular procurada; os totais continuam sendo do evento inteiro.
+  const totals = await page.getByText(/\d+ ingresso\(s\) · \d+ check-in\(s\)/).textContent();
+  await page.getByLabel("Buscar por nome, e-mail ou código").fill("amiga@demo");
+  await page.getByRole("button", { name: "Filtrar" }).click();
+  await page.waitForURL(/q=amiga/);
+  await expect(page.getByRole("status").filter({ hasText: /encontrado/ })).toBeVisible();
+  const bodyRows = page.locator("tbody").first().getByRole("row");
+  await expect(bodyRows.first()).toContainText("amiga@demo.eventobrasil.test");
+  expect(await bodyRows.filter({ hasNotText: "amiga@demo.eventobrasil.test" }).count()).toBe(0);
+  await expect(page.getByText(/\d+ ingresso\(s\) · \d+ check-in\(s\)/)).toHaveText(totals!);
+  await page.getByLabel("Situação").selectOption({ label: "Cancelado" });
+  await page.getByRole("button", { name: "Filtrar" }).click();
+  await page.waitForURL(/status=REVOKED/);
+  await page.getByRole("link", { name: "Limpar" }).click();
+  await page.waitForURL((u) => !u.searchParams.has("q"));
+  await expect(page.getByLabel("Buscar por nome, e-mail ou código")).toHaveValue("");
+
   await page.getByLabel("Evento", { exact: true }).selectOption({ label: "Axé de Rua — Ensaio Aberto" });
   await page.getByRole("button", { name: "Ver" }).click();
   await expect(page.getByText("Transferência pendente").first()).toBeVisible();
