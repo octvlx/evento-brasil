@@ -4,6 +4,7 @@
 import "dotenv/config";
 import { createPrismaClient } from "@/server/db";
 import { hashPassword } from "@/server/auth/password";
+import { daysToSaturday } from "./seed-dates";
 import { encryptPII, randomToken } from "@/server/crypto";
 import { defaultTimezoneForUF } from "@/lib/br";
 import { zonedDateKey, zonedLocalToUtc } from "@/lib/datetime";
@@ -101,11 +102,6 @@ function at(days: number, hhmm: string, tz: string) {
   return zonedLocalToUtc(`${zonedDateKey(new Date(Date.now() + days * 86_400_000), tz)}T${hhmm}`, tz);
 }
 
-/** Dias até o próximo sábado (0 se hoje for sábado). */
-function daysToSaturday(tz: string) {
-  const dow = new Date(`${zonedDateKey(new Date(), tz)}T12:00:00Z`).getUTCDay();
-  return (6 - dow + 7) % 7;
-}
 
 async function main() {
   const refusal = await refusalReason();
