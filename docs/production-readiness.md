@@ -1,5 +1,8 @@
 # Prontidão para produção e implantação
 
+Passo a passo do deploy, com o script de verificação (`npm run deploy:check`) e a
+criação do primeiro administrador (`npm run admin:promote`): `docs/deploy-producao.md`.
+
 ## Implantação de referência
 
 - **App:** um serviço Node.js (`npm run build && npm start`) atrás de HTTPS.
@@ -50,7 +53,6 @@
 - Busca textual sem tratamento de acentos (avaliar `unaccent`/full-text).
 - Seletores de cidade carregam todas as cidades — trocar por autocompletar
   antes de importar a base completa do IBGE.
-- Modo offline do check-in (fora do escopo do MVP por decisão).
 - Push/WhatsApp transacional; reenvio de ingressos por e-mail a pedido.
 - Notificar compradores por e-mail em cancelamentos/reembolsos.
 - `notFound()` dentro de Suspense responde 200 com `noindex` (comportamento do

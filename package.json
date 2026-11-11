@@ -26,7 +26,9 @@
     "postinstall": "prisma generate",
     "email:worker": "tsx --conditions=react-server scripts/email-worker.ts",
     "email:status": "tsx --conditions=react-server scripts/email-status.ts",
-    "email:retry": "tsx --conditions=react-server scripts/email-retry.ts"
+    "email:retry": "tsx --conditions=react-server scripts/email-retry.ts",
+    "deploy:check": "tsx --conditions=react-server scripts/production-check.ts",
+    "admin:promote": "tsx --conditions=react-server scripts/admin-promote.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",
