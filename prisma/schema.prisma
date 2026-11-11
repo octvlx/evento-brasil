@@ -943,15 +943,27 @@ enum CheckinResult {
   EVENT_NOT_ACTIVE
 }
 
+/// Diferença entre o que o aparelho offline mostrou na porta e o que o servidor decidiu.
+enum OfflineDivergence {
+  /// Liberado sem internet, mas o servidor não admitiu (já usado em outro aparelho, cancelado...).
+  ADMITTED_BUT_REJECTED
+  /// Recusado sem internet, mas o ingresso estava válido (a recusa vale: não entra como admitido).
+  REFUSED_BUT_VALID
+}
+
 model TicketCheckin {
-  id          String        @id @default(cuid())
-  ticketId    String?
-  eventId     String
-  scannedById String
-  result      CheckinResult
-  scannedAt   DateTime      @default(now()) @db.Timestamptz(3)
+  id                 String             @id @default(cuid())
+  ticketId           String?
+  eventId            String
+  scannedById        String
+  result             CheckinResult
+  scannedAt          DateTime           @default(now()) @db.Timestamptz(3)
   /// Leitura feita sem internet no aparelho e enviada depois (scannedAt = hora do aparelho).
-  offline     Boolean       @default(false)
+  offline            Boolean            @default(false)
+  /// Leitura offline: o que o aparelho mostrou na hora.
+  offlineLocalResult CheckinResult?
+  /// Leitura offline em que o aparelho e o servidor discordaram.
+  divergence         OfflineDivergence?
 
   ticket    IssuedTicket? @relation(fields: [ticketId], references: [id])
   event     Event         @relation(fields: [eventId], references: [id])
@@ -959,6 +971,7 @@ model TicketCheckin {
 
   @@index([eventId, scannedAt])
   @@index([ticketId])
+  @@index([eventId, divergence])
 }
 
 // ───────────────────────────── Reembolsos ─────────────────────────────
