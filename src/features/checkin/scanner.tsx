@@ -11,7 +11,7 @@ import { parseQrPayload } from "@/lib/qr-payload";
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { CheckinResponse, OfflinePackage, OfflineSyncItem } from "@/server/services/checkin";
 import { checkInAction, offlinePackageAction, syncOfflineAction } from "./actions";
-import { offlineStore, prepareOfflineShell, tokenHash, type QueuedEntry } from "./offline-store";
+import { forgetOfflineEvent, offlineStore, prepareOfflineShell, tokenHash, type QueuedEntry } from "./offline-store";
 
 const RESULT_STYLE: Record<string, string> = {
   ADMITTED: "bg-emerald-600",
@@ -90,6 +90,23 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
   const [offlineBusy, setOfflineBusy] = useState(false);
 
 
+  /**
+   * A conta perdeu o acesso ao check-in deste evento (ou ele não existe mais): apaga a
+   * lista, a fila e a cópia do leitor deste evento no aparelho. A fila não poderia mais ser
+   * enviada por esta conta.
+   */
+  const lostAccess = useCallback(
+    async (r: { code?: string }) => {
+      if (r.code !== "FORBIDDEN" && r.code !== "NOT_FOUND") return false;
+      await forgetOfflineEvent(eventId);
+      setPkgState(null);
+      setQueue([]);
+      setOfflineMsg("Sua conta não tem mais acesso ao check-in deste evento: a lista offline foi apagada deste aparelho.");
+      return true;
+    },
+    [eventId],
+  );
+
   /** Envia a fila; o servidor valida cada leitura como no online. */
   const sync = useCallback(async () => {
     if (syncing.current) return;
@@ -100,7 +117,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
       if (!pending.length) return;
       const r = await syncOfflineAction(eventId, pending.slice(0, 500));
       if (!r.ok) {
-        setOfflineMsg(r.error);
+        if (!(await lostAccess(r))) setOfflineMsg(r.error);
         return;
       }
       // Remove da fila só o que foi enviado (leituras novas feitas durante o envio ficam).
@@ -118,7 +135,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
       syncing.current = false;
       setOfflineBusy(false);
     }
-  }, [eventId, router]);
+  }, [eventId, lostAccess, router]);
 
   // Carrega a lista e a fila guardadas; com internet, já envia o que ficou pendente.
   useEffect(() => {
@@ -161,7 +178,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     try {
       const r = await offlinePackageAction(eventId);
       if (!r.ok) {
-        setOfflineMsg(r.error);
+        if (!(await lostAccess(r))) setOfflineMsg(r.error);
         return;
       }
       await offlineStore.setPackage(eventId, r.data);
@@ -243,7 +260,10 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
             used.add(await tokenHash(parsed.token));
             await offlineStore.setUsed(eventId, used);
           }
-        } else setError(r.error);
+        } else {
+          setError(r.error);
+          void lostAccess(r);
+        }
       } catch (e) {
         // Sem resposta do servidor: com lista baixada, valida no aparelho; sem lista, avisa.
         if (isNetworkError(e) && pkg) {
@@ -261,7 +281,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
         }, holdMs);
       }
     },
-    [checkOffline, eventId, pkg, router, storeOk],
+    [checkOffline, eventId, lostAccess, pkg, router, storeOk],
   );
 
   useEffect(() => {

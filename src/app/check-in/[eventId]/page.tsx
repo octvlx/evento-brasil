@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Skeleton } from "@/components/ui/primitives";
 import { Scanner } from "@/features/checkin/scanner";
@@ -10,6 +10,7 @@ import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { resolveCheckinAccess } from "@/server/auth/permissions";
 import { AppError } from "@/server/errors";
+import { MFA_SETUP_PATH } from "@/server/auth/mfa-policy";
 import { checkinHistory } from "@/server/services/checkin";
 import { formatTime } from "@/lib/datetime";
 import { CHECKIN_RESULT } from "@/lib/labels";
@@ -36,6 +37,8 @@ async function Content({ params }: { params: Promise<{ eventId: string }> }) {
   try {
     ({ canSeeAllHistory } = await resolveCheckinAccess(db, user, eventId));
   } catch (err) {
+    // 2FA pendente não é perda de acesso: manda ativar (sem apagar a lista do aparelho).
+    if (err instanceof AppError && err.code === "MFA_REQUIRED") redirect(MFA_SETUP_PATH);
     if (err instanceof AppError) notFound();
     throw err;
   }
@@ -66,6 +69,11 @@ async function Content({ params }: { params: Promise<{ eventId: string }> }) {
           {history.map((h) => (
             <li key={h.id} className="flex items-center justify-between gap-2 p-3">
               <span className="tabular-nums text-muted-foreground">{formatTime(h.scannedAt, event.timezone)}</span>
+              {h.offline && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground" title="Lida sem internet e enviada depois">
+                  offline
+                </span>
+              )}
               <span className="min-w-0 flex-1 truncate">{h.ticket?.holderName ?? "—"}</span>
               <span className={h.result === "ADMITTED" ? "font-semibold text-success" : "font-semibold text-destructive"}>{CHECKIN_RESULT[h.result]}</span>
             </li>

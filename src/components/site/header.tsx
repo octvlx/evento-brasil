@@ -5,6 +5,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getActiveMembership, getCurrentUser } from "@/server/auth/current";
 import { LogoutButton } from "@/features/auth/logout-button";
+import { ClearOfflineCheckinWhenSignedOut } from "@/features/checkin/offline-cleanup";
 import { Logo } from "./logo";
 import { HeaderSearch, HeaderSearchMobile } from "./header-search";
 import { HoverDetails } from "./hover-details";
@@ -41,6 +42,7 @@ async function UserMenu() {
   if (!user) {
     return (
       <div className="flex items-center gap-1 sm:gap-2">
+        <ClearOfflineCheckinWhenSignedOut />
         <Link href="/entrar" className={buttonVariants({ variant: "ghost", size: "sm", className: "max-sm:px-2.5" })}>
           Entrar
         </Link>
