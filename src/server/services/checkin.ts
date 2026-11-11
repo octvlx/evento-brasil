@@ -1,11 +1,11 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import type { CheckinResult, EventStatus, TicketKind } from "@/generated/prisma/client";
+import type { CheckinResult, EventStatus, OfflineDivergence, TicketKind } from "@/generated/prisma/client";
 import { checkinWindowOpen } from "@/lib/event-lifecycle";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
 import { hashToken } from "../crypto";
-import { AppError, notFound } from "../errors";
+import { AppError, forbidden, notFound } from "../errors";
 import { parseQrPayload } from "@/lib/qr-payload";
 
 export interface CheckinResponse {
@@ -18,6 +18,8 @@ export interface CheckinResponse {
   // INVALID) — só informado para a mesma organização do evento.
   ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null; transferred: boolean; qrReplaced?: true };
   counters: { admitted: number; total: number };
+  /** Só em leitura offline sincronizada: o aparelho e o servidor discordaram. */
+  divergence?: OfflineDivergence;
 }
 
 const MESSAGES: Record<CheckinResult, string> = {
@@ -81,14 +83,22 @@ export async function checkInTicket(
   eventId: string,
   rawPayload: string,
   now = new Date(),
-  opts: { offline?: boolean; skipCounters?: boolean } = {},
+  // localResult (só offline): o que o aparelho mostrou na porta, enviado na sincronização.
+  opts: { offline?: boolean; skipCounters?: boolean; localResult?: CheckinResult } = {},
 ): Promise<CheckinResponse> {
   await resolveCheckinAccess(db, actor, eventId);
+  const local = opts.offline ? opts.localResult : undefined;
+  // Divergência entre o aparelho offline e o servidor, gravada junto com a leitura.
+  let divergence: OfflineDivergence | undefined;
 
   const outcome = await db.$transaction(
     async (tx): Promise<{ result: CheckinResult; ticket?: CheckinResponse["ticket"] }> => {
-      const record = (result: CheckinResult, ticketId: string | null) =>
-        tx.ticketCheckin.create({ data: { eventId, ticketId, scannedById: actor.id, result, scannedAt: now, offline: opts.offline === true } });
+      const record = (result: CheckinResult, ticketId: string | null, refusedButValid = false) => {
+        divergence = refusedButValid ? "REFUSED_BUT_VALID" : local === "ADMITTED" && result !== "ADMITTED" ? "ADMITTED_BUT_REJECTED" : undefined;
+        return tx.ticketCheckin.create({
+          data: { eventId, ticketId, scannedById: actor.id, result, scannedAt: now, offline: opts.offline === true, offlineLocalResult: local ?? null, divergence: divergence ?? null },
+        });
+      };
 
       // 1. Evento (trava compartilhada) e janela de check-in.
       const event = await lockEventForCheckin(tx, eventId);
@@ -138,6 +148,13 @@ export async function checkInTicket(
         await record("REVOKED", ticket.id);
         return { result: "REVOKED", ticket: view(null) };
       }
+      // Recusado na porta sem internet: a pessoa não entrou, então a sincronização não dá
+      // entrada agora (senão o ingresso viraria "JÁ UTILIZADO" quando ela voltar). Registra a
+      // recusa que aconteceu e marca a divergência para o organizador conferir.
+      if (local && local !== "ADMITTED" && ticket.status === "VALID") {
+        await record(local, ticket.id, true);
+        return { result: local, ticket: view(null) };
+      }
       // O token entra no WHERE: se uma transferência aceita trocou o QR depois da busca
       // acima, o QR antigo não admite (defesa extra; o aceite já espera a trava do evento).
       const { count } = await tx.issuedTicket.updateMany({ where: { id: ticket.id, status: "VALID", validationToken: parsed.token }, data: { status: "CHECKED_IN", checkedInAt: now } });
@@ -158,8 +175,13 @@ export async function checkInTicket(
   );
 
   // Contadores fora da transação, após o commit.
-  const message = outcome.ticket?.qrReplaced ? "QR SUBSTITUÍDO — ingresso transferido" : MESSAGES[outcome.result];
-  return { result: outcome.result, message, ticket: outcome.ticket, counters: opts.skipCounters ? { admitted: 0, total: 0 } : await counters(db, eventId) };
+  const message =
+    divergence === "REFUSED_BUT_VALID"
+      ? "Recusado sem internet, mas o ingresso é válido: continua sem entrada"
+      : outcome.ticket?.qrReplaced
+        ? "QR SUBSTITUÍDO — ingresso transferido"
+        : MESSAGES[outcome.result];
+  return { result: outcome.result, message, ticket: outcome.ticket, divergence, counters: opts.skipCounters ? { admitted: 0, total: 0 } : await counters(db, eventId) };
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +240,8 @@ export interface OfflineSyncItem {
   message: string;
   /** O aparelho liberou, mas o servidor não admitiu (ex.: já tinha entrado por outro aparelho). */
   conflict: boolean;
+  /** Qualquer discordância entre aparelho e servidor (inclui a recusa de um ingresso válido). */
+  divergence?: OfflineDivergence;
   code?: string;
   holderName?: string | null;
 }
@@ -238,8 +262,8 @@ export async function syncOfflineCheckins(db: Db, actor: Actor, eventId: string,
     const localResult = (typeof e?.localResult === "string" && results.has(e.localResult) ? e.localResult : "INVALID") as CheckinResult;
     const t = typeof e?.scannedAt === "string" ? new Date(e.scannedAt) : new Date(NaN);
     const at = Number.isFinite(t.getTime()) && t.getTime() <= now.getTime() && now.getTime() - t.getTime() <= OFFLINE_MAX_AGE_MS ? t : now;
-    const r = await checkInTicket(db, actor, eventId, payload, at, { offline: true, skipCounters: true });
-    items.push({ payload, localResult, result: r.result, message: r.message, conflict: localResult === "ADMITTED" && r.result !== "ADMITTED", code: r.ticket?.code, holderName: r.ticket?.holderName });
+    const r = await checkInTicket(db, actor, eventId, payload, at, { offline: true, skipCounters: true, localResult });
+    items.push({ payload, localResult, result: r.result, message: r.message, conflict: r.divergence === "ADMITTED_BUT_REJECTED", divergence: r.divergence, code: r.ticket?.code, holderName: r.ticket?.holderName });
   }
   return { items, counters: await counters(db, eventId) };
 }
@@ -252,4 +276,38 @@ export async function checkinHistory(db: Db, actor: Actor, eventId: string, limi
     orderBy: { scannedAt: "desc" },
     take: limit,
   });
+}
+
+export interface OfflineDivergenceRow {
+  id: string;
+  scannedAt: Date;
+  divergence: OfflineDivergence;
+  localResult: CheckinResult | null;
+  result: CheckinResult;
+  scannedBy: string;
+  ticket: { code: string; holderName: string | null; status: "VALID" | "CHECKED_IN" | "REVOKED"; checkedInAt: Date | null } | null;
+}
+
+/**
+ * Leituras offline em que o aparelho e o servidor discordaram, para o organizador conferir
+ * (mais recentes primeiro). Só para quem vê o histórico completo do check-in do evento.
+ */
+export async function listOfflineDivergences(db: Db, actor: Actor, eventId: string, limit = 200): Promise<OfflineDivergenceRow[]> {
+  const { canSeeAllHistory } = await resolveCheckinAccess(db, actor, eventId);
+  if (!canSeeAllHistory) throw forbidden();
+  const rows = await db.ticketCheckin.findMany({
+    where: { eventId, divergence: { not: null } },
+    select: {
+      id: true,
+      scannedAt: true,
+      divergence: true,
+      offlineLocalResult: true,
+      result: true,
+      scannedBy: { select: { name: true } },
+      ticket: { select: { code: true, holderName: true, status: true, checkedInAt: true } },
+    },
+    orderBy: { scannedAt: "desc" },
+    take: limit,
+  });
+  return rows.map((r) => ({ id: r.id, scannedAt: r.scannedAt, divergence: r.divergence!, localResult: r.offlineLocalResult, result: r.result, scannedBy: r.scannedBy.name, ticket: r.ticket }));
 }

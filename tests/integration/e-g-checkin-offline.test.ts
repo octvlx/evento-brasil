@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { cancelEvent } from "@/server/services/cancellation";
-import { checkInTicket, checkinOfflinePackage, offlineTokenHash, syncOfflineCheckins } from "@/server/services/checkin";
+import { checkInTicket, checkinOfflinePackage, listOfflineDivergences, offlineTokenHash, syncOfflineCheckins } from "@/server/services/checkin";
 import { qrPayload } from "@/server/services/tickets";
 import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
@@ -99,6 +99,66 @@ describe("check-in offline: sincronização", () => {
     expect(admittedAt.getTime()).toBeLessThanOrEqual(Date.now());
     expect(Math.abs(admittedAt.getTime() - Date.now())).toBeLessThan(60_000);
     void owner;
+  });
+
+  it("recusado na porta com ingresso válido: a sincronização NÃO dá entrada e marca a divergência", async () => {
+    const { staff, event, tickets } = await setup();
+    const at = new Date(Date.now() - 5 * 60_000).toISOString();
+    // Ex.: ingresso comprado depois do download (fora da lista) ou lista vencida no aparelho.
+    const r = await syncOfflineCheckins(db, staff, event.id, [
+      { payload: qrPayload(tickets[0]), scannedAt: at, localResult: "INVALID" },
+      { payload: qrPayload(tickets[1]), scannedAt: at, localResult: "EVENT_NOT_ACTIVE" },
+    ]);
+    expect(r.items.map((i) => [i.result, i.conflict, i.divergence])).toEqual([
+      ["INVALID", false, "REFUSED_BUT_VALID"],
+      ["EVENT_NOT_ACTIVE", false, "REFUSED_BUT_VALID"],
+    ]);
+    expect(r.counters).toEqual({ admitted: 0, total: 3 });
+    expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } })).status).toBe("VALID");
+    // A pessoa volta com internet: entra normalmente (não vira "JÁ UTILIZADO").
+    expect((await checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).result).toBe("ADMITTED");
+  });
+
+  it("leituras que concordam não geram divergência; recusas corretas também não", async () => {
+    const { staff, event, tickets } = await setup();
+    await db.issuedTicket.update({ where: { id: tickets[2].id }, data: { status: "REVOKED" } });
+    const now = new Date().toISOString();
+    const r = await syncOfflineCheckins(db, staff, event.id, [
+      { payload: qrPayload(tickets[0]), scannedAt: now, localResult: "ADMITTED" },
+      { payload: qrPayload(tickets[0]), scannedAt: now, localResult: "DUPLICATE" },
+      { payload: qrPayload(tickets[2]), scannedAt: now, localResult: "REVOKED" },
+      { payload: "lixo", scannedAt: now, localResult: "INVALID" },
+    ]);
+    expect(r.items.map((i) => i.divergence)).toEqual([undefined, undefined, undefined, undefined]);
+    expect(await db.ticketCheckin.count({ where: { divergence: { not: null } } })).toBe(0);
+    expect((await db.ticketCheckin.findMany({ orderBy: { id: "asc" } })).every((l) => l.offline && l.offlineLocalResult)).toBe(true);
+  });
+
+  it("organizador lista as divergências; portaria e quem não é da equipe não", async () => {
+    const { owner, staff, otherStaff, customer, event, tickets } = await setup();
+    const t1 = new Date(Date.now() - 10 * 60_000).toISOString();
+    const t2 = new Date(Date.now() - 5 * 60_000).toISOString();
+    await syncOfflineCheckins(db, staff, event.id, [{ payload: qrPayload(tickets[0]), scannedAt: t1, localResult: "ADMITTED" }]);
+    await syncOfflineCheckins(db, otherStaff, event.id, [
+      { payload: qrPayload(tickets[0]), scannedAt: t2, localResult: "ADMITTED" },
+      { payload: qrPayload(tickets[1]), scannedAt: t2, localResult: "INVALID" },
+    ]);
+    // Leitura online nunca entra na lista.
+    await checkInTicket(db, staff, event.id, qrPayload(tickets[0]));
+
+    const rows = await listOfflineDivergences(db, owner, event.id);
+    expect(rows.map((d) => [d.divergence, d.localResult, d.result, d.ticket?.code]).sort()).toEqual(
+      [
+        ["ADMITTED_BUT_REJECTED", "ADMITTED", "DUPLICATE", tickets[0].code],
+        ["REFUSED_BUT_VALID", "INVALID", "INVALID", tickets[1].code],
+      ].sort(),
+    );
+    const dup = rows.find((d) => d.divergence === "ADMITTED_BUT_REJECTED")!;
+    expect(dup.ticket?.checkedInAt?.toISOString()).toBe(t1);
+    expect(dup.scannedBy).toBe(otherStaff.name);
+
+    await expect(listOfflineDivergences(db, staff, event.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(listOfflineDivergences(db, customer, event.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("recusa sem permissão, vazio ou acima do limite", async () => {

@@ -109,8 +109,8 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
       setQueue(rest);
       setCounters(r.data.counters);
       setSyncResult(r.data.items);
-      const conflicts = r.data.items.filter((i) => i.conflict).length;
-      setOfflineMsg(`${r.data.items.length} ${r.data.items.length === 1 ? "leitura enviada" : "leituras enviadas"}${conflicts ? ` · ${conflicts} em conflito: confira abaixo` : ""}.`);
+      const diverged = r.data.items.filter((i) => i.divergence).length;
+      setOfflineMsg(`${r.data.items.length} ${r.data.items.length === 1 ? "leitura enviada" : "leituras enviadas"}${diverged ? ` · ${diverged} com divergência: confira abaixo` : ""}.`);
       router.refresh();
     } catch (e) {
       setOfflineMsg(isNetworkError(e) ? "Sem internet: as leituras continuam guardadas e serão enviadas quando a conexão voltar." : "Não foi possível enviar as leituras agora.");
@@ -332,7 +332,8 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     }
   };
 
-  const conflicts = syncResult?.filter((i) => i.conflict) ?? [];
+  const conflicts = syncResult?.filter((i) => i.divergence === "ADMITTED_BUT_REJECTED") ?? [];
+  const refusedValid = syncResult?.filter((i) => i.divergence === "REFUSED_BUT_VALID") ?? [];
 
   return (
     <div className="space-y-4">
@@ -492,6 +493,19 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
                     <li key={`${c.payload}-${i}`}>
                       <strong>{c.holderName ?? c.code ?? "Ingresso"}</strong>
                       {c.code ? ` (${c.code})` : ""}: {c.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {refusedValid.length > 0 && (
+              <div role="alert" className="rounded-xl border border-warning/40 bg-warning-soft p-3">
+                <p className="font-semibold">Recusados sem internet, mas com ingresso válido (continuam sem entrada):</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {refusedValid.map((c, i) => (
+                    <li key={`${c.payload}-${i}`}>
+                      <strong>{c.holderName ?? c.code ?? "Ingresso"}</strong>
+                      {c.code ? ` (${c.code})` : ""}: se a pessoa voltar, leia o QR de novo com internet.
                     </li>
                   ))}
                 </ul>
