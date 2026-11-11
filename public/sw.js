@@ -1,12 +1,15 @@
 // Service worker mínimo do PWA: cacheia apenas assets estáticos versionados.
-// Páginas, ingressos e check-in são SEMPRE buscados na rede (sem modo offline
-// no MVP), para nunca exibir estado desatualizado de pagamento ou ingresso.
+// Páginas e ingressos são SEMPRE buscados na rede, para nunca exibir estado
+// desatualizado de pagamento ou ingresso. O leitor de check-in tem um worker
+// próprio (escopo /check-in/, src/app/check-in/sw.js/route.ts) para abrir sem
+// internet; o cache dele ("qqpega-checkin-*") não é deste worker e não é apagado aqui.
 const CACHE = "eb-static-v1";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
+    // Só versões antigas deste cache ("eb-static-*"); caches de outros workers ficam.
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith("eb-static-") && k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
   );
 });
 

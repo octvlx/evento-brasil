@@ -11,7 +11,7 @@ import { parseQrPayload } from "@/lib/qr-payload";
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { CheckinResponse, OfflinePackage, OfflineSyncItem } from "@/server/services/checkin";
 import { checkInAction, offlinePackageAction, syncOfflineAction } from "./actions";
-import { offlineStore, tokenHash, type QueuedEntry } from "./offline-store";
+import { offlineStore, prepareOfflineShell, tokenHash, type QueuedEntry } from "./offline-store";
 
 const RESULT_STYLE: Record<string, string> = {
   ADMITTED: "bg-emerald-600",
@@ -130,6 +130,8 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
         setPkgState(p ?? null);
         setPkgExpired(isExpired(p ?? null));
         setQueue(q);
+        // Lista já baixada: mantém o leitor pronto para abrir sem internet (atualiza a cópia).
+        if (p && navigator.onLine) void prepareOfflineShell();
         if (navigator.onLine && q.length) void sync();
       } catch {
         if (alive) setStoreOk(false);
@@ -166,7 +168,10 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
       // Lista nova: o que já entrou vem marcado nela; zera só o "usado neste aparelho".
       await offlineStore.setUsed(eventId, new Set());
       setPkg(r.data);
-      setOfflineMsg(`Lista baixada: ${r.data.tickets.length} ingressos. Se a internet cair, o leitor continua validando com ela.`);
+      const shell = await prepareOfflineShell();
+      setOfflineMsg(
+        `Lista baixada: ${r.data.tickets.length} ingressos. Se a internet cair, o leitor continua validando com ela${shell ? " e pode ser aberto de novo sem internet neste aparelho" : ""}.`,
+      );
     } catch (e) {
       setOfflineMsg(isNetworkError(e) ? "Sem internet: baixe a lista quando estiver conectado." : "Não foi possível baixar a lista.");
     } finally {
@@ -461,7 +466,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
                 : "Baixe a lista antes de abrir os portões: se a internet cair, o leitor continua validando neste aparelho."}
             </p>
             <p className="text-xs text-muted-foreground">
-              Sem internet, cada aparelho só conhece as próprias leituras: um ingresso pode passar em dois aparelhos. Use um aparelho por entrada e mantenha esta página aberta (não recarregue sem internet).
+              Sem internet, cada aparelho só conhece as próprias leituras: um ingresso pode passar em dois aparelhos. Use um aparelho por entrada. Com a lista baixada, o leitor abre mesmo sem internet neste navegador; ao sair da conta, a lista e a cópia do leitor são apagadas do aparelho.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button type="button" size="sm" variant="outline" disabled={offlineBusy || !online} onClick={download}>

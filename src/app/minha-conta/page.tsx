@@ -7,7 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { ProfileForm } from "@/features/auth/profile-form";
 import { DeleteAccountForm } from "@/features/auth/delete-account-form";
 import { ChangePasswordForm } from "@/features/auth/change-password-form";
-import { logoutAction } from "@/features/auth/actions";
+import { LogoutButton } from "@/features/auth/logout-button";
 import { requireUser } from "@/server/auth/current";
 import { db } from "@/server/db";
 import { accountDeletionBlockers, DELETION_BLOCKER_TEXT } from "@/server/services/account-deletion";
@@ -103,9 +103,7 @@ async function Content() {
         <Link href="/meus-pedidos" className={buttonVariants({ variant: "outline" })}>
           Meus pedidos
         </Link>
-        <form action={logoutAction}>
-          <button className={buttonVariants({ variant: "ghost", className: "text-destructive" })}>Sair da conta</button>
-        </form>
+        <LogoutButton className={buttonVariants({ variant: "ghost", className: "text-destructive" })}>Sair da conta</LogoutButton>
       </div>
     </div>
   );
