@@ -8,6 +8,20 @@ import { login, USERS } from "./helpers";
 const carousel = (page: Page) => page.getByRole("region", { name: "Eventos em destaque" });
 const position = (page: Page) => page.getByTestId("carousel-position");
 
+/** Espera a rolagem suave do trilho terminar (posição estável), para o próximo clique partir dela. */
+async function settled(page: Page) {
+  const track = carousel(page).locator("[data-testid='carousel-track']");
+  let last = -1;
+  await expect
+    .poll(async () => {
+      const now = await track.evaluate((t) => Math.round(t.scrollLeft));
+      const stable = now === last;
+      last = now;
+      return stable;
+    })
+    .toBe(true);
+}
+
 async function noHorizontalPageScroll(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 }
@@ -43,17 +57,22 @@ test.describe("carrossel de destaques", () => {
     await expect(position(page)).toHaveText(`1 / ${total}`);
     await region.getByRole("button", { name: "Próximo evento" }).click();
     await expect(position(page)).toHaveText(`2 / ${total}`);
+    await settled(page);
     await region.getByRole("button", { name: "Evento anterior" }).click();
     await expect(position(page)).toHaveText(`1 / ${total}`);
+    await settled(page);
     // Do primeiro, "anterior" vai ao fim; do fim, "próximo" volta ao primeiro.
     await region.getByRole("button", { name: "Evento anterior" }).click();
     await expect.poll(() => region.locator("[data-testid='carousel-track']").evaluate((t) => Math.abs(t.scrollWidth - t.clientWidth - t.scrollLeft))).toBeLessThan(3);
+    await settled(page);
     await region.getByRole("button", { name: "Próximo evento" }).click();
     await expect(position(page)).toHaveText(`1 / ${total}`);
+    await settled(page);
     // Teclado: setas com o foco dentro do carrossel.
     await region.getByRole("button", { name: "Próximo evento" }).focus();
     await page.keyboard.press("ArrowRight");
     await expect(position(page)).toHaveText(`2 / ${total}`);
+    await settled(page);
     await page.keyboard.press("ArrowLeft");
     await expect(position(page)).toHaveText(`1 / ${total}`);
     await noHorizontalPageScroll(page);
