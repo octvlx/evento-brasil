@@ -2,6 +2,7 @@
 
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { OfflineEntry, OfflinePackage } from "@/server/services/checkin";
+import { syncOfflineAction } from "./actions";
 
 // Armazenamento do check-in offline no aparelho (IndexedDB, sem dependência nova):
 // a lista baixada (hashes dos QR), os ingressos que ESTE aparelho já liberou e a fila de
@@ -125,6 +126,50 @@ export async function forgetOfflineEvent(eventId: string): Promise<void> {
     tasks.push(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith("qqpega-checkin")).map(async (k) => (await caches.open(k)).delete(page)))));
   }
   await Promise.race([Promise.allSettled(tasks), new Promise((r) => setTimeout(r, 1500))]);
+}
+
+/** Leituras offline ainda não enviadas, por evento (todas as contas deste aparelho). */
+export async function pendingOfflineCheckins(): Promise<{ eventId: string; count: number }[]> {
+  try {
+    if (typeof indexedDB === "undefined") return [];
+    if ("databases" in indexedDB && !(await indexedDB.databases()).some((d) => d.name === DB)) return [];
+    return (await entries())
+      .filter(([k, v]) => k.startsWith("queue:") && Array.isArray(v) && v.length > 0)
+      .map(([k, v]) => ({ eventId: k.slice("queue:".length), count: (v as unknown[]).length }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Envia todas as leituras pendentes (de todos os eventos), como o leitor faz ao reconectar.
+ * Remove da fila só o que o servidor recebeu. Devolve quantas ainda ficaram e o motivo.
+ */
+export async function sendPendingOfflineCheckins(): Promise<{ sent: number; remaining: number; error?: string }> {
+  let sent = 0;
+  let error: string | undefined;
+  for (const { eventId } of await pendingOfflineCheckins()) {
+    // Lotes de até 500 (limite do servidor); para no primeiro erro deste evento.
+    for (let i = 0; i < 20; i++) {
+      const pending = await offlineStore.getQueue(eventId);
+      if (!pending.length) break;
+      const batch = pending.slice(0, 500);
+      try {
+        const r = await syncOfflineAction(eventId, batch);
+        if (!r.ok) {
+          error = r.error;
+          break;
+        }
+      } catch {
+        error = "Sem conexão com o servidor.";
+        break;
+      }
+      await offlineStore.setQueue(eventId, (await offlineStore.getQueue(eventId)).slice(batch.length));
+      sent += batch.length;
+    }
+  }
+  const remaining = (await pendingOfflineCheckins()).reduce((n, q) => n + q.count, 0);
+  return { sent, remaining, error: remaining ? error : undefined };
 }
 
 /** SHA-256 (hex) do token, igual ao offlineTokenHash do servidor. Exige contexto seguro (HTTPS/localhost). */
