@@ -13,6 +13,9 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
+  // Na CI, uma nova tentativa para falhas de ambiente (servidor de dev sob carga); o
+  // relatório marca como "flaky" o que só passou na segunda vez. Local: sem repetição.
+  retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
   use: {
     baseURL,
