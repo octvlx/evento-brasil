@@ -4,7 +4,7 @@ import { ChevronDown, Ticket, UserRound } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getActiveMembership, getCurrentUser } from "@/server/auth/current";
-import { logoutAction } from "@/features/auth/actions";
+import { LogoutButton } from "@/features/auth/logout-button";
 import { Logo } from "./logo";
 import { HeaderSearch, HeaderSearchMobile } from "./header-search";
 import { HoverDetails } from "./hover-details";
@@ -81,9 +81,7 @@ async function UserMenu() {
           {isOrganizer && <MenuLink href="/organizador">Painel do organizador</MenuLink>}
           {isStaff && <MenuLink href="/check-in">Check-in</MenuLink>}
           {user.platformRole === "ADMIN" && <MenuLink href="/admin">Administração</MenuLink>}
-          <form action={logoutAction}>
-            <button className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-destructive hover:bg-muted">Sair</button>
-          </form>
+          <LogoutButton className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-destructive hover:bg-muted">Sair</LogoutButton>
         </nav>
         </div>
       </HoverDetails>

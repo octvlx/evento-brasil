@@ -9,7 +9,7 @@ import { requireUser } from "@/server/auth/current";
 import { DECLINED_BY_RECIPIENT, findTransferByToken, transferBlockedReason, transferRecipientBlockedReason } from "@/server/services/transfers";
 import { transferCutoff } from "@/lib/transfer-policy";
 import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
-import { logoutAction } from "@/features/auth/actions";
+import { LogoutButton } from "@/features/auth/logout-button";
 import { TransferResponse } from "@/features/checkin/transfer-response";
 
 // Aceite de transferência (T-TRANSF, R6). Contrato em docs/areas/check-in.md.
@@ -116,9 +116,7 @@ async function Content({ params }: { params: Promise<{ token: string }> }) {
           Esta transferência foi enviada para <strong>{maskEmail(t.toEmail)}</strong>, e você entrou como <strong>{user.email}</strong>. Saia e entre com a
           conta desse e-mail (ou crie uma com ele); depois abra o link do e-mail de novo.
         </p>
-        <form action={logoutAction}>
-          <button className={buttonVariants({ size: "sm", variant: "outline", className: "mt-1" })}>Sair desta conta</button>
-        </form>
+        <LogoutButton className={buttonVariants({ size: "sm", variant: "outline", className: "mt-1" })}>Sair desta conta</LogoutButton>
       </State>
     );
   }

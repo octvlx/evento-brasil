@@ -139,3 +139,59 @@ test("check-in sem internet: valida com a lista baixada, guarda e confirma ao re
   await staff.getByRole("button", { name: "Validar" }).click();
   await expect(result("Ingresso JÁ UTILIZADO")).toBeVisible();
 });
+
+test("lista baixada prepara o leitor para abrir sem internet; sair da conta apaga os dados offline", async ({ browser }) => {
+  const buyer = await (await browser.newContext()).newPage();
+  await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
+  await buyer.locator("li").filter({ hasText: "Inteira" }).first().getByRole("button", { name: "Aumentar" }).click();
+  await buyer.getByRole("button", { name: "Continuar para revisão" }).click();
+  await proceedThroughReview(buyer);
+  await buyer.getByRole("button", { name: "Gerar PIX" }).click();
+  await buyer.getByRole("button", { name: "Aprovar PIX" }).click();
+  await buyer.waitForURL(/\/pedido\//);
+  const code = (await buyer.locator('a[href^="/ingressos/"]').first().getAttribute("href"))!.split("/").pop()!;
+
+  const ctx = await browser.newContext();
+  const staff = await ctx.newPage();
+  const { eventId } = await qrPayloadFor(code);
+  await login(staff, USERS.producer, `/check-in/${eventId}`);
+  const title = await staff.getByRole("heading", { level: 1 }).textContent();
+  await staff.getByRole("button", { name: "Baixar lista para uso offline" }).click();
+  await expect(staff.getByText(/pode ser aberto de novo sem internet/)).toBeVisible();
+  // O worker guardou a página do leitor.
+  await expect.poll(() => staff.evaluate(async () => (await caches.open("qqpega-checkin-v1")).match(location.origin + location.pathname).then(Boolean))).toBe(true);
+
+  // Espera a cópia terminar (página + arquivos que ela referencia): contagem estável.
+  let last = -1;
+  await expect
+    .poll(async () => {
+      const n = await staff.evaluate(async () => (await (await caches.open("qqpega-checkin-v1")).keys()).length);
+      const stable = n === last && n > 1;
+      last = n;
+      return stable;
+    }, { intervals: [500] })
+    .toBe(true);
+
+  // Sem internet, recarregar abre o leitor a partir da cópia guardada pelo worker. (A página
+  // voltar a ficar interativa offline depende do build de produção — o guia de offline do
+  // Next diz que o `next dev` não é referência para isso — e foi conferida contra `next start`.)
+  await ctx.setOffline(true);
+  await staff.reload();
+  await expect(staff.getByRole("heading", { level: 1 })).toHaveText(title!);
+  await expect(staff.getByRole("button", { name: "Validar" })).toBeVisible();
+  await ctx.setOffline(false);
+  await staff.reload();
+  await expect(staff.getByText(/Lista baixada às/)).toBeVisible();
+
+  // Sair da conta apaga tudo o que o leitor offline guardou no aparelho.
+  await staff.locator("header summary").filter({ hasText: "Menu da conta" }).click();
+  await staff.locator("header").getByRole("button", { name: "Sair" }).click();
+  await staff.waitForURL((u) => u.pathname === "/");
+  const left = await staff.evaluate(async () => ({
+    dbs: (await indexedDB.databases()).map((d) => d.name),
+    caches: (await caches.keys()).filter((k) => k.startsWith("qqpega-checkin")),
+    // Só o worker do leitor (escopo /check-in/); o do PWA na raiz não é dele.
+    workers: (await navigator.serviceWorker.getRegistrations()).filter((r) => new URL(r.scope).pathname.startsWith("/check-in/")).length,
+  }));
+  expect(left).toEqual({ dbs: expect.not.arrayContaining(["qqpega-checkin"]), caches: [], workers: 0 });
+});
