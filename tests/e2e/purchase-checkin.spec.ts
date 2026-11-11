@@ -1,6 +1,9 @@
 import { proceedThroughReview } from "./helpers";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import pg from "pg";
 import { login, nextScan, openScanner, qrPayloadFor, USERS } from "./helpers";
+
+const STAFF = "portaria@demo.eventobrasil.test";
 
 test("compra com PIX simulado → ingresso com QR → check-in → leitura duplicada recusada", async ({ browser }) => {
   // Comprador
@@ -194,4 +197,99 @@ test("lista baixada prepara o leitor para abrir sem internet; sair da conta apag
     workers: (await navigator.serviceWorker.getRegistrations()).filter((r) => new URL(r.scope).pathname.startsWith("/check-in/")).length,
   }));
   expect(left).toEqual({ dbs: expect.not.arrayContaining(["qqpega-checkin"]), caches: [], workers: 0 });
+});
+
+/** Chaves guardadas pelo check-in offline (IndexedDB) e se há cópia do leitor/worker. */
+async function offlineState(page: Page) {
+  return page.evaluate(async () => {
+    const keys: string[] = (await indexedDB.databases()).some((d) => d.name === "qqpega-checkin")
+      ? await new Promise((resolve) => {
+          const req = indexedDB.open("qqpega-checkin");
+          req.onsuccess = () => {
+            const db = req.result;
+            const r = db.transaction("kv").objectStore("kv").getAllKeys();
+            r.onsuccess = () => {
+              db.close();
+              resolve((r.result as IDBValidKey[]).map(String).sort());
+            };
+          };
+        })
+      : [];
+    return {
+      keys,
+      caches: (await caches.keys()).filter((k) => k.startsWith("qqpega-checkin")).length,
+      workers: (await navigator.serviceWorker.getRegistrations()).filter((r) => new URL(r.scope).pathname.startsWith("/check-in/")).length,
+    };
+  });
+}
+
+test("sessão expirada apaga a lista e a cópia do leitor, mas guarda as leituras pendentes até entrar de novo", async ({ browser }) => {
+  const buyer = await (await browser.newContext()).newPage();
+  await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
+  await buyer.locator("li").filter({ hasText: "Inteira" }).first().getByRole("button", { name: "Aumentar" }).click();
+  await buyer.getByRole("button", { name: "Continuar para revisão" }).click();
+  await proceedThroughReview(buyer);
+  await buyer.getByRole("button", { name: "Gerar PIX" }).click();
+  await buyer.getByRole("button", { name: "Aprovar PIX" }).click();
+  await buyer.waitForURL(/\/pedido\//);
+  const code = (await buyer.locator('a[href^="/ingressos/"]').first().getAttribute("href"))!.split("/").pop()!;
+
+  const ctx = await browser.newContext();
+  const staff = await ctx.newPage();
+  const { payload, eventId } = await qrPayloadFor(code);
+  await openScanner(staff, USERS.producer, eventId);
+  await staff.getByRole("button", { name: "Baixar lista para uso offline" }).click();
+  await expect(staff.getByText(/Lista baixada: \d+ ingressos/)).toBeVisible();
+  await expect.poll(async () => (await offlineState(staff)).caches).toBe(1);
+
+  await ctx.setOffline(true);
+  await staff.getByPlaceholder(/Colar conteúdo do QR/).fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(staff.getByRole("alert").filter({ hasText: "Entrada liberada (offline)" })).toBeVisible();
+  await nextScan(staff);
+  // Relógio de volta ao normal: parado, o streaming das próximas páginas não termina.
+  await staff.clock.resume();
+
+  // A sessão expira (o cookie some) e a próxima página já abre sem login.
+  await ctx.clearCookies();
+  await ctx.setOffline(false);
+  await staff.goto("/");
+  await expect(staff.getByRole("link", { name: "Entrar", exact: true })).toBeVisible();
+  await expect.poll(() => offlineState(staff)).toEqual({ keys: [`queue:${eventId}`], caches: 0, workers: 0 });
+
+  // Entrando de novo, a leitura guardada é enviada e a entrada fica registrada.
+  await login(staff, USERS.producer, `/check-in/${eventId}`);
+  await expect(staff.getByRole("status").filter({ hasText: "1 leitura enviada" })).toBeVisible();
+  await expect(staff.getByText("offline", { exact: true }).first()).toBeVisible();
+});
+
+test("conta que perdeu o acesso ao evento: o leitor some e a lista offline do evento é apagada", async ({ browser }) => {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const { rows } = await client.query('SELECT a.* FROM "EventStaffAssignment" a JOIN "User" u ON u.id = a."userId" WHERE u.email = $1 LIMIT 1', [STAFF]);
+  const assignment = rows[0];
+  expect(assignment, "atribuição da portaria demo").toBeTruthy();
+  const eventId = assignment.eventId as string;
+  try {
+    const staff = await (await browser.newContext()).newPage();
+    await login(staff, STAFF, `/check-in/${eventId}`);
+    await staff.getByRole("button", { name: "Baixar lista para uso offline" }).click();
+    await expect(staff.getByText(/Lista baixada: \d+ ingressos/)).toBeVisible();
+    await expect.poll(async () => (await offlineState(staff)).keys).toContain(`pkg:${eventId}`);
+    await expect.poll(() => staff.evaluate(async (id) => !!(await caches.match(`${location.origin}/check-in/${id}`)), eventId)).toBe(true);
+
+    // O organizador tira a pessoa da portaria do evento.
+    await client.query('DELETE FROM "EventStaffAssignment" WHERE id = $1', [assignment.id]);
+    await staff.reload();
+    await expect(staff.getByRole("heading", { name: "Leitor indisponível" })).toBeVisible();
+    await expect.poll(async () => (await offlineState(staff)).keys.filter((k) => k.endsWith(`:${eventId}`))).toEqual([]);
+    await expect.poll(() => staff.evaluate(async (id) => !!(await caches.match(`${location.origin}/check-in/${id}`)), eventId)).toBe(false);
+  } finally {
+    const cols = Object.keys(assignment);
+    await client.query(
+      `INSERT INTO "EventStaffAssignment" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}) ON CONFLICT DO NOTHING`,
+      cols.map((c) => assignment[c]),
+    );
+    await client.end();
+  }
 });
