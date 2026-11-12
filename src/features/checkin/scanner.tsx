@@ -11,7 +11,7 @@ import { parseQrPayload } from "@/lib/qr-payload";
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { CheckinResponse, OfflinePackage, OfflineSyncItem } from "@/server/services/checkin";
 import { checkInAction, offlinePackageAction, syncOfflineAction } from "./actions";
-import { forgetOfflineEvent, offlineStore, prepareOfflineShell, tokenHash, withQueueLock, type QueuedEntry } from "./offline-store";
+import { forgetOfflineEvent, offlineStore, prepareOfflineShell, queuedBy, tokenHash, withQueueLock, type QueuedEntry } from "./offline-store";
 
 const RESULT_STYLE: Record<string, string> = {
   ADMITTED: "bg-emerald-600",
@@ -52,7 +52,7 @@ const isExpired = (p: OfflinePackage | null) => (p ? new Date(p.validUntil).getT
 /** Falha de rede (sem resposta do servidor), diferente de uma recusa do servidor. */
 const isNetworkError = (e: unknown) => e instanceof TypeError || (typeof navigator !== "undefined" && !navigator.onLine);
 
-export function Scanner({ eventId, initialCounters }: { eventId: string; initialCounters: { admitted: number; total: number } }) {
+export function Scanner({ eventId, userId, initialCounters }: { eventId: string; userId: string; initialCounters: { admitted: number; total: number } }) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -80,6 +80,8 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     setPkgExpired(isExpired(p));
   };
   const [queue, setQueue] = useState<QueuedEntry[]>([]);
+  // Leituras de outra conta deste aparelho ficam guardadas para ela enviar.
+  const mine = queue.filter(queuedBy(userId));
   const [offlineMsg, setOfflineMsg] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<OfflineSyncItem[] | null>(null);
   const [storeOk, setStoreOk] = useState(true);
@@ -115,7 +117,8 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     try {
       // Um envio por vez, também com o "Enviar e sair" e outras abas.
       const sent = await withQueueLock(eventId, async () => {
-        const batch = (await offlineStore.getQueue(eventId)).slice(0, 500);
+        // Só as leituras desta conta: o servidor registra a entrada em nome de quem envia.
+        const batch = (await offlineStore.getQueue(eventId)).filter(queuedBy(userId)).slice(0, 500);
         if (!batch.length) return null;
         const r = await syncOfflineAction(eventId, batch);
         // Remove da fila só o que foi enviado (leituras novas feitas durante o envio ficam).
@@ -142,7 +145,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
       syncing.current = false;
       setOfflineBusy(false);
     }
-  }, [eventId, lostAccess, router]);
+  }, [eventId, lostAccess, router, userId]);
 
   // Carrega a lista e a fila guardadas; com internet, já envia o que ficou pendente.
   useEffect(() => {
@@ -229,12 +232,12 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
         await offlineStore.setUsed(eventId, used);
       }
       // Toda leitura vai para a fila (o servidor registra e decide, inclusive as recusadas).
-      const next = await offlineStore.appendToQueue(eventId, { payload: payload.slice(0, 200), scannedAt: new Date().toISOString(), localResult: r });
+      const next = await offlineStore.appendToQueue(eventId, { payload: payload.slice(0, 200), scannedAt: new Date().toISOString(), localResult: r, by: userId });
       setQueue(next);
       if (r === "ADMITTED") setCounters((c) => ({ ...c, admitted: c.admitted + 1 }));
       return show(r, t, r === "ADMITTED" ? new Date() : null);
     },
-    [counters, eventId, pkg],
+    [counters, eventId, pkg, userId],
   );
 
   const submit = useCallback(
@@ -499,13 +502,13 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
               <Button type="button" size="sm" variant="outline" disabled={offlineBusy || !online} onClick={download}>
                 <CloudDownload aria-hidden /> {pkg ? "Atualizar lista" : "Baixar lista para uso offline"}
               </Button>
-              {queue.length > 0 && (
+              {mine.length > 0 && (
                 <Button type="button" size="sm" variant="secondary" disabled={offlineBusy || !online} onClick={() => void sync()}>
-                  <CloudUpload aria-hidden /> Enviar {queue.length} {queue.length === 1 ? "leitura pendente" : "leituras pendentes"}
+                  <CloudUpload aria-hidden /> Enviar {mine.length} {mine.length === 1 ? "leitura pendente" : "leituras pendentes"}
                 </Button>
               )}
             </div>
-            {queue.length > 0 && !online && <p className="font-semibold">{queue.length === 1 ? "1 leitura guardada" : `${queue.length} leituras guardadas`} para enviar.</p>}
+            {mine.length > 0 && !online && <p className="font-semibold">{mine.length === 1 ? "1 leitura guardada" : `${mine.length} leituras guardadas`} para enviar.</p>}
             {offlineMsg && (
               <p role="status" className="font-medium">
                 {offlineMsg}

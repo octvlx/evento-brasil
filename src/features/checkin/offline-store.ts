@@ -110,7 +110,14 @@ async function remove(keys: string[]): Promise<void> {
   });
 }
 
-export type QueuedEntry = OfflineEntry & { localResult: CheckinResult };
+/** `by`: conta que fez a leitura. Leituras antigas (sem `by`) valem para qualquer conta. */
+export type QueuedEntry = OfflineEntry & { localResult: CheckinResult; by?: string };
+
+/**
+ * A leitura é desta conta? Só ela pode enviar (o servidor registra a entrada em nome de
+ * quem envia) ou apagar ao sair; leituras de outra conta do mesmo aparelho ficam guardadas.
+ */
+export const queuedBy = (userId: string) => (e: QueuedEntry) => !e.by || e.by === userId;
 
 export const offlineStore = {
   getPackage: (eventId: string) => get<OfflinePackage>(`pkg:${eventId}`),
@@ -183,31 +190,32 @@ export async function forgetOfflineEvent(eventId: string): Promise<void> {
   await Promise.race([Promise.allSettled(tasks), new Promise((r) => setTimeout(r, 1500))]);
 }
 
-/** Leituras offline ainda não enviadas, por evento (todas as contas deste aparelho). */
-export async function pendingOfflineCheckins(): Promise<{ eventId: string; count: number }[]> {
+/** Leituras offline desta conta ainda não enviadas, por evento. */
+export async function pendingOfflineCheckins(userId: string): Promise<{ eventId: string; count: number }[]> {
   try {
     if (typeof indexedDB === "undefined") return [];
     if ("databases" in indexedDB && !(await indexedDB.databases()).some((d) => d.name === DB)) return [];
     return (await entries())
-      .filter(([k, v]) => k.startsWith("queue:") && Array.isArray(v) && v.length > 0)
-      .map(([k, v]) => ({ eventId: k.slice("queue:".length), count: (v as unknown[]).length }));
+      .filter(([k, v]) => k.startsWith("queue:") && Array.isArray(v))
+      .map(([k, v]) => ({ eventId: k.slice("queue:".length), count: (v as QueuedEntry[]).filter(queuedBy(userId)).length }))
+      .filter((q) => q.count > 0);
   } catch {
     return [];
   }
 }
 
 /**
- * Envia todas as leituras pendentes (de todos os eventos), como o leitor faz ao reconectar.
- * Remove da fila só o que o servidor recebeu. Devolve quantas ainda ficaram e o motivo.
+ * Envia as leituras pendentes desta conta (de todos os eventos), como o leitor faz ao
+ * reconectar. Remove da fila só o que o servidor recebeu. Devolve quantas ainda ficaram e o motivo.
  */
-export async function sendPendingOfflineCheckins(): Promise<{ sent: number; remaining: number; error?: string }> {
+export async function sendPendingOfflineCheckins(userId: string): Promise<{ sent: number; remaining: number; error?: string }> {
   let sent = 0;
   let error: string | undefined;
-  for (const { eventId } of await pendingOfflineCheckins()) {
+  for (const { eventId } of await pendingOfflineCheckins(userId)) {
     await withQueueLock(eventId, async () => {
       // Lotes de até 500 (limite do servidor); para no primeiro erro deste evento.
       for (let i = 0; i < 20; i++) {
-        const pending = await offlineStore.getQueue(eventId);
+        const pending = (await offlineStore.getQueue(eventId)).filter(queuedBy(userId));
         if (!pending.length) break;
         const batch = pending.slice(0, 500);
         try {
@@ -225,7 +233,7 @@ export async function sendPendingOfflineCheckins(): Promise<{ sent: number; rema
       }
     });
   }
-  const remaining = (await pendingOfflineCheckins()).reduce((n, q) => n + q.count, 0);
+  const remaining = (await pendingOfflineCheckins(userId)).reduce((n, q) => n + q.count, 0);
   return { sent, remaining, error: remaining ? error : undefined };
 }
 
@@ -283,15 +291,27 @@ export async function prepareOfflineShell(): Promise<boolean> {
  * Apaga tudo o que o check-in offline guardou neste aparelho: lista (com nomes dos
  * titulares), fila, cópia das páginas do leitor e o service worker. Usado ao sair da conta.
  * Nunca lança: falha aqui não pode impedir o logout.
+ *
+ * `keepPendingQueues`: sessão expirada, guarda todas as leituras não enviadas.
+ * `keepPendingOfOthers`: "Sair" desta conta, guarda só as leituras feitas por outras contas
+ * do aparelho (as desta conta já foram enviadas ou a pessoa escolheu apagar).
  */
-export async function clearOfflineCheckinData(opts: { keepPendingQueues?: boolean } = {}): Promise<void> {
+export async function clearOfflineCheckinData(opts: { keepPendingQueues?: boolean; keepPendingOfOthers?: string } = {}): Promise<void> {
   const tasks: Promise<unknown>[] = [];
   if (typeof indexedDB !== "undefined") {
     tasks.push(
       (async () => {
-        // Sessão expirada: leituras ainda não enviadas ficam (sem nomes; só o conteúdo dos
-        // QR lidos), para a entrada de quem passou não se perder. Saem ao sincronizar.
-        const pending = opts.keepPendingQueues ? (await entries().catch(() => [])).filter(([k, v]) => k.startsWith("queue:") && Array.isArray(v) && v.length > 0) : [];
+        // Leituras ainda não enviadas ficam (sem nomes; só o conteúdo dos QR lidos), para a
+        // entrada de quem passou não se perder. Saem quando a conta que leu sincroniza.
+        const others = opts.keepPendingOfOthers;
+        const keep = (e: QueuedEntry) => (others ? !queuedBy(others)(e) : !!opts.keepPendingQueues);
+        const pending =
+          opts.keepPendingQueues || others
+            ? (await entries().catch(() => []))
+                .filter(([k, v]) => k.startsWith("queue:") && Array.isArray(v))
+                .map(([k, v]) => [k, (v as QueuedEntry[]).filter(keep)] as const)
+                .filter(([, v]) => v.length > 0)
+            : [];
         await new Promise<void>((resolve) => {
           const req = indexedDB.deleteDatabase(DB);
           req.onsuccess = req.onerror = req.onblocked = () => resolve();

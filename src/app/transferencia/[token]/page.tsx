@@ -116,7 +116,7 @@ async function Content({ params }: { params: Promise<{ token: string }> }) {
           Esta transferência foi enviada para <strong>{maskEmail(t.toEmail)}</strong>, e você entrou como <strong>{user.email}</strong>. Saia e entre com a
           conta desse e-mail (ou crie uma com ele); depois abra o link do e-mail de novo.
         </p>
-        <LogoutButton className={buttonVariants({ size: "sm", variant: "outline", className: "mt-1" })}>Sair desta conta</LogoutButton>
+        <LogoutButton userId={user.id} className={buttonVariants({ size: "sm", variant: "outline", className: "mt-1" })}>Sair desta conta</LogoutButton>
       </State>
     );
   }

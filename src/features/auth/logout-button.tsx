@@ -14,7 +14,7 @@ import { logoutAction } from "./actions";
  * Se houver leituras offline ainda não enviadas, pergunta antes: sair sem enviar apaga
  * entradas que o servidor não conhece (o ingresso continuaria válido para entrar de novo).
  */
-export function LogoutButton({ className, children }: { className?: string; children: React.ReactNode }) {
+export function LogoutButton({ userId, className, children }: { userId: string; className?: string; children: React.ReactNode }) {
   const form = useRef<HTMLFormElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const [pending, setPending] = useState(false);
@@ -42,7 +42,8 @@ export function LogoutButton({ className, children }: { className?: string; chil
   const leave = async () => {
     setPending(true);
     try {
-      await clearOfflineCheckinData();
+      // Leituras de outras contas deste aparelho ficam para quem as fez enviar.
+      await clearOfflineCheckinData({ keepPendingOfOthers: userId });
     } finally {
       form.current?.requestSubmit();
     }
@@ -59,7 +60,7 @@ export function LogoutButton({ className, children }: { className?: string; chil
     setSending(true);
     setError(null);
     try {
-      const r = await sendPendingOfflineCheckins();
+      const r = await sendPendingOfflineCheckins(userId);
       if (r.remaining === 0) {
         dialog.current?.close();
         await leave();
@@ -80,7 +81,7 @@ export function LogoutButton({ className, children }: { className?: string; chil
         disabled={pending}
         onClick={async () => {
           setPending(true);
-          const queued = (await pendingOfflineCheckins()).reduce((n, q) => n + q.count, 0);
+          const queued = (await pendingOfflineCheckins(userId)).reduce((n, q) => n + q.count, 0);
           if (queued > 0) {
             setUnsent(queued);
             return;
