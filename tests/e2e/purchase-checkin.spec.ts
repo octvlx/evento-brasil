@@ -263,6 +263,55 @@ test("sessão expirada apaga a lista e a cópia do leitor, mas guarda as leitura
   await expect(staff.getByText("offline", { exact: true }).first()).toBeVisible();
 });
 
+test("leituras offline de outra conta do aparelho: quem sai não envia nem apaga; a conta que leu envia depois", async ({ browser }) => {
+  const buyer = await (await browser.newContext()).newPage();
+  await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
+  await buyer.locator("li").filter({ hasText: "Inteira" }).first().getByRole("button", { name: "Aumentar" }).click();
+  await buyer.getByRole("button", { name: "Continuar para revisão" }).click();
+  await proceedThroughReview(buyer);
+  await buyer.getByRole("button", { name: "Gerar PIX" }).click();
+  await buyer.getByRole("button", { name: "Aprovar PIX" }).click();
+  await buyer.waitForURL(/\/pedido\//);
+  const code = (await buyer.locator('a[href^="/ingressos/"]').first().getAttribute("href"))!.split("/").pop()!;
+
+  // A produtora lê sem internet e a sessão dela expira com a leitura na fila.
+  const ctx = await browser.newContext();
+  const staff = await ctx.newPage();
+  const { payload, eventId } = await qrPayloadFor(code);
+  await openScanner(staff, USERS.producer, eventId);
+  await staff.getByRole("button", { name: "Baixar lista para uso offline" }).click();
+  await expect(staff.getByText(/Lista baixada: \d+ ingressos/)).toBeVisible();
+  await ctx.setOffline(true);
+  await staff.getByPlaceholder(/Colar conteúdo do QR/).fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(staff.getByRole("alert").filter({ hasText: "Entrada liberada (offline)" })).toBeVisible();
+  await nextScan(staff);
+  await staff.clock.resume();
+  await ctx.clearCookies();
+  await ctx.setOffline(false);
+  await staff.goto("/");
+  await expect.poll(() => offlineState(staff)).toEqual({ keys: [`queue:${eventId}`], caches: 0, workers: 0 });
+
+  // Outra pessoa entra no mesmo aparelho e sai: sem aviso, e a leitura da produtora fica.
+  await login(staff, STAFF, "/minha-conta");
+  await staff.getByRole("button", { name: "Sair da conta" }).click();
+  await staff.waitForURL((u) => u.pathname === "/");
+  await expect(staff.getByRole("dialog")).toHaveCount(0);
+  await expect.poll(() => offlineState(staff)).toEqual({ keys: [`queue:${eventId}`], caches: 0, workers: 0 });
+
+  // A produtora entra de novo e envia; a entrada fica registrada em nome dela.
+  await login(staff, USERS.producer, `/check-in/${eventId}`);
+  await expect(staff.getByRole("status").filter({ hasText: "1 leitura enviada" })).toBeVisible();
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const { rows } = await client.query(
+    'SELECT u.email FROM "TicketCheckin" c JOIN "IssuedTicket" t ON t.id = c."ticketId" JOIN "User" u ON u.id = c."scannedById" WHERE t.code = $1',
+    [code],
+  );
+  await client.end();
+  expect(rows).toEqual([{ email: USERS.producer }]);
+});
+
 test("sair com leituras offline não enviadas: avisa, envia e só então sai", async ({ browser }) => {
   const buyer = await (await browser.newContext()).newPage();
   await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");

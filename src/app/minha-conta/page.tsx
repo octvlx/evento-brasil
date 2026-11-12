@@ -103,7 +103,7 @@ async function Content() {
         <Link href="/meus-pedidos" className={buttonVariants({ variant: "outline" })}>
           Meus pedidos
         </Link>
-        <LogoutButton className={buttonVariants({ variant: "ghost", className: "text-destructive" })}>Sair da conta</LogoutButton>
+        <LogoutButton userId={user.id} className={buttonVariants({ variant: "ghost", className: "text-destructive" })}>Sair da conta</LogoutButton>
       </div>
     </div>
   );

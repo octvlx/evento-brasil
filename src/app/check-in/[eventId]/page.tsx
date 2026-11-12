@@ -53,7 +53,7 @@ async function Content({ params }: { params: Promise<{ eventId: string }> }) {
     <>
       <h1 className="font-display text-2xl font-extrabold leading-tight">{event.title}</h1>
       <p className="mb-4 text-sm text-muted-foreground">Validação online — cada QR só é aceito uma vez. Sem internet, o leitor usa a lista baixada e confirma tudo ao reconectar.</p>
-      <Scanner eventId={eventId} initialCounters={{ admitted, total }} />
+      <Scanner eventId={eventId} userId={user.id} initialCounters={{ admitted, total }} />
       {divergences > 0 && (
         <p className="mt-4 rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm">
           {divergences === 1 ? "1 leitura offline" : `${divergences} leituras offline`} com divergência entre o aparelho e o servidor.{" "}
