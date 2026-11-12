@@ -2,6 +2,7 @@
 
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { OfflineEntry, OfflinePackage } from "@/server/services/checkin";
+import { syncOfflineAction } from "./actions";
 
 // Armazenamento do check-in offline no aparelho (IndexedDB, sem dependência nova):
 // a lista baixada (hashes dos QR), os ingressos que ESTE aparelho já liberou e a fila de
@@ -42,6 +43,32 @@ async function set(key: string, value: unknown): Promise<void> {
       resolve();
     };
     tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+/**
+ * Lê e grava uma chave numa única transação: o IndexedDB serializa transações de escrita no
+ * mesmo store (também entre abas), então nenhuma outra escrita cai entre a leitura e a gravação.
+ */
+async function update<T>(key: string, fn: (current: T | undefined) => T): Promise<T> {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    let next: T;
+    const req = store.get(key);
+    req.onsuccess = () => {
+      next = fn(req.result as T | undefined);
+      store.put(next, key);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(next);
+    };
+    tx.onerror = tx.onabort = () => {
       db.close();
       reject(tx.error);
     };
@@ -93,7 +120,36 @@ export const offlineStore = {
   setUsed: (eventId: string, used: Set<string>) => set(`used:${eventId}`, [...used]),
   getQueue: async (eventId: string) => (await get<QueuedEntry[]>(`queue:${eventId}`)) ?? [],
   setQueue: (eventId: string, queue: QueuedEntry[]) => set(`queue:${eventId}`, queue),
+  /** Acrescenta uma leitura à fila (atômico) e devolve a fila nova. */
+  appendToQueue: (eventId: string, entry: QueuedEntry) => update<QueuedEntry[]>(`queue:${eventId}`, (q) => [...(q ?? []), entry]),
+  /**
+   * Tira da fila as leituras enviadas, comparando cada uma (não pela quantidade): leituras
+   * novas, ou já tiradas por outro envio, nunca são apagadas sem ter chegado ao servidor.
+   */
+  removeFromQueue: (eventId: string, sent: QueuedEntry[]) =>
+    update<QueuedEntry[]>(`queue:${eventId}`, (q) => {
+      const rest = [...(q ?? [])];
+      for (const s of sent) {
+        const i = rest.findIndex((e) => e.payload === s.payload && e.scannedAt === s.scannedAt && e.localResult === s.localResult);
+        if (i >= 0) rest.splice(i, 1);
+      }
+      return rest;
+    }),
 };
+
+/**
+ * Um envio da fila por vez, por evento, também entre abas (o leitor ao reconectar e o
+ * "Enviar e sair"): sem isso, os dois mandariam as mesmas leituras ao servidor.
+ * Sem Web Locks (navegador antigo), cai numa trava só desta aba.
+ */
+const localLocks = new Map<string, Promise<unknown>>();
+export function withQueueLock<T>(eventId: string, fn: () => Promise<T>): Promise<T> {
+  const name = `qqpega-checkin-sync:${eventId}`;
+  if (typeof navigator !== "undefined" && navigator.locks) return navigator.locks.request(name, fn) as Promise<T>;
+  const run = (localLocks.get(name) ?? Promise.resolve()).catch(() => {}).then(fn);
+  localLocks.set(name, run);
+  return run;
+}
 
 /**
  * Há algo do check-in offline guardado neste aparelho? Barato: não abre (nem cria) o banco
@@ -125,6 +181,52 @@ export async function forgetOfflineEvent(eventId: string): Promise<void> {
     tasks.push(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith("qqpega-checkin")).map(async (k) => (await caches.open(k)).delete(page)))));
   }
   await Promise.race([Promise.allSettled(tasks), new Promise((r) => setTimeout(r, 1500))]);
+}
+
+/** Leituras offline ainda não enviadas, por evento (todas as contas deste aparelho). */
+export async function pendingOfflineCheckins(): Promise<{ eventId: string; count: number }[]> {
+  try {
+    if (typeof indexedDB === "undefined") return [];
+    if ("databases" in indexedDB && !(await indexedDB.databases()).some((d) => d.name === DB)) return [];
+    return (await entries())
+      .filter(([k, v]) => k.startsWith("queue:") && Array.isArray(v) && v.length > 0)
+      .map(([k, v]) => ({ eventId: k.slice("queue:".length), count: (v as unknown[]).length }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Envia todas as leituras pendentes (de todos os eventos), como o leitor faz ao reconectar.
+ * Remove da fila só o que o servidor recebeu. Devolve quantas ainda ficaram e o motivo.
+ */
+export async function sendPendingOfflineCheckins(): Promise<{ sent: number; remaining: number; error?: string }> {
+  let sent = 0;
+  let error: string | undefined;
+  for (const { eventId } of await pendingOfflineCheckins()) {
+    await withQueueLock(eventId, async () => {
+      // Lotes de até 500 (limite do servidor); para no primeiro erro deste evento.
+      for (let i = 0; i < 20; i++) {
+        const pending = await offlineStore.getQueue(eventId);
+        if (!pending.length) break;
+        const batch = pending.slice(0, 500);
+        try {
+          const r = await syncOfflineAction(eventId, batch);
+          if (!r.ok) {
+            error = r.error;
+            break;
+          }
+        } catch {
+          error = "Sem conexão com o servidor.";
+          break;
+        }
+        await offlineStore.removeFromQueue(eventId, batch);
+        sent += batch.length;
+      }
+    });
+  }
+  const remaining = (await pendingOfflineCheckins()).reduce((n, q) => n + q.count, 0);
+  return { sent, remaining, error: remaining ? error : undefined };
 }
 
 /** SHA-256 (hex) do token, igual ao offlineTokenHash do servidor. Exige contexto seguro (HTTPS/localhost). */

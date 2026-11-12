@@ -11,7 +11,7 @@ import { parseQrPayload } from "@/lib/qr-payload";
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { CheckinResponse, OfflinePackage, OfflineSyncItem } from "@/server/services/checkin";
 import { checkInAction, offlinePackageAction, syncOfflineAction } from "./actions";
-import { forgetOfflineEvent, offlineStore, prepareOfflineShell, tokenHash, type QueuedEntry } from "./offline-store";
+import { forgetOfflineEvent, offlineStore, prepareOfflineShell, tokenHash, withQueueLock, type QueuedEntry } from "./offline-store";
 
 const RESULT_STYLE: Record<string, string> = {
   ADMITTED: "bg-emerald-600",
@@ -113,17 +113,24 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
     syncing.current = true;
     setOfflineBusy(true);
     try {
-      const pending = await offlineStore.getQueue(eventId);
-      if (!pending.length) return;
-      const r = await syncOfflineAction(eventId, pending.slice(0, 500));
+      // Um envio por vez, também com o "Enviar e sair" e outras abas.
+      const sent = await withQueueLock(eventId, async () => {
+        const batch = (await offlineStore.getQueue(eventId)).slice(0, 500);
+        if (!batch.length) return null;
+        const r = await syncOfflineAction(eventId, batch);
+        // Remove da fila só o que foi enviado (leituras novas feitas durante o envio ficam).
+        return { r, rest: r.ok ? await offlineStore.removeFromQueue(eventId, batch) : null };
+      });
+      if (!sent) {
+        setQueue(await offlineStore.getQueue(eventId));
+        return;
+      }
+      const { r, rest } = sent;
       if (!r.ok) {
         if (!(await lostAccess(r))) setOfflineMsg(r.error);
         return;
       }
-      // Remove da fila só o que foi enviado (leituras novas feitas durante o envio ficam).
-      const rest = (await offlineStore.getQueue(eventId)).slice(Math.min(pending.length, 500));
-      await offlineStore.setQueue(eventId, rest);
-      setQueue(rest);
+      setQueue(rest!);
       setCounters(r.data.counters);
       setSyncResult(r.data.items);
       const diverged = r.data.items.filter((i) => i.divergence).length;
@@ -222,8 +229,7 @@ export function Scanner({ eventId, initialCounters }: { eventId: string; initial
         await offlineStore.setUsed(eventId, used);
       }
       // Toda leitura vai para a fila (o servidor registra e decide, inclusive as recusadas).
-      const next = [...(await offlineStore.getQueue(eventId)), { payload: payload.slice(0, 200), scannedAt: new Date().toISOString(), localResult: r }];
-      await offlineStore.setQueue(eventId, next);
+      const next = await offlineStore.appendToQueue(eventId, { payload: payload.slice(0, 200), scannedAt: new Date().toISOString(), localResult: r });
       setQueue(next);
       if (r === "ADMITTED") setCounters((c) => ({ ...c, admitted: c.admitted + 1 }));
       return show(r, t, r === "ADMITTED" ? new Date() : null);
