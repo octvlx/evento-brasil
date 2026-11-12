@@ -1,6 +1,6 @@
 // Relatórios calculados a partir do banco (pedidos, ingressos e razão).
 import "server-only";
-import type { LedgerAccount } from "@/generated/prisma/client";
+import type { LedgerAccount, Prisma } from "@/generated/prisma/client";
 import type { Db } from "../db";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { effectiveEventStatus } from "@/lib/event-lifecycle";
@@ -244,27 +244,83 @@ export async function eventSalesSummary(db: Db, actor: Actor, eventId: string) {
  * `holderUserId`, `holderName` e `holderEmail` são do novo titular; o comprador
  * (quem pagou) continua no pedido. `transferred` = o titular não é mais o comprador.
  */
-export async function listAttendees(db: Db, actor: Actor, eventId: string) {
-  await assertEventPermission(db, actor, eventId, "attendees:read");
-  const rows = await db.issuedTicket.findMany({
-    where: { eventId },
-    include: {
-      ticketType: { select: { name: true, kind: true } },
-      order: { select: { publicCode: true, buyerEmail: true } },
-      holder: { select: { name: true, email: true } },
-      transfers: { where: { status: "PENDING" }, select: { toEmail: true, expiresAt: true }, take: 1 },
-      _count: { select: { transfers: true } },
-    },
-    orderBy: [{ issuedAt: "asc" }, { sequence: "asc" }],
-  });
-  return rows.map(({ holder, transfers, _count, ...t }) => ({
+const ATTENDEE_INCLUDE = {
+  ticketType: { select: { name: true, kind: true } },
+  order: { select: { publicCode: true, buyerEmail: true } },
+  holder: { select: { name: true, email: true } },
+  transfers: { where: { status: "PENDING" }, select: { toEmail: true, expiresAt: true }, take: 1 },
+  _count: { select: { transfers: true } },
+} satisfies Prisma.IssuedTicketInclude;
+const ATTENDEE_ORDER = [{ issuedAt: "asc" }, { sequence: "asc" }] satisfies Prisma.IssuedTicketOrderByWithRelationInput[];
+
+function attendeeRow({ holder, transfers, _count, ...t }: Prisma.IssuedTicketGetPayload<{ include: typeof ATTENDEE_INCLUDE }>) {
+  return {
     ...t,
     holderName: t.holderName ?? holder.name,
     holderEmail: t.holderEmail ?? holder.email,
     transferred: t.holderUserId !== t.userId,
     pendingTransfer: transfers[0] ?? null,
     transferCount: _count.transfers,
-  }));
+  };
+}
+
+/** Todos os participantes do evento (exportação CSV). Na tela, use listAttendeesPage. */
+export async function listAttendees(db: Db, actor: Actor, eventId: string) {
+  await assertEventPermission(db, actor, eventId, "attendees:read");
+  const rows = await db.issuedTicket.findMany({ where: { eventId }, include: ATTENDEE_INCLUDE, orderBy: ATTENDEE_ORDER });
+  return rows.map(attendeeRow);
+}
+
+export const ATTENDEES_PAGE_SIZE = 50;
+export type AttendeeStatusFilter = "VALID" | "CHECKED_IN" | "REVOKED";
+
+/**
+ * Participantes de um evento, uma página por vez, com busca (nome ou e-mail do titular,
+ * código do ingresso ou do pedido) e filtro de situação. Os totais são do evento inteiro.
+ */
+export async function listAttendeesPage(
+  db: Db,
+  actor: Actor,
+  eventId: string,
+  opts: { page?: number; q?: string; status?: AttendeeStatusFilter; pageSize?: number } = {},
+) {
+  await assertEventPermission(db, actor, eventId, "attendees:read");
+  const pageSize = opts.pageSize ?? ATTENDEES_PAGE_SIZE;
+  const q = opts.q?.trim().slice(0, 100) ?? "";
+  const text = { contains: q, mode: "insensitive" as const };
+  const where: Prisma.IssuedTicketWhereInput = {
+    eventId,
+    ...(opts.status ? { status: opts.status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { code: text },
+            { order: { publicCode: text } },
+            { holderName: text },
+            { holderEmail: text },
+            // Sem nome/e-mail no ingresso, vale o da conta do titular (como na tela).
+            { holderName: null, holder: { name: text } },
+            { holderEmail: null, holder: { email: text } },
+          ],
+        }
+      : {}),
+  };
+  const [matching, byStatus, transferredRows] = await Promise.all([
+    db.issuedTicket.count({ where }),
+    db.issuedTicket.groupBy({ by: ["status"], where: { eventId }, _count: { _all: true } }),
+    db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM "IssuedTicket" WHERE "eventId" = ${eventId} AND "holderUserId" <> "userId"`,
+  ]);
+  const pageCount = Math.max(1, Math.ceil(matching / pageSize));
+  const page = Math.min(Math.max(1, Math.floor(opts.page ?? 1) || 1), pageCount);
+  const rows = await db.issuedTicket.findMany({ where, include: ATTENDEE_INCLUDE, orderBy: ATTENDEE_ORDER, skip: (page - 1) * pageSize, take: pageSize });
+  const of = (st: string) => byStatus.find((r) => r.status === st)?._count._all ?? 0;
+  return {
+    rows: rows.map(attendeeRow),
+    matching,
+    page,
+    pageCount,
+    totals: { tickets: byStatus.reduce((n, r) => n + r._count._all, 0), checkedIn: of("CHECKED_IN"), transferred: Number(transferredRows[0]?.n ?? 0) },
+  };
 }
 
 export type TransferHistoryRow = Awaited<ReturnType<typeof listTransferHistory>>[number];
@@ -272,12 +328,12 @@ export type TransferHistoryRow = Awaited<ReturnType<typeof listTransferHistory>>
 /**
  * Histórico de transferências dos ingressos do evento (de → para, datas, situação),
  * mais antigo primeiro. Dados pessoais: mesma permissão da lista de participantes.
- * Nunca devolve token, IP nem user agent. Com `ticketId`, só daquele ingresso.
+ * Nunca devolve token, IP nem user agent. Com `ticketId`, só daquele(s) ingresso(s).
  */
-export async function listTransferHistory(db: Db, actor: Actor, eventId: string, ticketId?: string) {
+export async function listTransferHistory(db: Db, actor: Actor, eventId: string, ticketId?: string | string[]) {
   await assertEventPermission(db, actor, eventId, "attendees:read");
   return db.ticketTransfer.findMany({
-    where: { eventId, ticket: { eventId }, ...(ticketId ? { ticketId } : {}) },
+    where: { eventId, ticket: { eventId }, ...(ticketId === undefined ? {} : { ticketId: Array.isArray(ticketId) ? { in: ticketId } : ticketId }) },
     select: {
       id: true,
       ticketId: true,

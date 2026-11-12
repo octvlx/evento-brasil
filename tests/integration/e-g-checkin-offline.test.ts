@@ -146,7 +146,12 @@ describe("check-in offline: sincronização", () => {
     // Leitura online nunca entra na lista.
     await checkInTicket(db, staff, event.id, qrPayload(tickets[0]));
 
-    const rows = await listOfflineDivergences(db, owner, event.id);
+    const list = await listOfflineDivergences(db, owner, event.id);
+    expect([list.total, list.admittedButRejected, list.pageCount]).toEqual([2, 1, 1]);
+    const rows = list.rows;
+    // Paginação: 1 por página → 2 páginas, mais recente primeiro.
+    const p2 = await listOfflineDivergences(db, owner, event.id, { page: 2, pageSize: 1 });
+    expect([p2.page, p2.pageCount, p2.rows.length]).toEqual([2, 2, 1]);
     expect(rows.map((d) => [d.divergence, d.localResult, d.result, d.ticket?.code]).sort()).toEqual(
       [
         ["ADMITTED_BUT_REJECTED", "ADMITTED", "DUPLICATE", tickets[0].code],

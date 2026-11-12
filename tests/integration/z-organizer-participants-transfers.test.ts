@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { listEventChanges } from "@/server/services/event-changes";
 import { requestCustomerRefund } from "@/server/services/refunds";
-import { attendeesToCsv, listAttendees, listTransferHistory, organizerDashboard } from "@/server/services/reports";
+import { attendeesToCsv, listAttendees, listAttendeesPage, listTransferHistory, organizerDashboard } from "@/server/services/reports";
 import { acceptTransfer, requestTransfer } from "@/server/services/transfers";
 import { adapter, buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
@@ -35,6 +35,53 @@ async function transfer(from: { id: string; platformRole: "USER" | "ADMIN"; stat
   const { token } = await requestTransfer(db, from, ticketId, { toEmail: to.email, toName: `Nome ${to.name}` });
   return acceptTransfer(db, to, token);
 }
+
+describe("participantes — paginação e busca", () => {
+  it("pagina com totais do evento inteiro; busca por nome, e-mail e códigos; filtra por situação", async () => {
+    const { owner, buyer, recipient, order, tickets, event } = await setup();
+    const { order: order2 } = await buyAndPay(buyer, event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 3 }]);
+    await transfer(buyer, tickets[0].id, recipient);
+    await db.issuedTicket.update({ where: { id: tickets[1].id }, data: { status: "CHECKED_IN", checkedInAt: new Date() } });
+
+    const p1 = await listAttendeesPage(db, owner, event.id, { pageSize: 2 });
+    expect([p1.matching, p1.page, p1.pageCount, p1.rows.length]).toEqual([5, 1, 3, 2]);
+    expect(p1.totals).toEqual({ tickets: 5, checkedIn: 1, transferred: 1 });
+    // Ordem estável entre páginas, sem repetir nem pular ingresso.
+    const all = [...p1.rows, ...(await listAttendeesPage(db, owner, event.id, { pageSize: 2, page: 2 })).rows, ...(await listAttendeesPage(db, owner, event.id, { pageSize: 2, page: 3 })).rows];
+    expect(all.map((r) => r.id)).toEqual((await listAttendees(db, owner, event.id)).map((r) => r.id));
+    // Página fora do intervalo vira a última.
+    expect((await listAttendeesPage(db, owner, event.id, { pageSize: 2, page: 99 })).page).toBe(3);
+
+    const ids = async (q: string) => (await listAttendeesPage(db, owner, event.id, { q })).rows.map((r) => r.id).sort();
+    expect(await ids(tickets[0].code.toLowerCase())).toEqual([tickets[0].id]);
+    expect(await ids(`NOME ${recipient.name}`)).toEqual([tickets[0].id]);
+    expect(await ids(recipient.email)).toEqual([tickets[0].id]);
+    expect(await ids(order.publicCode)).toEqual([tickets[0].id, tickets[1].id].sort());
+    expect((await ids(order2.publicCode)).length).toBe(3);
+    expect(await ids("ninguem-com-esse-nome")).toEqual([]);
+
+    const checked = await listAttendeesPage(db, owner, event.id, { status: "CHECKED_IN" });
+    expect([checked.matching, checked.rows.map((r) => r.id)]).toEqual([1, [tickets[1].id]]);
+    // Totais não mudam com o filtro.
+    expect(checked.totals).toEqual(p1.totals);
+  });
+
+  it("busca pelo nome da conta quando o ingresso não tem nome; mesma permissão da lista", async () => {
+    const { owner, staff, buyer, tickets, event } = await setup();
+    await db.issuedTicket.update({ where: { id: tickets[0].id }, data: { holderName: null, holderEmail: null } });
+    const r = await listAttendeesPage(db, owner, event.id, { q: buyer.name });
+    expect(r.rows.map((x) => x.id)).toContain(tickets[0].id);
+    expect(r.rows.find((x) => x.id === tickets[0].id)?.holderName).toBe(buyer.name);
+    await expect(listAttendeesPage(db, staff, event.id)).rejects.toMatchObject(forbidden);
+  });
+
+  it("histórico de transferências só dos ingressos pedidos", async () => {
+    const { owner, buyer, recipient, tickets, event } = await setup();
+    await transfer(buyer, tickets[0].id, recipient);
+    expect(await listTransferHistory(db, owner, event.id, [tickets[0].id, tickets[1].id])).toHaveLength(1);
+    expect(await listTransferHistory(db, owner, event.id, [tickets[1].id])).toEqual([]);
+  });
+});
 
 describe("participantes — titular atual", () => {
   it("depois do aceite mostra o novo titular e marca como transferido; o pedido continua do comprador", async () => {
