@@ -304,17 +304,28 @@ test("sair com leituras offline não enviadas: avisa, envia e só então sai", a
 
   await logout();
   await expect(dialog).toBeVisible();
+  // Ao reconectar, o leitor envia a fila sozinho; atrasa esse envio para o "Enviar e sair"
+  // cair no meio dele. Os dois não podem mandar a mesma leitura.
+  let delayed = false;
+  await staff.route(`**/check-in/${eventId}`, async (route) => {
+    if (!delayed && route.request().method() === "POST" && route.request().headers()["next-action"]) {
+      delayed = true;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    await route.continue();
+  });
   await ctx.setOffline(false);
+  await expect.poll(() => delayed).toBe(true);
   await dialog.getByRole("button", { name: "Enviar e sair" }).click();
   await staff.waitForURL((u) => u.pathname === "/");
   await expect.poll(() => offlineState(staff)).toEqual({ keys: [], caches: 0, workers: 0 });
 
-  // A entrada chegou ao servidor antes do logout.
+  // A entrada chegou ao servidor antes do logout, uma vez só.
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
-  const { rows } = await client.query('SELECT status FROM "IssuedTicket" WHERE code = $1', [code]);
+  const { rows } = await client.query('SELECT t.status, (SELECT count(*)::int FROM "TicketCheckin" c WHERE c."ticketId" = t.id) AS reads FROM "IssuedTicket" t WHERE t.code = $1', [code]);
   await client.end();
-  expect(rows[0].status).toBe("CHECKED_IN");
+  expect(rows[0]).toEqual({ status: "CHECKED_IN", reads: 1 });
 });
 
 test("conta que perdeu o acesso ao evento: o leitor some e a lista offline do evento é apagada", async ({ browser }) => {

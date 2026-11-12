@@ -49,6 +49,32 @@ async function set(key: string, value: unknown): Promise<void> {
   });
 }
 
+/**
+ * Lê e grava uma chave numa única transação: o IndexedDB serializa transações de escrita no
+ * mesmo store (também entre abas), então nenhuma outra escrita cai entre a leitura e a gravação.
+ */
+async function update<T>(key: string, fn: (current: T | undefined) => T): Promise<T> {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    let next: T;
+    const req = store.get(key);
+    req.onsuccess = () => {
+      next = fn(req.result as T | undefined);
+      store.put(next, key);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(next);
+    };
+    tx.onerror = tx.onabort = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
 /** Todas as chaves e valores guardados (para limpezas seletivas). */
 async function entries(): Promise<[string, unknown][]> {
   const db = await open();
@@ -94,7 +120,36 @@ export const offlineStore = {
   setUsed: (eventId: string, used: Set<string>) => set(`used:${eventId}`, [...used]),
   getQueue: async (eventId: string) => (await get<QueuedEntry[]>(`queue:${eventId}`)) ?? [],
   setQueue: (eventId: string, queue: QueuedEntry[]) => set(`queue:${eventId}`, queue),
+  /** Acrescenta uma leitura à fila (atômico) e devolve a fila nova. */
+  appendToQueue: (eventId: string, entry: QueuedEntry) => update<QueuedEntry[]>(`queue:${eventId}`, (q) => [...(q ?? []), entry]),
+  /**
+   * Tira da fila as leituras enviadas, comparando cada uma (não pela quantidade): leituras
+   * novas, ou já tiradas por outro envio, nunca são apagadas sem ter chegado ao servidor.
+   */
+  removeFromQueue: (eventId: string, sent: QueuedEntry[]) =>
+    update<QueuedEntry[]>(`queue:${eventId}`, (q) => {
+      const rest = [...(q ?? [])];
+      for (const s of sent) {
+        const i = rest.findIndex((e) => e.payload === s.payload && e.scannedAt === s.scannedAt && e.localResult === s.localResult);
+        if (i >= 0) rest.splice(i, 1);
+      }
+      return rest;
+    }),
 };
+
+/**
+ * Um envio da fila por vez, por evento, também entre abas (o leitor ao reconectar e o
+ * "Enviar e sair"): sem isso, os dois mandariam as mesmas leituras ao servidor.
+ * Sem Web Locks (navegador antigo), cai numa trava só desta aba.
+ */
+const localLocks = new Map<string, Promise<unknown>>();
+export function withQueueLock<T>(eventId: string, fn: () => Promise<T>): Promise<T> {
+  const name = `qqpega-checkin-sync:${eventId}`;
+  if (typeof navigator !== "undefined" && navigator.locks) return navigator.locks.request(name, fn) as Promise<T>;
+  const run = (localLocks.get(name) ?? Promise.resolve()).catch(() => {}).then(fn);
+  localLocks.set(name, run);
+  return run;
+}
 
 /**
  * Há algo do check-in offline guardado neste aparelho? Barato: não abre (nem cria) o banco
@@ -149,24 +204,26 @@ export async function sendPendingOfflineCheckins(): Promise<{ sent: number; rema
   let sent = 0;
   let error: string | undefined;
   for (const { eventId } of await pendingOfflineCheckins()) {
-    // Lotes de até 500 (limite do servidor); para no primeiro erro deste evento.
-    for (let i = 0; i < 20; i++) {
-      const pending = await offlineStore.getQueue(eventId);
-      if (!pending.length) break;
-      const batch = pending.slice(0, 500);
-      try {
-        const r = await syncOfflineAction(eventId, batch);
-        if (!r.ok) {
-          error = r.error;
+    await withQueueLock(eventId, async () => {
+      // Lotes de até 500 (limite do servidor); para no primeiro erro deste evento.
+      for (let i = 0; i < 20; i++) {
+        const pending = await offlineStore.getQueue(eventId);
+        if (!pending.length) break;
+        const batch = pending.slice(0, 500);
+        try {
+          const r = await syncOfflineAction(eventId, batch);
+          if (!r.ok) {
+            error = r.error;
+            break;
+          }
+        } catch {
+          error = "Sem conexão com o servidor.";
           break;
         }
-      } catch {
-        error = "Sem conexão com o servidor.";
-        break;
+        await offlineStore.removeFromQueue(eventId, batch);
+        sent += batch.length;
       }
-      await offlineStore.setQueue(eventId, (await offlineStore.getQueue(eventId)).slice(batch.length));
-      sent += batch.length;
-    }
+    });
   }
   const remaining = (await pendingOfflineCheckins()).reduce((n, q) => n + q.count, 0);
   return { sent, remaining, error: remaining ? error : undefined };
