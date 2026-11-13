@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, Textarea } from "@/components/ui/primitives";
-import { cancelEventAction, submitEventAction } from "./actions";
+import { cancelEventAction, submitEventAction, unpublishEventAction } from "./actions";
 
 export function EventStatusActions({ eventId, status, canPublish, canCancel, paidOrders }: { eventId: string; status: string; canPublish: boolean; canCancel: boolean; paidOrders: number }) {
   const [pending, start] = useTransition();
@@ -28,12 +28,29 @@ export function EventStatusActions({ eventId, status, canPublish, canCancel, pai
             Publicar evento
           </Button>
         )}
+        {canPublish && (status === "PENDING_REVIEW" || (status === "PUBLISHED" && paidOrders === 0)) && (
+          <Button
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await unpublishEventAction(eventId);
+                setMsg(r.ok ? { ok: true, text: status === "PUBLISHED" ? "Evento fora do ar: voltou a rascunho." : "Evento retirado da moderação: voltou a rascunho." } : { ok: false, text: r.error });
+              })
+            }
+          >
+            {status === "PUBLISHED" ? "Despublicar" : "Retirar da moderação"}
+          </Button>
+        )}
         {canCancel && ["DRAFT", "PENDING_REVIEW", "PUBLISHED"].includes(status) && !cancelling && (
           <Button variant="outline" className="text-destructive" onClick={() => setCancelling(true)}>
             Cancelar evento
           </Button>
         )}
       </div>
+      {canPublish && status === "PUBLISHED" && paidOrders > 0 && (
+        <p className="text-xs text-muted-foreground">Com ingressos vendidos o evento não pode ser despublicado; para tirá-lo do ar, cancele-o (os compradores são reembolsados).</p>
+      )}
       {cancelling && (
         <div className="space-y-2 rounded-2xl border border-destructive/40 bg-destructive-soft/40 p-4">
           <p className="text-sm font-semibold text-destructive">

@@ -25,7 +25,8 @@ import { ticketsHeldByAccount } from "./orders";
 export const EVENT_TRANSITIONS: Record<EventStatus, readonly EventStatus[]> = {
   DRAFT: ["PENDING_REVIEW", "PUBLISHED", "CANCELLED"],
   PENDING_REVIEW: ["PUBLISHED", "DRAFT", "CANCELLED"],
-  PUBLISHED: ["CANCELLED", "COMPLETED"],
+  // PUBLISHED → DRAFT só pelo organizador e sem ingressos vendidos (`unpublishEvent`).
+  PUBLISHED: ["CANCELLED", "COMPLETED", "DRAFT"],
   CANCELLED: ["ARCHIVED"],
   COMPLETED: ["ARCHIVED"],
   ARCHIVED: [],
@@ -464,4 +465,125 @@ export async function archiveEvent(db: Db, actor: Actor, eventId: string) {
   assertEventTransition(effectiveEventStatus(event), "ARCHIVED");
   await db.event.update({ where: { id: eventId }, data: { status: "ARCHIVED" } });
   await audit(db, { actorUserId: actor.id, organizationId, action: "event.archived", entityType: "Event", entityId: eventId });
+}
+
+/**
+ * Tira o evento do ar (PUBLISHED) ou da fila de moderação (PENDING_REVIEW) e volta a
+ * rascunho. Com ingresso válido/usado ou pedido aguardando pagamento é recusado: aí o
+ * caminho é cancelar, que reembolsa. A trava do evento é a mesma de `createOrder`, então
+ * uma compra simultânea ou termina antes (e a despublicação é recusada) ou já encontra
+ * o evento em rascunho.
+ */
+export async function unpublishEvent(db: Db, actor: Actor, eventId: string, now = new Date()) {
+  const { organizationId } = await assertEventPermission(db, actor, eventId, "event:publish");
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
+    const event = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
+    const status = effectiveEventStatus(event, now);
+    if (status !== "PUBLISHED" && status !== "PENDING_REVIEW") throw invalidState("Só eventos publicados ou em moderação voltam a rascunho.");
+    if (status === "PUBLISHED") {
+      const [tickets, pending] = await Promise.all([
+        tx.issuedTicket.count({ where: { eventId, status: { in: ["VALID", "CHECKED_IN"] } } }),
+        tx.order.count({ where: { eventId, status: "PENDING_PAYMENT" } }),
+      ]);
+      if (tickets || pending)
+        throw invalidState(
+          tickets
+            ? "Este evento já tem ingressos vendidos. Para tirá-lo do ar, cancele o evento: os compradores são reembolsados."
+            : "Há pedidos aguardando pagamento. Tente de novo quando eles forem pagos ou expirarem.",
+        );
+    }
+    const updated = await tx.event.update({ where: { id: eventId }, data: { status: "DRAFT", publishedAt: null } });
+    await audit(tx, { actorUserId: actor.id, organizationId, action: "event.unpublished", entityType: "Event", entityId: eventId, metadata: { previousStatus: status } });
+    return updated;
+  });
+}
+
+/**
+ * Cria um rascunho igual ao evento, numa nova data de início: todas as datas (evento,
+ * vendas e janelas dos tipos de ingresso) andam o mesmo intervalo. Copia dados, local e
+ * tipos de ingresso (contadores zerados). Não copia cupons, links de divulgação, equipe,
+ * regras de comissão nem o regime de meia-entrada (esses dependem do admin): o novo evento
+ * fica com os padrões e passa pela publicação/moderação normal.
+ */
+export async function duplicateEvent(db: Db, actor: Actor, eventId: string, startsAtLocal: string, now = new Date()) {
+  const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
+  const source = await db.event.findUniqueOrThrow({ where: { id: eventId }, include: { ticketTypes: { orderBy: { sortOrder: "asc" } }, city: { select: { name: true } } } });
+  let startsAt: Date;
+  try {
+    startsAt = zonedLocalToUtc(startsAtLocal, source.timezone);
+  } catch {
+    throw new AppError("VALIDATION", "Informe a data e a hora de início do novo evento.");
+  }
+  if (startsAt <= now) throw new AppError("VALIDATION", "A nova data de início precisa estar no futuro.");
+  const shift = startsAt.getTime() - source.startsAt.getTime();
+  const move = (d: Date) => new Date(d.getTime() + shift);
+  const moveOrNull = (d: Date | null) => (d ? move(d) : null);
+  return db.$transaction(async (tx) => {
+    const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId } });
+    if (org.status === "REJECTED" || org.status === "SUSPENDED") throw invalidState("Organização sem permissão para criar eventos.");
+    const event = await tx.event.create({
+      data: {
+        organizationId,
+        slug: await uniqueEventSlug(tx, source.title, source.city?.name),
+        status: "DRAFT",
+        title: source.title,
+        summary: source.summary,
+        description: source.description,
+        categoryId: source.categoryId,
+        coverImageUrl: source.coverImageUrl,
+        locationType: source.locationType,
+        venueId: source.venueId,
+        onlineUrl: source.onlineUrl,
+        cityId: source.cityId,
+        timezone: source.timezone,
+        startsAt,
+        endsAt: move(source.endsAt),
+        salesStartAt: move(source.salesStartAt),
+        salesEndAt: move(source.salesEndAt),
+        ageRestriction: source.ageRestriction,
+        capacity: source.capacity,
+        halfPriceQuotaBps: source.halfPriceQuotaBps,
+        maxTicketsPerAccount: source.maxTicketsPerAccount,
+        refundPolicy: source.refundPolicy,
+        refundWindowDays: source.refundWindowDays,
+        refundMinHoursBeforeEvent: source.refundMinHoursBeforeEvent,
+        transferDeadlineHours: source.transferDeadlineHours,
+        transferMaxTransfers: source.transferMaxTransfers,
+        transferAllowReturn: source.transferAllowReturn,
+        accessibilityInfo: source.accessibilityInfo,
+      },
+    });
+    if (source.ticketTypes.length)
+      await tx.ticketType.createMany({
+        data: source.ticketTypes.map((t) => ({
+          eventId: event.id,
+          name: t.name,
+          description: t.description,
+          kind: t.kind,
+          priceCents: t.priceCents,
+          quantityTotal: t.quantityTotal,
+          minPerOrder: t.minPerOrder,
+          maxPerOrder: t.maxPerOrder,
+          salesStartAt: moveOrNull(t.salesStartAt),
+          salesEndAt: moveOrNull(t.salesEndAt),
+          requiresAttendeeInfo: t.requiresAttendeeInfo,
+          isHidden: t.isHidden,
+          sortOrder: t.sortOrder,
+        })),
+      });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "event.duplicated",
+      entityType: "Event",
+      entityId: event.id,
+      metadata: {
+        sourceEventId: source.id,
+        ticketTypes: source.ticketTypes.length,
+        transferPolicy: { transferDeadlineHours: event.transferDeadlineHours, transferMaxTransfers: event.transferMaxTransfers, transferAllowReturn: event.transferAllowReturn },
+      },
+    });
+    return event;
+  });
 }
