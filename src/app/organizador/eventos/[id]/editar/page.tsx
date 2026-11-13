@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
-import { ExternalLink, QrCode, Users } from "lucide-react";
+import { BarChart3, ExternalLink, QrCode, Users } from "lucide-react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
@@ -72,6 +72,9 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
         subtitle={undefined}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link href={`/organizador/eventos/${event.id}`} className={buttonVariants({ variant: "outline", size: "sm" })}>
+              <BarChart3 aria-hidden /> Resumo
+            </Link>
             {(status === "PUBLISHED" || status === "COMPLETED") && (
               <Link href={`/eventos/${event.slug}`} className={buttonVariants({ variant: "outline", size: "sm" })} target="_blank">
                 <ExternalLink aria-hidden /> Ver página

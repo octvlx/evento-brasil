@@ -217,12 +217,17 @@ e `organizer-team.spec.ts` (convites e papéis).
    ainda não têm tela (o serviço lista, mas não cria nem edita). Os avisos do
    cadastro usam `discountPerUnit`/`undercutHalfPrice` de
    `src/features/fees/discount.ts`, as mesmas regras do checkout.
-3. **Página do evento no painel** (`/organizador/eventos/[id]`) com resumo de
-   vendas do evento (`eventSalesSummary` já existe) e atalhos.
-4. **Relatórios:** filtros de período/evento, vendas por tipo de ingresso, ticket
-   médio, exportação CSV de vendas, carimbo de data do relatório. Quando a reserva
-   da cota de meia (L7c, depende de D5) existir, o CSV de meia-entrada deve passar
-   a mostrar a cota reservada.
+3. ~~**Página do evento no painel**~~ — feita: `/organizador/eventos/[id]` (resumo:
+   vendidos/capacidade, check-ins, a receber e meia-entrada; estoque por tipo; vendas
+   do evento) com atalhos para gestão, página pública, participantes e check-in. O
+   título na lista de eventos e o botão "Resumo" da gestão levam a ela.
+4. ~~**Relatórios**~~ — feitos em `/organizador/vendas`: filtro de período (data do
+   pagamento, horário de São Paulo; atalhos 7/30 dias, mês, tudo) e de evento; totais,
+   ticket médio (por pedido) e preço médio por ingresso; vendas por tipo de ingresso e
+   por evento; CSV de vendas (`/api/organizador/vendas`, sem dados pessoais, auditado
+   como `sales_report.exported`) e carimbo "gerado em". Serviço `salesReport` /
+   `listSalesOrders` em `reports.ts`; "vendido" = pedido que chegou a ser pago, inclusive
+   o reembolsado depois (que aparece à parte). Testes em `zy-sales-report.test.ts`.
 5. **Eventos:** ~~duplicar evento, despublicar~~ — feitos (`duplicateEvent`,
    `unpublishEvent` em `events.ts`; testes em `zx-event-duplicate-unpublish.test.ts`).
    Duplicar pede a nova data de início e desloca todas as datas (evento, vendas e

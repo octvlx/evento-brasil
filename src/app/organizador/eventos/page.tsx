@@ -69,7 +69,13 @@ async function Content() {
                 return (
                   <tr key={e.id} className="border-t border-border">
                     <td className="p-3">
-                      <p className="font-semibold">{e.title}</p>
+                      {resumeStep ? (
+                        <p className="font-semibold">{e.title}</p>
+                      ) : (
+                        <Link href={`/organizador/eventos/${e.id}`} className="font-semibold hover:underline">
+                          {e.title}
+                        </Link>
+                      )}
                       <p className="text-xs text-muted-foreground">{e.city ? `${e.city.name} – ${e.city.state}` : "Online"}</p>
                     </td>
                     <td className="p-3">{resumeStep && !p?.completed.includes(2) ? <span className="text-muted-foreground">A definir</span> : formatEventDateTime(e.startsAt, e.timezone)}</td>
