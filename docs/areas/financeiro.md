@@ -275,6 +275,11 @@ Serviço `@/server/services/cancellation-requests`:
   `RESTORED`): `REFUND_RESTORED` avisa que nada foi devolvido e que os ingressos
   voltaram a valer, sem a observação interna do admin. `ALREADY_REFUNDED` não gera
   esse aviso (sai o `REFUND_CONFIRMATION` normal).
+- Reembolso parado (`recordRefundFailure` com `awaitingDecision`: tentativas
+  automáticas esgotadas ou `OVER_REFUND_BLOCKED`): `REFUND_DELAYED` avisa que
+  nada foi devolvido, que a equipe vai resolver e que os ingressos seguem
+  cancelados, sem o motivo técnico. Um por reembolso (`refund-delayed:<id>`): nova
+  falha após `adminRetryRefund` não repete. Falhas intermediárias não avisam.
   Testes: `tests/integration/zw-cancellation-emails.test.ts`.
 
 Server Actions em `@/features/orders/cancellation-actions`:

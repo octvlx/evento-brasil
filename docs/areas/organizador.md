@@ -228,8 +228,15 @@ e `organizer-team.spec.ts` (convites e papéis).
    como `sales_report.exported`) e carimbo "gerado em". Serviço `salesReport` /
    `listSalesOrders` em `reports.ts`; "vendido" = pedido que chegou a ser pago, inclusive
    o reembolsado depois (que aparece à parte). Testes em `zy-sales-report.test.ts`.
-5. **Eventos:** duplicar evento, despublicar, galeria de imagens (`EventImage`
-   existe mas não é usado), busca/filtro na lista, paginação.
+5. **Eventos:** ~~duplicar evento, despublicar~~ — feitos (`duplicateEvent`,
+   `unpublishEvent` em `events.ts`; testes em `zx-event-duplicate-unpublish.test.ts`).
+   Duplicar pede a nova data de início e desloca todas as datas (evento, vendas e
+   janelas dos tipos) pelo mesmo intervalo; copia dados, local e tipos com contadores
+   zerados; não copia cupons, links, equipe, regras de comissão nem o regime de
+   meia-entrada. Despublicar volta PUBLISHED/PENDING_REVIEW a rascunho, recusado com
+   ingresso válido/usado ou pedido aguardando pagamento (aí é cancelar), sob a mesma
+   trava do evento que `createOrder`. Falta: galeria de imagens (`EventImage` existe
+   mas não é usado), busca/filtro na lista, paginação.
 6. ~~Avisar compradores quando data/local de evento com vendas mudar~~ — feito (R8).
    Falta: reenvio manual do aviso e outbox durável (T7).
 7. **Organização:** logo e capa (ver dependências), links sociais adicionais.
