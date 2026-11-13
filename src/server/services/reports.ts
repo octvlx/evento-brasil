@@ -1,8 +1,10 @@
 // Relatórios calculados a partir do banco (pedidos, ingressos e razão).
 import "server-only";
-import type { LedgerAccount, Prisma } from "@/generated/prisma/client";
+import { Prisma, type LedgerAccount } from "@/generated/prisma/client";
 import type { Db } from "../db";
 import { formatDateTimeShort } from "@/lib/datetime";
+import type { SalesPeriod } from "@/features/reports/period";
+import { notFound } from "../errors";
 import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { assertEventPermission, assertOrgPermission, assertPlatformAdmin, roleHas, type Actor } from "../auth/permissions";
 import { computeHalfPriceState, formatReleaseAt } from "@/features/half-price/quota";
@@ -665,4 +667,191 @@ export async function couponUsage(db: Db, actor: Actor, organizationId: string) 
       netTicketCents: g?._sum.subtotalCents ?? 0,
     };
   });
+}
+
+// ───────────────────────────── Relatório de vendas por período ─────────────────────────────
+//
+// "Vendido" = pedido que chegou a ser pago (`paidAt` no período), inclusive os que
+// depois foram reembolsados ou contestados: assim o número de um período fechado não
+// muda quando alguém pede reembolso depois. Reembolsos aparecem à parte.
+// Valores de ingresso são líquidos de desconto (`unitPriceCents`), sem taxa de serviço.
+
+const SOLD_STATUSES = Prisma.sql`('PAID', 'REFUND_PENDING', 'REFUNDED', 'DISPUTED')`;
+const REFUND_STATUSES = Prisma.sql`('REFUND_PENDING', 'REFUNDED')`;
+
+export interface SalesFilters {
+  eventId?: string | null;
+  period: Pick<SalesPeriod, "from" | "to">;
+}
+
+function salesWhere(organizationId: string, f: SalesFilters) {
+  return Prisma.sql`o."organizationId" = ${organizationId}
+    AND o.status::text IN ${SOLD_STATUSES}
+    AND o."paidAt" IS NOT NULL
+    ${f.period.from ? Prisma.sql`AND o."paidAt" >= ${f.period.from}` : Prisma.empty}
+    ${f.period.to ? Prisma.sql`AND o."paidAt" < ${f.period.to}` : Prisma.empty}
+    ${f.eventId ? Prisma.sql`AND o."eventId" = ${f.eventId}` : Prisma.empty}`;
+}
+
+async function assertEventInOrg(db: Db, organizationId: string, eventId: string | null | undefined) {
+  if (!eventId) return;
+  const ev = await db.event.findFirst({ where: { id: eventId, organizationId }, select: { id: true } });
+  if (!ev) throw notFound("Evento não encontrado.");
+}
+
+const num = (v: bigint | number | null | undefined) => Number(v ?? 0);
+
+/** Totais, vendas por tipo de ingresso e por evento, no período e (opcional) num evento. */
+export async function salesReport(db: Db, actor: Actor, organizationId: string, f: SalesFilters, now = new Date()) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  await assertEventInOrg(db, organizationId, f.eventId);
+  const where = salesWhere(organizationId, f);
+  const [[totals], [items], byType, byEvent] = await Promise.all([
+    db.$queryRaw<{ orders: number; gross: bigint | null; ticket_net: bigint | null; discount: bigint | null; service_fee: bigint | null; refunded_orders: number; refunded: bigint | null }[]>`
+      SELECT COUNT(*)::int AS orders, SUM(o."totalCents")::bigint AS gross, SUM(o."subtotalCents")::bigint AS ticket_net,
+             SUM(o."discountCents")::bigint AS discount, SUM(o."serviceFeeCents")::bigint AS service_fee,
+             (COUNT(*) FILTER (WHERE o.status::text IN ${REFUND_STATUSES}))::int AS refunded_orders,
+             (SUM(o."totalCents") FILTER (WHERE o.status::text IN ${REFUND_STATUSES}))::bigint AS refunded
+      FROM "Order" o WHERE ${where}`,
+    db.$queryRaw<{ tickets: bigint | null }[]>`
+      SELECT SUM(oi.quantity)::bigint AS tickets FROM "OrderItem" oi JOIN "Order" o ON o.id = oi."orderId" WHERE ${where}`,
+    db.$queryRaw<{ ticket_type_id: string; name: string; kind: string; event_id: string; event_title: string; price_cents: number; tickets: bigint; net: bigint; discount: bigint; refunded_tickets: bigint }[]>`
+      SELECT oi."ticketTypeId" AS ticket_type_id, tt.name, tt.kind::text AS kind, e.id AS event_id, e.title AS event_title,
+             tt."priceCents" AS price_cents,
+             SUM(oi.quantity)::bigint AS tickets,
+             SUM(oi."unitPriceCents" * oi.quantity)::bigint AS net,
+             SUM(oi."discountPerUnitCents" * oi.quantity)::bigint AS discount,
+             COALESCE(SUM(oi.quantity) FILTER (WHERE o.status::text IN ${REFUND_STATUSES}), 0)::bigint AS refunded_tickets
+      FROM "OrderItem" oi
+      JOIN "Order" o ON o.id = oi."orderId"
+      JOIN "TicketType" tt ON tt.id = oi."ticketTypeId"
+      JOIN "Event" e ON e.id = o."eventId"
+      WHERE ${where}
+      GROUP BY oi."ticketTypeId", tt.name, tt.kind, tt."sortOrder", tt."priceCents", e.id, e.title, e."startsAt"
+      ORDER BY e."startsAt" DESC, tt."sortOrder" ASC`,
+    db.$queryRaw<{ event_id: string; title: string; starts_at: Date; timezone: string; orders: number; gross: bigint; ticket_net: bigint }[]>`
+      SELECT e.id AS event_id, e.title, e."startsAt" AS starts_at, e.timezone,
+             COUNT(*)::int AS orders, SUM(o."totalCents")::bigint AS gross, SUM(o."subtotalCents")::bigint AS ticket_net
+      FROM "Order" o JOIN "Event" e ON e.id = o."eventId"
+      WHERE ${where}
+      GROUP BY e.id, e.title, e."startsAt", e.timezone
+      ORDER BY e."startsAt" DESC`,
+  ]);
+  const orders = totals?.orders ?? 0;
+  const tickets = num(items?.tickets);
+  const ticketNetCents = num(totals?.ticket_net);
+  const grossCents = num(totals?.gross);
+  const ticketsByEvent = new Map<string, number>();
+  for (const t of byType) ticketsByEvent.set(t.event_id, (ticketsByEvent.get(t.event_id) ?? 0) + num(t.tickets));
+  return {
+    generatedAt: now,
+    totals: {
+      orders,
+      tickets,
+      grossCents,
+      ticketNetCents,
+      discountCents: num(totals?.discount),
+      serviceFeeCents: num(totals?.service_fee),
+      refundedOrders: totals?.refunded_orders ?? 0,
+      refundedCents: num(totals?.refunded),
+      /** Ticket médio: valor médio por pedido (total pago, com taxa de serviço). */
+      averageOrderCents: orders ? Math.round(grossCents / orders) : 0,
+      /** Preço médio efetivo por ingresso (líquido de desconto, sem taxa). */
+      averageTicketCents: tickets ? Math.round(ticketNetCents / tickets) : 0,
+    },
+    byTicketType: byType.map((t) => ({
+      ticketTypeId: t.ticket_type_id,
+      name: t.name,
+      kind: t.kind,
+      eventId: t.event_id,
+      eventTitle: t.event_title,
+      listPriceCents: t.price_cents,
+      tickets: num(t.tickets),
+      netCents: num(t.net),
+      discountCents: num(t.discount),
+      refundedTickets: num(t.refunded_tickets),
+    })),
+    byEvent: byEvent.map((e) => ({
+      eventId: e.event_id,
+      title: e.title,
+      startsAt: e.starts_at,
+      timezone: e.timezone,
+      orders: e.orders,
+      tickets: ticketsByEvent.get(e.event_id) ?? 0,
+      grossCents: num(e.gross),
+      ticketNetCents: num(e.ticket_net),
+    })),
+  };
+}
+
+export const SALES_CSV_LIMIT = 50_000;
+
+/**
+ * Pedidos vendidos no período (mesmo critério de `salesReport`), para o CSV de vendas.
+ * Sem dados pessoais do comprador: o papel FINANCE vê vendas, não participantes.
+ */
+export async function listSalesOrders(db: Db, actor: Actor, organizationId: string, f: SalesFilters) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  await assertEventInOrg(db, organizationId, f.eventId);
+  return db.order.findMany({
+    where: {
+      organizationId,
+      status: { in: ["PAID", "REFUND_PENDING", "REFUNDED", "DISPUTED"] },
+      paidAt: { not: null, ...(f.period.from ? { gte: f.period.from } : {}), ...(f.period.to ? { lt: f.period.to } : {}) },
+      ...(f.eventId ? { eventId: f.eventId } : {}),
+    },
+    select: {
+      publicCode: true,
+      paidAt: true,
+      status: true,
+      subtotalCents: true,
+      discountCents: true,
+      serviceFeeCents: true,
+      totalCents: true,
+      commissionCents: true,
+      utmSource: true,
+      isSimulated: true,
+      event: { select: { title: true } },
+      couponCode: true,
+      trackingLink: { select: { name: true } },
+      items: { select: { ticketTypeName: true, quantity: true } },
+      payments: { where: { paidAt: { not: null } }, select: { method: true } },
+    },
+    orderBy: { paidAt: "asc" },
+    take: SALES_CSV_LIMIT,
+  });
+}
+
+export function salesOrdersToCsv(
+  rows: Awaited<ReturnType<typeof listSalesOrders>>,
+  meta: { organization: string; period: string; event: string | null; generatedAt: Date; statusLabel: (s: string) => string },
+): string {
+  return toCsv(
+    [
+      ["Relatório de vendas", meta.organization],
+      ["Período (data do pagamento)", meta.period],
+      ["Evento", meta.event ?? "Todos"],
+      ["Gerado em", formatDateTimeShort(meta.generatedAt)],
+      [],
+      ["Pedido", "Pago em", "Evento", "Situação", "Ingressos", "Tipos", "Ingressos líquido (R$)", "Desconto (R$)", "Taxa de serviço (R$)", "Total (R$)", "Comissão (R$)", "Pagamento", "Cupom", "Origem", "Simulado"],
+      ...rows.map((o) => [
+        o.publicCode,
+        o.paidAt ? formatDateTimeShort(o.paidAt) : "",
+        o.event.title,
+        meta.statusLabel(o.status),
+        o.items.reduce((s, i) => s + i.quantity, 0),
+        o.items.map((i) => `${i.quantity}× ${i.ticketTypeName}`).join(" | "),
+        centsBR(o.subtotalCents),
+        centsBR(o.discountCents),
+        centsBR(o.serviceFeeCents),
+        centsBR(o.totalCents),
+        centsBR(o.commissionCents),
+        [...new Set(o.payments.map((p) => p.method))].join(", "),
+        o.couponCode ?? "",
+        o.trackingLink?.name ?? o.utmSource ?? "",
+        o.isSimulated ? "sim" : "",
+      ]),
+    ],
+    ";",
+  );
 }
