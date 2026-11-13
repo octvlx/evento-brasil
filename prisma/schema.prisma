@@ -208,6 +208,9 @@ model Organization {
   cityId                   String?
   websiteUrl               String?
   instagramHandle          String?
+  // Perfil público: URLs do armazenamento de imagens (só por upload validado).
+  logoUrl                  String?
+  coverUrl                 String?
   status                   OrganizationStatus   @default(DRAFT)
   // Quando verdadeiro, eventos enviados são publicados sem moderação manual.
   autoPublishEvents        Boolean              @default(false)

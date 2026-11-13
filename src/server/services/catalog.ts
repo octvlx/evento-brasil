@@ -419,7 +419,7 @@ export async function organizerIdentification(db: Db, organizationId: string): P
 export async function getPublicOrganizer(db: Db, slug: string, now = new Date()) {
   const org = await db.organization.findFirst({
     where: { slug, status: "APPROVED" },
-    select: { id: true, name: true, slug: true, description: true, websiteUrl: true, instagramHandle: true, city: true, createdAt: true },
+    select: { id: true, name: true, slug: true, description: true, websiteUrl: true, instagramHandle: true, logoUrl: true, coverUrl: true, city: true, createdAt: true },
   });
   if (!org) return null;
   const rows = await db.event.findMany({ where: { ...publicEventWhere(now), organizationId: org.id }, select: cardSelect, orderBy: { startsAt: "asc" } });

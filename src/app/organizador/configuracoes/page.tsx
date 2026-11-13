@@ -5,6 +5,7 @@ import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
 import {
   ConnectPaymentButton,
+  OrgImageField,
   ProfileSettingsForm,
 } from "@/features/organizer/settings-forms";
 import { db } from "@/server/db";
@@ -112,6 +113,10 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
         <Card className="p-6">
           <h2 className="mb-4 font-display text-lg font-bold">Perfil público</h2>
           <ProfileSettingsForm description={org.description ?? ""} websiteUrl={org.websiteUrl ?? ""} instagramHandle={org.instagramHandle ?? ""} />
+          <div className="mt-6 grid gap-6 border-t border-border pt-6 sm:grid-cols-[auto_1fr]">
+            <OrgImageField kind="logo" url={org.logoUrl} />
+            <OrgImageField kind="cover" url={org.coverUrl} />
+          </div>
         </Card>
       </div>
     </>

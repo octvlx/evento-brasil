@@ -239,7 +239,12 @@ e `organizer-team.spec.ts` (convites e papéis).
    mas não é usado), busca/filtro na lista, paginação.
 6. ~~Avisar compradores quando data/local de evento com vendas mudar~~ — feito (R8).
    Falta: reenvio manual do aviso e outbox durável (T7).
-7. **Organização:** logo e capa (ver dependências), links sociais adicionais.
+7. **Organização:** ~~logo e capa~~ — feitos: `Organization.logoUrl`/`coverUrl`
+   (migração `20261113120000_organization_logo_cover`, só aditiva), envio em
+   Configurações → Perfil público (`setOrganizationImage`, `org:manage`, tipo pelo
+   conteúdo, até 5 MB, logo ≥ 200×200 e capa ≥ 1200×300; o banco só recebe URLs do
+   armazenamento; auditoria `organization.logo_updated/_removed` e `cover_…`). Falta:
+   links sociais adicionais.
 
 8. **Assistente de evento (complementos):** preencher endereço pelo CEP quando
    houver integração; galeria de imagens (`EventImage`); usar o assistente
@@ -249,9 +254,9 @@ e `organizer-team.spec.ts` (convites e papéis).
 
 | Agente | O que precisamos |
 | --- | --- |
-| `banco-de-dados` | **Assistente de evento (proposta):** `Event.wizardCompletedSteps Int[]` e `Event.wizardLastStep Int?` (hoje no `AuditLog`, ver `event-wizard-progress.ts`) e permitir `startsAt`/`endsAt`/`salesStartAt`/`salesEndAt`/`capacity` nulos enquanto `status = DRAFT` (CHECK), para dispensar os valores provisórios; campos que o briefing pediu e ainda não existem: subcategoria, modalidade híbrida, número/complemento do endereço separados, plataforma da transmissão, evento privado/fora da busca, aprovação de participantes, regras de transferência. `Organization.logoUrl` e `coverUrl`; (opcional) `OrganizationInvitation.declinedAt` para separar recusa de revogação sem consultar a auditoria (hoje ambos usam `revokedAt`), e índice parcial `(organizationId) WHERE acceptedAt IS NULL AND revokedAt IS NULL` se a lista de pendentes crescer; papel "Analista" só se o negócio quiser um papel diferente de `FINANCE`. |
+| `banco-de-dados` | **Assistente de evento (proposta):** `Event.wizardCompletedSteps Int[]` e `Event.wizardLastStep Int?` (hoje no `AuditLog`, ver `event-wizard-progress.ts`) e permitir `startsAt`/`endsAt`/`salesStartAt`/`salesEndAt`/`capacity` nulos enquanto `status = DRAFT` (CHECK), para dispensar os valores provisórios; campos que o briefing pediu e ainda não existem: subcategoria, modalidade híbrida, número/complemento do endereço separados, plataforma da transmissão, evento privado/fora da busca, aprovação de participantes, regras de transferência. ~~`Organization.logoUrl` e `coverUrl`~~ (feito); (opcional) `OrganizationInvitation.declinedAt` para separar recusa de revogação sem consultar a auditoria (hoje ambos usam `revokedAt`), e índice parcial `(organizationId) WHERE acceptedAt IS NULL AND revokedAt IS NULL` se a lista de pendentes crescer; papel "Analista" só se o negócio quiser um papel diferente de `FINANCE`. |
 | `pagamentos-financeiro` | Relatórios usam o razão (`FinancialLedgerEntry`) e `Order` — qualquer mudança de contas/tipos do razão precisa avisar esta área. Venda por tipo de ingresso e ticket médio dependem de `OrderItem`. Liquidação real (`OrganizerSettlement`) segue desabilitada até o provedor real. |
-| `paginas-publicas` | `PanelShell` (`src/components/site/panel-shell.tsx`): abaixo de `lg` a grade não define colunas e a coluna implícita cresce até a largura da navegação (~680 px), causando rolagem horizontal em todas as páginas do painel no celular — `grid-cols-1`/`grid-cols-[minmax(0,1fr)]` resolve. Perfil público do organizador (`/organizadores/[slug]`) deve exibir logo/capa quando existirem e o selo "verificado" conforme a verificação aprovada; dados de evento publicados vêm de `events.ts`/`catalog.ts`. |
+| `paginas-publicas` | `PanelShell` (`src/components/site/panel-shell.tsx`): abaixo de `lg` a grade não define colunas e a coluna implícita cresce até a largura da navegação (~680 px), causando rolagem horizontal em todas as páginas do painel no celular — `grid-cols-1`/`grid-cols-[minmax(0,1fr)]` resolve. Perfil público do organizador (`/organizadores/[slug]`) já exibe logo/capa (e usa a capa no compartilhamento); falta o selo "verificado" conforme a verificação aprovada; dados de evento publicados vêm de `events.ts`/`catalog.ts`. |
 | `check-in` | Atribuição de equipe a eventos é feita aqui (`assignStaffToEvent`); o leitor e o histórico são do check-in. |
 | `admin` | Aprovação de organizações e moderação de eventos (`reviewOrganization`, `moderateEvent`, `setAutoPublish`) — o painel mostra o resultado como pendências. |
 | Equipe (infra de e-mail) | Convites usam o adaptador de e-mail; em produção depende do provedor configurado (`EMAIL_PROVIDER`). |
