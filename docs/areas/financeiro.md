@@ -266,6 +266,16 @@ Serviço `@/server/services/cancellation-requests`:
   junto com `requestCustomerRefund`, nunca gera dois reembolsos (teste de corrida).
 - Auditoria: `cancellation.requested`, `.withdrawn`, `.approved`, `.rejected`
   (metadados com protocolo, pedido, resultado e reembolso).
+- E-mails ao `buyerEmail` do pedido, gravados na fila na mesma transação
+  (`src/server/email/events.ts`): `CANCELLATION_REQUEST_RECEIVED` (protocolo e
+  prazo; o motivo do comprador não volta), `CANCELLATION_APPROVED` (texto conforme
+  o `outcome`) e `CANCELLATION_REJECTED` (com a `note` do admin). Desistência não
+  gera e-mail. A decisão que perde a corrida ou é recusada não deixa e-mail na fila.
+- Restauração de reembolso com falha (`adminRestoreAfterFailedRefund`, resultado
+  `RESTORED`): `REFUND_RESTORED` avisa que nada foi devolvido e que os ingressos
+  voltaram a valer, sem a observação interna do admin. `ALREADY_REFUNDED` não gera
+  esse aviso (sai o `REFUND_CONFIRMATION` normal).
+  Testes: `tests/integration/zw-cancellation-emails.test.ts`.
 
 Server Actions em `@/features/orders/cancellation-actions`:
 `requestCancellationAction(orderId, reason)` → `{ protocol, respondBy }`;

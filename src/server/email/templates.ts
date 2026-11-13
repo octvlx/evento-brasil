@@ -65,7 +65,13 @@ export function authEmail(
 }
 export function transactionalEmail(
   kind:
-    "purchase" | "tickets" | "cancelled" | "refund" | "invitation" | "event",
+    | "purchase"
+    | "tickets"
+    | "cancelled"
+    | "refund"
+    | "cancellation"
+    | "invitation"
+    | "event",
   title: string,
   lines: string[],
   url: string,
@@ -75,6 +81,7 @@ export function transactionalEmail(
     tickets: `Seus ingressos chegaram | ${BRAND.name}`,
     cancelled: `Atualização importante sobre seu evento | ${BRAND.name}`,
     refund: `Atualização do seu reembolso | ${BRAND.name}`,
+    cancellation: `Seu pedido de cancelamento | ${BRAND.name}`,
     invitation: `Você recebeu um convite | ${BRAND.name}`,
     event: `Atualização importante sobre seu evento | ${BRAND.name}`,
   };

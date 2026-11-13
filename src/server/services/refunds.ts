@@ -1,6 +1,6 @@
 // Reembolsos integrais (MVP). Reembolso parcial não é suportado.
 import "server-only";
-import { enqueueRefundEmailTx } from "../email/events";
+import { enqueueRefundEmailTx, enqueueRefundRestoredEmailTx } from "../email/events";
 import type { RefundReason, RefundStatus } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
@@ -545,6 +545,7 @@ export async function adminRestoreAfterFailedRefund(
       entityId: refundId,
       metadata: { orderId: refund.orderId, note, restoredTickets: tickets.count },
     });
+    await enqueueRefundRestoredEmailTx(tx, refundId);
     return tickets.count;
   }, TX_OPTIONS);
   financeLog("info", "refund.tickets_restored", { orderId: refund.orderId, refundId }, { adminId: admin.id, restoredTickets });

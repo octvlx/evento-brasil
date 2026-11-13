@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { CreateOrderInput } from "@/features/schemas";
 import { db } from "@/server/db";
+import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { env, isProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { getCurrentUser, requireAdmin, requireUser } from "@/server/auth/current";
@@ -153,6 +154,10 @@ export async function adminRetryFailedRefundAction(refundId: string, note: strin
 export async function adminRestoreFailedRefundAction(refundId: string, note: string): Promise<ActionResult<{ outcome: RestoreOutcome; restoredTickets: number }>> {
   const admin = await requireAdmin();
   const result = await toActionResult(() => adminRestoreAfterFailedRefund(db, getPaymentAdapter(), admin, refundId, note));
-  if (result.ok) refresh();
+  if (result.ok) {
+    // Aviso "seus ingressos voltaram a valer"; o que falhar fica na fila para o cron.
+    if (process.env.NODE_ENV !== "test") void dispatchEmailOutbox(db, { limit: 5 }).catch(() => {});
+    refresh();
+  }
   return result;
 }
