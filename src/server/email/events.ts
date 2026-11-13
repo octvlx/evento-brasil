@@ -169,3 +169,34 @@ export async function enqueueRefundRestoredEmailTx(tx: Tx, refundId: string) {
     ),
   });
 }
+
+// Reembolso que parou de ser tentado sozinho (tentativas automáticas esgotadas ou
+// bloqueio) e aguarda a equipe: os ingressos já foram cancelados e o dinheiro ainda
+// não voltou. Um aviso por reembolso: nova falha após reprocessamento não repete.
+// O motivo técnico da falha não vai no e-mail.
+export async function enqueueRefundDelayedEmailTx(tx: Tx, refundId: string) {
+  const refund = await tx.refund.findUniqueOrThrow({
+    where: { id: refundId },
+    include: { order: { include: { event: { select: { title: true } } } } },
+  });
+  const o = refund.order;
+  if (refund.status !== "FAILED" || o.status !== "REFUND_PENDING") return;
+  await enqueueEmail(tx, {
+    dedupeKey: "refund-delayed:" + refund.id,
+    template: "REFUND_DELAYED",
+    recipient: o.buyerEmail,
+    message: transactionalEmail(
+      "refund",
+      "Seu reembolso está demorando",
+      [
+        o.event.title,
+        "Pedido " + o.publicCode,
+        "Valor: " + formatBRL(refund.amountCents),
+        "Não conseguimos concluir o estorno com o meio de pagamento, e nenhum valor foi devolvido ainda.",
+        "Nossa equipe já foi avisada e vai resolver; você não precisa fazer nada nem pedir de novo.",
+        "Os ingressos deste pedido continuam cancelados. Você receberá outro e-mail quando houver uma resposta.",
+      ],
+      env().APP_URL + "/pedido/" + o.id,
+    ),
+  });
+}

@@ -1,13 +1,14 @@
 // Avisos ao comprador que faltavam: protocolo e resposta do pedido de cancelamento
-// (R5) e ingressos que voltam a valer quando o admin desfaz um reembolso com falha.
+// (R5), reembolso parado aguardando a equipe e ingressos que voltam a valer quando o
+// admin desfaz um reembolso com falha.
 // Cada aviso é gravado na fila na mesma transação da mudança de estado: se a
 // mudança perde a corrida ou é recusada, nenhum e-mail fica na fila.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PaymentProviderAdapter, RefundResult } from "@/server/payments/types";
 import { decryptPII } from "@/server/crypto";
 import { createCancellationRequest, decideCancellationRequest, withdrawCancellationRequest } from "@/server/services/cancellation-requests";
-import { adminRestoreAfterFailedRefund, requestCustomerRefund } from "@/server/services/refunds";
-import { checkFinancialInvariants } from "@/server/services/reconciliation";
+import { adminRestoreAfterFailedRefund, adminRetryRefund, REFUND_RETRY_POLICY, requestCustomerRefund } from "@/server/services/refunds";
+import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
@@ -155,5 +156,57 @@ describe("reembolso com falha desfeito pelo admin", () => {
     expect(res.outcome).toBe("ALREADY_REFUNDED");
     expect(await outbox("REFUND_RESTORED")).toHaveLength(0);
     expect(await outbox("REFUND_CONFIRMATION")).toHaveLength(1);
+  });
+});
+
+describe("reembolso parado aguardando a equipe", () => {
+  const minutesFromNow = (m: number) => new Date(Date.now() + m * 60_000);
+  /** Falha no pedido e nas retentativas automáticas até esgotar o limite. */
+  async function exhaust(buyer: Parameters<typeof requestCustomerRefund>[2], orderId: string) {
+    const refund = await requestCustomerRefund(db, refusingAdapter, buyer, orderId);
+    // Falhas intermediárias não avisam: a próxima tentativa costuma resolver.
+    expect(await outbox("REFUND_DELAYED")).toHaveLength(0);
+    for (const m of [6, 40, 3 * 60]) await reconcilePayments(db, refusingAdapter, minutesFromNow(m));
+    const attempts = await db.auditLog.count({ where: { entityId: refund.id, action: "refund.attempt_failed" } });
+    expect(attempts).toBe(REFUND_RETRY_POLICY.maxAutomaticAttempts);
+    return refund;
+  }
+
+  it("avisa uma vez quando as tentativas automáticas acabam, sem o motivo técnico", async () => {
+    const { buyer, admin, order } = await paidOrder();
+    const refund = await exhaust(buyer, order.id);
+    const { job, msg } = await message("REFUND_DELAYED");
+    expect(job.recipient).toBe(order.buyerEmail.toLowerCase());
+    expect(msg.text).toContain(order.publicCode);
+    expect(msg.text).toContain("R$");
+    expect(msg.text).toContain("nenhum valor foi devolvido");
+    expect(msg.text).toContain("continuam cancelados");
+    expect(msg.text).not.toMatch(/PROVIDER_|recusou|tentativa/i);
+
+    // Admin reprocessa e falha de novo: não repete o aviso.
+    await adminRetryRefund(db, refusingAdapter, admin, refund.id, "tentar de novo");
+    expect(await outbox("REFUND_DELAYED")).toHaveLength(1);
+
+    // Reprocessado com sucesso: sai o e-mail do reembolso concluído.
+    expect((await adminRetryRefund(db, adapter, admin, refund.id, "provedor voltou")).status).toBe("SUCCEEDED");
+    expect(await outbox("REFUND_CONFIRMATION")).toHaveLength(1);
+    expect(await outbox("REFUND_DELAYED")).toHaveLength(1);
+  });
+
+  it("retentativa automática que dá certo não gera aviso de atraso", async () => {
+    const { buyer, order } = await paidOrder();
+    await requestCustomerRefund(db, refusingAdapter, buyer, order.id);
+    await reconcilePayments(db, adapter, minutesFromNow(6));
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("REFUNDED");
+    expect(await outbox("REFUND_DELAYED")).toHaveLength(0);
+    expect(await outbox("REFUND_CONFIRMATION")).toHaveLength(1);
+  });
+
+  it("parado e depois desfeito pelo admin: avisa o atraso e depois a restauração", async () => {
+    const { buyer, admin, order } = await paidOrder();
+    const refund = await exhaust(buyer, order.id);
+    await adminRestoreAfterFailedRefund(db, adapter, admin, refund.id, "comprador prefere ir");
+    expect(await outbox("REFUND_DELAYED")).toHaveLength(1);
+    expect(await outbox("REFUND_RESTORED")).toHaveLength(1);
   });
 });

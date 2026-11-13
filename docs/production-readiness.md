@@ -57,8 +57,7 @@ criação do primeiro administrador (`npm run admin:promote`): `docs/deploy-prod
 - ~~Notificar compradores por e-mail em cancelamentos/reembolsos~~ — feito:
   reembolso concluído, evento cancelado, protocolo e resposta do pedido de
   cancelamento e ingressos restaurados após reembolso com falha
-  (`src/server/email/events.ts`). Falta: aviso ao comprador quando o reembolso
-  falha e fica parado para o admin.
+  e reembolso parado aguardando a equipe (`src/server/email/events.ts`).
 - `notFound()` dentro de Suspense responde 200 com `noindex` (comportamento do
   streaming do Next.js); para 404 "duro" seria preciso validar o slug antes do stream.
 
