@@ -18,7 +18,7 @@ import { cancelEvent } from "@/server/services/cancellation";
 import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { recordAcceptance } from "@/server/services/terms";
-import { createEvent, deleteTicketType, submitEventForPublication, updateEvent, upsertTicketType } from "@/server/services/events";
+import { createEvent, deleteTicketType, duplicateEvent, submitEventForPublication, unpublishEvent, updateEvent, upsertTicketType } from "@/server/services/events";
 import { extendEventChangeWindow } from "@/server/services/event-changes";
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
@@ -191,6 +191,18 @@ export async function submitEventAction(eventId: string): Promise<ActionResult<{
   const res = await toActionResult(async () => ({ status: (await submitEventForPublication(db, user, eventId)).status }));
   if (res.ok) refresh();
   return res;
+}
+
+export async function unpublishEventAction(eventId: string): Promise<ActionResult<{ status: string }>> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => ({ status: (await unpublishEvent(db, user, eventId)).status }));
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function duplicateEventAction(eventId: string, startsAtLocal: string): Promise<ActionResult<{ id: string }>> {
+  const user = await requireUser("/organizador/eventos");
+  return toActionResult(async () => ({ id: (await duplicateEvent(db, user, eventId, String(startsAtLocal ?? ""))).id }));
 }
 
 export async function cancelEventAction(eventId: string, reason: string): Promise<ActionResult<{ refunds: number }>> {

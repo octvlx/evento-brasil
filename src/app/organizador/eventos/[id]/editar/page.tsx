@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
-import { ExternalLink, QrCode, Users } from "lucide-react";
+import { BarChart3, ExternalLink, QrCode, Users } from "lucide-react";
 import { Alert, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
@@ -10,6 +10,7 @@ import { EventForm } from "@/features/organizer/event-form";
 import { EventChangesHistory } from "@/features/organizer/event-changes-history";
 import { refundRequestsText, type ChangeSnapshotJson } from "@/features/organizer/event-change-rules";
 import { EventStatusActions } from "@/features/organizer/event-status-actions";
+import { DuplicateEvent } from "@/features/organizer/duplicate-event";
 import { TicketTypesManager } from "@/features/organizer/ticket-types-manager";
 import { CouponsManager } from "@/features/organizer/coupons-manager";
 import { TrackingLinksManager } from "@/features/organizer/tracking-links-manager";
@@ -71,6 +72,9 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
         subtitle={undefined}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link href={`/organizador/eventos/${event.id}`} className={buttonVariants({ variant: "outline", size: "sm" })}>
+              <BarChart3 aria-hidden /> Resumo
+            </Link>
             {(status === "PUBLISHED" || status === "COMPLETED") && (
               <Link href={`/eventos/${event.slug}`} className={buttonVariants({ variant: "outline", size: "sm" })} target="_blank">
                 <ExternalLink aria-hidden /> Ver página
@@ -107,6 +111,11 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
       <Card className="mb-6 p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Publicação</h2>
         <EventStatusActions eventId={event.id} status={status} canPublish={can("event:publish")} canCancel={can("event:cancel")} paidOrders={paidOrders} />
+        {canWrite && (
+          <div className="mt-4 border-t border-border pt-4">
+            <DuplicateEvent eventId={event.id} />
+          </div>
+        )}
       </Card>
 
       <Card className="mb-6 p-6">
