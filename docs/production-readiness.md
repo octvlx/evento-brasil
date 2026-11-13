@@ -33,7 +33,7 @@ criação do primeiro administrador (`npm run admin:promote`): `docs/deploy-prod
 - [x] Upload valida assinatura do arquivo (JPG/PNG/WebP) e tamanho.
 - [x] CSV com neutralização de fórmulas; exportações auditadas.
 - [x] Contas demo bloqueadas em produção.
-- [ ] Verificação de e-mail no cadastro e recuperação de senha.
+- [x] Verificação de e-mail no cadastro e recuperação de senha (#95, #96).
 - [x] 2FA (TOTP) obrigatório para administradores e donos de organização em produção (`MFA_REQUIRED`), com códigos de recuperação; ver `docs/senhas.md` § "Verificação em duas etapas". Quem perde celular e códigos: um admin redefine em `/admin/usuarios`, com o próprio código e um motivo.
 - [x] Limitação de taxa distribuída: contadores no Postgres (`RateLimitBucket`, `src/server/rate-limit.ts`), valem entre instâncias e reinícios; janelas vencidas saem no expurgo programado.
 - [x] Cabeçalhos de segurança (CSP sem nonce, HSTS fora do dev, `frame-ancestors`/`X-Frame-Options`, `Permissions-Policy`) em `next.config.ts`. CSP com nonce exigiria renderização dinâmica e é incompatível com o pré-render parcial.
@@ -54,7 +54,11 @@ criação do primeiro administrador (`npm run admin:promote`): `docs/deploy-prod
 - Seletores de cidade carregam todas as cidades — trocar por autocompletar
   antes de importar a base completa do IBGE.
 - Push/WhatsApp transacional; reenvio de ingressos por e-mail a pedido.
-- Notificar compradores por e-mail em cancelamentos/reembolsos.
+- ~~Notificar compradores por e-mail em cancelamentos/reembolsos~~ — feito:
+  reembolso concluído, evento cancelado, protocolo e resposta do pedido de
+  cancelamento e ingressos restaurados após reembolso com falha
+  (`src/server/email/events.ts`). Falta: aviso ao comprador quando o reembolso
+  falha e fica parado para o admin.
 - `notFound()` dentro de Suspense responde 200 com `noindex` (comportamento do
   streaming do Next.js); para 404 "duro" seria preciso validar o slug antes do stream.
 

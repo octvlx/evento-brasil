@@ -10,6 +10,7 @@ import type { CancellationRequestStatus } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
+import { enqueueCancellationDecisionTx, enqueueCancellationRequestReceivedTx } from "../email/events";
 import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
 import { randomCode } from "../crypto";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
@@ -78,6 +79,7 @@ export async function createCancellationRequest(db: Db, actor: Actor, orderId: s
           entityId: request.id,
           metadata: { protocol: request.protocol, orderId, autoEligibleAtRequest, respondBy: respondBy.toISOString() },
         });
+        await enqueueCancellationRequestReceivedTx(tx, request.id);
         return request;
       }, TX_OPTIONS);
     } catch (err) {
@@ -203,6 +205,7 @@ export async function decideCancellationRequest(
       entityId: requestId,
       metadata: { protocol: request.protocol, orderId: ref.orderId, outcome, refundId, note: note || null },
     });
+    await enqueueCancellationDecisionTx(tx, requestId, outcome);
     return { request, outcome, refundId };
   }, TX_OPTIONS);
 
