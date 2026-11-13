@@ -1,6 +1,6 @@
 // Reembolsos integrais (MVP). Reembolso parcial não é suportado.
 import "server-only";
-import { enqueueRefundEmailTx, enqueueRefundRestoredEmailTx } from "../email/events";
+import { enqueueRefundDelayedEmailTx, enqueueRefundEmailTx, enqueueRefundRestoredEmailTx } from "../email/events";
 import type { RefundReason, RefundStatus } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
@@ -318,6 +318,8 @@ async function recordRefundFailure(db: Db, refund: { id: string; orderId: string
     const base = { organizationId: order.organizationId, entityType: "Refund", entityId: refund.id };
     await audit(tx, { ...base, action: isAttempt ? ATTEMPT_FAILED : "refund.blocked", metadata: { orderId: refund.orderId, kind, attempt, message } });
     if (isAttempt && attempt === max) await audit(tx, { ...base, action: "refund.retry_exhausted", metadata: { orderId: refund.orderId, attempts: attempt } });
+    // Parou de ser tentado sozinho: avisa o comprador (uma vez por reembolso).
+    if (awaitingDecision) await enqueueRefundDelayedEmailTx(tx, refund.id);
     return { attempt, awaitingDecision };
   }, TX_OPTIONS);
   if (!failure) return;
