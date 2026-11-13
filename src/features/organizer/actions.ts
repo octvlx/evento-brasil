@@ -34,6 +34,7 @@ import {
   removeMember,
   resendInvitation,
   resubmitOrganizerApplication,
+  setOrganizationImage,
   revokeInvitation,
   submitOrganizerApplication,
   updateOrganizationProfile,
@@ -204,6 +205,20 @@ export async function connectPaymentAction(): Promise<ActionResult> {
   const res = await toActionResult(async () => {
     await connectPaymentAccount(db, user, await activeOrgId(user.id), getPaymentAdapter());
     return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function uploadOrgImageAction(formData: FormData): Promise<ActionResult<{ url: string | null }>> {
+  const user = await requireUser("/organizador/configuracoes");
+  const res = await toActionResult(async () => {
+    const kind = formData.get("kind");
+    if (kind !== "logo" && kind !== "cover") throw new AppError("VALIDATION", "Imagem inválida.");
+    const file = formData.get("file");
+    if (file !== null && !(file instanceof File)) throw new AppError("VALIDATION", "Selecione uma imagem.");
+    const org = await setOrganizationImage(db, user, await activeOrgId(user.id), kind, file && file.size > 0 ? file : null);
+    return { url: kind === "logo" ? org.logoUrl : org.coverUrl };
   });
   if (res.ok) refresh();
   return res;

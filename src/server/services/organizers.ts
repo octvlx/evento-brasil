@@ -11,6 +11,7 @@ import { audit } from "../audit";
 import { assertActive, assertOrgPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { encryptPII, hashToken, randomToken } from "../crypto";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
+import { imageDimensions, MAX_IMAGE_BYTES, storeEventImage } from "../storage";
 
 async function uniqueOrgSlug(client: Db | Tx, name: string): Promise<string> {
   const base = slugify(name) || "organizador";
@@ -229,6 +230,47 @@ export async function updateOrganizationProfile(
 ) {
   await assertOrgPermission(db, actor, organizationId, "org:manage");
   return db.organization.update({ where: { id: organizationId }, data });
+}
+
+// ── Logo e capa do perfil público ──
+
+export type OrganizationImageKind = "logo" | "cover";
+
+/** Tamanho mínimo, em pixels: logo quadrado-ish legível e capa larga o bastante para o topo do perfil. */
+export const ORG_IMAGE_RULES: Record<OrganizationImageKind, { minWidth: number; minHeight: number; label: string }> = {
+  logo: { minWidth: 200, minHeight: 200, label: "O logo" },
+  cover: { minWidth: 1200, minHeight: 300, label: "A capa" },
+};
+
+/**
+ * Troca (arquivo) ou remove (null) o logo ou a capa. O upload acontece aqui, com a
+ * validação do armazenamento (tipo pelo conteúdo, até 5 MB) e tamanho mínimo, então
+ * o banco só recebe URLs geradas pelo próprio armazenamento. Fica na pasta de imagens
+ * da organização (a mesma das capas de evento).
+ */
+export async function setOrganizationImage(db: Db, actor: Actor, organizationId: string, kind: OrganizationImageKind, file: File | null) {
+  await assertOrgPermission(db, actor, organizationId, "org:manage");
+  const field = kind === "logo" ? "logoUrl" : "coverUrl";
+  let url: string | null = null;
+  if (file) {
+    const rule = ORG_IMAGE_RULES[kind];
+    if (file.size > MAX_IMAGE_BYTES) throw new AppError("VALIDATION", "Imagem muito grande (máximo 5 MB).");
+    const dims = imageDimensions(new Uint8Array(await file.arrayBuffer()));
+    if (!dims) throw new AppError("VALIDATION", "Envie uma imagem JPG, PNG ou WebP válida.");
+    if (dims.width < rule.minWidth || dims.height < rule.minHeight)
+      throw new AppError("VALIDATION", `${rule.label} precisa ter pelo menos ${rule.minWidth} × ${rule.minHeight} pixels (a imagem enviada tem ${dims.width} × ${dims.height}).`);
+    url = (await storeEventImage(organizationId, file)).url;
+  }
+  const org = await db.organization.update({ where: { id: organizationId }, data: { [field]: url }, select: { id: true, logoUrl: true, coverUrl: true } });
+  await audit(db, {
+    actorUserId: actor.id,
+    organizationId,
+    action: `organization.${kind}_${url ? "updated" : "removed"}`,
+    entityType: "Organization",
+    entityId: organizationId,
+    metadata: { url },
+  });
+  return org;
 }
 
 // ── Equipe ──

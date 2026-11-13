@@ -13,7 +13,7 @@ e implementação dos estados de pagamento/reembolso no checkout e no pedido
 | Busca: texto, cidade, categoria, data (hoje/amanhã/fim de semana/7/30 dias), preço (faixas e grátis), paginação, contagem, filtros na URL, estado vazio | `/eventos`, `searchEvents` | Pronto (sem ordenação; sem intervalo de datas livre) |
 | Detalhe do evento: capa, data/fuso, local, descrição, organizador, tipos de ingresso com disponibilidade, compra, política de reembolso, compartilhar no WhatsApp, metadados + OpenGraph + JSON-LD `Event` | `/eventos/[slug]`, `getPublicEvent`, `ticket-selector.tsx` | Pronto (sem eventos relacionados) |
 | Página de cidade com filtro por categoria e metadados | `/cidades/[slug]` | Pronto (sem destaques próprios nem busca textual) |
-| Perfil público do organizador: nome, descrição, site, Instagram, selo verificado (organização aprovada), próximos eventos | `/organizadores/[slug]`, `getPublicOrganizer` | Pronto (sem logo/capa, sem eventos anteriores) |
+| Perfil público do organizador: nome, descrição, site, Instagram, selo verificado (organização aprovada), próximos eventos | `/organizadores/[slug]`, `getPublicOrganizer` | Pronto (logo e capa quando enviados; sem eventos anteriores) |
 | Entrar / Registrar com validação, mensagens acessíveis, `next` seguro (`safeNext`) | `/entrar`, `/registrar`, `features/auth/` | Pronto (sem mostrar/ocultar senha) |
 | Checkout: resumo calculado no servidor, contagem da reserva, reserva expirada, PIX (QR + copia e cola), cartão simulado, simulador de webhook só em dev, aviso de pagamento simulado | `/checkout/[orderId]`, `checkout-panel.tsx` | Pronto |
 | **Checkout com tentativa de cartão em processamento** (não oferece nova tentativa) e recarga quando `startPaymentAction` devolve `INVALID_STATE` | `checkoutStep` em `features/orders/status-view.ts` | **Novo** |
@@ -112,8 +112,7 @@ Só telas: as regras são dos serviços de cada domínio (chamados, não reimple
    só `catalog.ts` + página.
 3. **`/cidades`** (visão geral das cidades) e destaques/busca na página da cidade.
 4. **Eventos relacionados** na página do evento (mesma categoria/cidade).
-5. **Perfil do organizador:** eventos anteriores; logo e capa quando o banco tiver
-   os campos.
+5. **Perfil do organizador:** eventos anteriores (logo e capa já aparecem).
 6. **Autenticação:** mostrar/ocultar senha; recuperação e redefinição de senha
    (dependem de backend — ver abaixo).
 7. **Home:** organizadores em destaque e recomendações.
@@ -208,7 +207,7 @@ produto.
 | Agente | O que precisamos |
 | --- | --- |
 | `pagamentos-financeiro` | Cupons/descontos calculados no servidor (`createOrder`) antes de qualquer campo de cupom. Notificação por e-mail de reembolso concluído (outbox) — a UI promete "avisaremos por e-mail". Se a política para reembolso `FAILED` mudar (restaurar ingressos), o texto de `refundView` precisa acompanhar. |
-| `banco-de-dados` | `Organization.logoUrl`/`coverUrl` para o perfil público; tabela de tokens de redefinição de senha (com expiração e uso único). |
+| `banco-de-dados` | ~~`Organization.logoUrl`/`coverUrl` para o perfil público~~ (feito); tabela de tokens de redefinição de senha (com expiração e uso único). |
 | Equipe (auth/infra) | Recuperação de senha: `requestPasswordReset(email)` (resposta sempre igual, sem revelar se o e-mail existe; limite de tentativas), `resetPassword(token, novaSenha)` (invalida sessões), e-mail transacional via `EMAIL_PROVIDER`. A UI (`/recuperar-senha`, `/redefinir-senha`) só depois desse contrato. |
 | `area-organizador` | Dados públicos do organizador (descrição, site, Instagram) vêm do perfil editado no painel; logo/capa quando existirem. |
 | `check-in` | Formato do QR e PDF do ingresso (`qrPayload`, `/api/tickets/[code]/pdf`) — a página do ingresso apenas exibe. |

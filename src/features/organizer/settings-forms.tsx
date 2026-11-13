@@ -13,6 +13,7 @@ import {
   resendInvitationAction,
   revokeInvitationAction,
   updateOrgProfileAction,
+  uploadOrgImageAction,
 } from "./actions";
 
 export function ProfileSettingsForm({ description, websiteUrl, instagramHandle }: { description: string; websiteUrl: string; instagramHandle: string }) {
@@ -208,5 +209,61 @@ export function RemoveMemberButton({ userId }: { userId: string }) {
       </Button>
       {err && <span className="text-xs text-destructive">{err}</span>}
     </>
+  );
+}
+
+/** Logo e capa do perfil público: envio imediato ao escolher o arquivo, com prévia. */
+export function OrgImageField({ kind, url }: { kind: "logo" | "cover"; url: string | null }) {
+  const [current, setCurrent] = useState(url);
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const id = `org-${kind}`;
+  const send = (file: File | null) =>
+    start(async () => {
+      setError(null);
+      const fd = new FormData();
+      fd.set("kind", kind);
+      if (file) fd.set("file", file);
+      const r = await uploadOrgImageAction(fd);
+      if (r.ok) setCurrent(r.data.url);
+      else setError(r.error);
+    });
+  const isLogo = kind === "logo";
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{isLogo ? "Logo" : "Capa"}</Label>
+      <p className="text-xs text-muted-foreground">
+        {isLogo ? "Quadrado, a partir de 200 × 200 px." : "Horizontal, a partir de 1200 × 300 px (aparece no topo do perfil)."} JPG, PNG ou WebP, até 5 MB.
+      </p>
+      <div className={isLogo ? "size-24 overflow-hidden rounded-2xl border border-border bg-muted" : "aspect-[4/1] w-full overflow-hidden rounded-2xl border border-border bg-muted"}>
+        {current ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={current} alt={isLogo ? "Logo atual" : "Capa atual"} className="h-full w-full object-cover" />
+        ) : (
+          <div className="grid h-full place-items-center text-xs text-muted-foreground">Sem {isLogo ? "logo" : "capa"}</div>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          id={id}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={pending}
+          className="w-auto max-w-full"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) send(file);
+            e.target.value = "";
+          }}
+        />
+        {current && (
+          <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => send(null)}>
+            Remover
+          </Button>
+        )}
+        {pending && <span className="text-sm text-muted-foreground">Enviando…</span>}
+      </div>
+      {error && <Alert variant="danger">{error}</Alert>}
+    </div>
   );
 }

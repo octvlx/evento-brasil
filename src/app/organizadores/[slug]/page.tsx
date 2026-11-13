@@ -10,15 +10,15 @@ import { DEFAULT_OG_IMAGE } from "@/lib/site";
 
 export async function generateMetadata({ params }: PageProps<"/organizadores/[slug]">): Promise<Metadata> {
   const { slug } = await params;
-  const org = await db.organization.findFirst({ where: { slug, status: "APPROVED" }, select: { name: true, description: true } });
+  const org = await db.organization.findFirst({ where: { slug, status: "APPROVED" }, select: { name: true, description: true, coverUrl: true, logoUrl: true } });
   if (!org) return { title: "Organizador não encontrado", robots: { index: false } };
   const description = org.description?.slice(0, 160) ?? `Eventos de ${org.name} na QQPega. Compre ingressos com PIX ou cartão.`;
   return {
     title: org.name,
     description,
     alternates: { canonical: `/organizadores/${slug}` },
-    // Sem imagem própria do organizador: usa a imagem padrão (um openGraph na página substitui o herdado).
-    openGraph: { type: "website", title: org.name, description, url: `/organizadores/${slug}`, images: [DEFAULT_OG_IMAGE] },
+    // Capa (ou logo) do organizador; sem imagem própria, a padrão (um openGraph na página substitui o herdado).
+    openGraph: { type: "website", title: org.name, description, url: `/organizadores/${slug}`, images: [org.coverUrl ?? org.logoUrl ?? DEFAULT_OG_IMAGE] },
   };
 }
 
@@ -38,8 +38,19 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
   const { org, events } = data;
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+      {org.coverUrl && (
+        <div className="mb-4 aspect-[4/1] w-full overflow-hidden rounded-3xl border border-border bg-muted">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={org.coverUrl} alt="" className="h-full w-full object-cover" fetchPriority="high" />
+        </div>
+      )}
       <div className="flex flex-col gap-6 rounded-3xl border border-border bg-card p-6 sm:flex-row sm:items-center sm:p-8">
-        <div className="bg-hero grid size-20 shrink-0 place-items-center rounded-2xl font-display text-3xl font-extrabold text-white">{org.name.slice(0, 1)}</div>
+        {org.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={org.logoUrl} alt={`Logo de ${org.name}`} className="size-20 shrink-0 rounded-2xl border border-border bg-white object-cover" />
+        ) : (
+          <div className="bg-hero grid size-20 shrink-0 place-items-center rounded-2xl font-display text-3xl font-extrabold text-white">{org.name.slice(0, 1)}</div>
+        )}
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 font-display text-3xl font-extrabold tracking-tight">
             {org.name} <BadgeCheck className="size-6 text-secondary" aria-label="Organizador verificado" />
