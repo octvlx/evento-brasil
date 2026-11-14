@@ -57,7 +57,7 @@ admin: usam as Server Actions e os serviços do financeiro.
 | Reembolsos com falha | `/admin/pagamentos#reembolsos-falhos` | `listFailedRefunds` (financeiro) | `adminRetryFailedRefundAction` / `adminRestoreFailedRefundAction` (financeiro, PR #16) |
 | Transferências | `/admin/transferencias` (`?q=` código/e-mail/evento, `?status=`) | `searchTransfers` (nunca seleciona `tokenHash`) + `transferPatternReport` | nenhuma — somente leitura |
 | Alterações de evento | `/admin/alteracoes` | `listOpenChangeWindows` — alteração original relevante com prazo vigente (inclui prorrogações), reembolsos por `Refund.eventChangeId` e pedidos ainda pagos antes da alteração | nenhuma |
-| Auditoria | `/admin/auditoria` (`?grupo=`, `?acao=`) | `listAuditLogs` | — |
+| Auditoria | `/admin/auditoria` (`?grupo=`, `?acao=`, `?ator=` trecho do e-mail ou `sistema`, `?entidade=`, `?id=` completo ou final, `?de=`/`?ate=` dias de São Paulo) e CSV em `/admin/auditoria/csv` com os mesmos filtros | `listAuditLogs`, `exportAuditLogs` (até 10 000 linhas; registra `audit.exported` com filtros e linhas) | exportação, só com `audit:read` |
 
 Decisões com motivo obrigatório e diálogo de confirmação
 (`ReasonedDecisionButton`, `src/features/admin/decision-controls.tsx`): o botão
@@ -106,7 +106,8 @@ novas; admin aprova o protocolo do seed com motivo e duplo clique).
    - `cancelEvent` (`cancellation.ts`) já trava o evento — sem ação.
 2. **AuditLog append-only:** ~~trigger~~ — já existia (`AuditLog_immutable`,
    migração `20261026150000_audit_log_append_only`, coberto em `m-audit-log.test.ts`).
-   Falta: filtros por data/ator/entidade e exportação CSV autorizada.
+   ~~Filtros por data/ator/entidade e exportação CSV autorizada~~ — feitos
+   (`parseAuditFilters`, `exportAuditLogs`; testes em `zz-audit-filters-csv.test.ts`).
 3. **Colunas de auditoria:** `previousStatus`/`newStatus`/`reason`/correlation id
    vivem em `metadata` (JSON). Propor colunas próprias ao `banco-de-dados` se a
    tela de auditoria precisar filtrar por elas.

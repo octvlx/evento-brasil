@@ -355,7 +355,7 @@ export async function listTransferHistory(db: Db, actor: Actor, eventId: string,
 }
 
 /** Célula CSV entre aspas, com fórmulas de planilha neutralizadas. */
-function csvCell(v: unknown): string {
+export function csvCell(v: unknown): string {
   const s = v === null || v === undefined ? "" : String(v);
   // Neutraliza injeção de fórmulas em planilhas.
   const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
@@ -363,7 +363,7 @@ function csvCell(v: unknown): string {
 }
 
 /** CSV com BOM UTF-8 (o Excel reconhece acentos) e quebra de linha CRLF. */
-function toCsv(rows: unknown[][], sep = ","): string {
+export function toCsv(rows: unknown[][], sep = ","): string {
   return "﻿" + rows.map((r) => r.map(csvCell).join(sep)).join("\r\n");
 }
 
