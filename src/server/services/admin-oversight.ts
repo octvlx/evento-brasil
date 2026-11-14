@@ -8,6 +8,10 @@ import type { Db } from "../db";
 import { assertPlatformAdmin, type Actor, assertAdminPermission } from "../auth/permissions";
 import { notFound } from "../errors";
 import { AWAITING_REFUND_WHERE, openChangeRefundWindow, refundEligibility } from "./refunds";
+import { audit } from "../audit";
+import { formatDateTimeShort } from "@/lib/datetime";
+import { parseSalesPeriod, type SalesPeriod } from "@/features/reports/period";
+import { toCsv } from "./reports";
 
 export const ADMIN_PAGE_SIZE = 25;
 
@@ -284,22 +288,119 @@ export function parseAuditPreset(raw: unknown): AuditPreset | undefined {
   return typeof raw === "string" && Object.hasOwn(AUDIT_PRESETS, raw) ? (raw as AuditPreset) : undefined;
 }
 
-export async function listAuditLogs(db: Db, admin: Actor, opts: { preset?: AuditPreset; action?: string; page?: number } = {}) {
-  assertAdminPermission(admin, "audit:read");
-  const prefixes: string[] = opts.preset ? [...AUDIT_PRESETS[opts.preset].prefixes] : [];
-  const text = opts.action?.trim().slice(0, 100);
+/** Ator "sistema": registros sem pessoa (cron, webhooks). */
+export const AUDIT_SYSTEM_ACTOR = "sistema";
+
+/**
+ * Filtros da auditoria, os mesmos na tela e no CSV. Período em dias de São Paulo
+ * (fim inclusivo); ator por trecho do e-mail ou "sistema"; entidade por tipo exato e
+ * ID completo ou final (a tela mostra os 8 últimos caracteres).
+ */
+export interface AuditFilters {
+  preset?: AuditPreset;
+  action?: string;
+  actor?: string;
+  entityType?: string;
+  entityId?: string;
+  period?: SalesPeriod;
+}
+
+/** Lê os filtros da URL (`grupo`, `acao`, `ator`, `entidade`, `id`, `de`, `ate`). */
+export function parseAuditFilters(sp: Record<string, string | null | undefined>): AuditFilters {
+  const text = (k: string, max = 100) => sp[k]?.trim().slice(0, max) || undefined;
+  const period = parseSalesPeriod({ de: sp.de, ate: sp.ate });
+  return {
+    preset: parseAuditPreset(sp.grupo),
+    action: text("acao"),
+    actor: text("ator", 254),
+    entityType: text("entidade", 60),
+    entityId: text("id", 60),
+    period: period.from || period.to ? period : undefined,
+  };
+}
+
+/** Parâmetros de URL dos filtros (para links, paginação e o CSV). */
+export function auditFilterParams(f: AuditFilters): Record<string, string | undefined> {
+  return { grupo: f.preset, acao: f.action, ator: f.actor, entidade: f.entityType, id: f.entityId, de: f.period?.de || undefined, ate: f.period?.ate || undefined };
+}
+
+function auditWhere(f: AuditFilters): Prisma.AuditLogWhereInput {
   const and: Prisma.AuditLogWhereInput[] = [];
-  if (prefixes.length) and.push({ OR: prefixes.map((p) => ({ action: { startsWith: p } })) });
-  if (text) and.push({ action: { startsWith: text } });
-  const where: Prisma.AuditLogWhereInput = and.length ? { AND: and } : {};
+  if (f.preset) and.push({ OR: AUDIT_PRESETS[f.preset].prefixes.map((p) => ({ action: { startsWith: p } })) });
+  if (f.action) and.push({ action: { startsWith: f.action } });
+  if (f.actor) {
+    and.push(
+      f.actor.toLowerCase() === AUDIT_SYSTEM_ACTOR ? { actorUserId: null } : { actor: { email: { contains: f.actor, mode: "insensitive" } } },
+    );
+  }
+  if (f.entityType) and.push({ entityType: f.entityType });
+  if (f.entityId) and.push({ entityId: { endsWith: f.entityId } });
+  if (f.period?.from) and.push({ createdAt: { gte: f.period.from } });
+  if (f.period?.to) and.push({ createdAt: { lt: f.period.to } });
+  return and.length ? { AND: and } : {};
+}
+
+const AUDIT_INCLUDE = { actor: { select: { email: true } }, organization: { select: { name: true } } } as const;
+const AUDIT_ORDER: Prisma.AuditLogOrderByWithRelationInput[] = [{ createdAt: "desc" }, { id: "desc" }];
+
+export async function listAuditLogs(db: Db, admin: Actor, opts: AuditFilters & { page?: number } = {}) {
+  assertAdminPermission(admin, "audit:read");
+  const where = auditWhere(opts);
   const total = await db.auditLog.count({ where });
   const p = paging(opts.page ?? 1, total);
-  const items = await db.auditLog.findMany({
-    where,
-    include: { actor: { select: { email: true } }, organization: { select: { name: true } } },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    skip: p.skip,
-    take: p.take,
-  });
+  const items = await db.auditLog.findMany({ where, include: AUDIT_INCLUDE, orderBy: AUDIT_ORDER, skip: p.skip, take: p.take });
   return { items, total, page: p.page, pageCount: p.pageCount };
+}
+
+/** Tipos de entidade já auditados (lista do filtro). */
+export async function auditEntityTypes(db: Db, admin: Actor): Promise<string[]> {
+  assertAdminPermission(admin, "audit:read");
+  const rows = await db.auditLog.groupBy({ by: ["entityType"], orderBy: { entityType: "asc" } });
+  return rows.map((r) => r.entityType);
+}
+
+/** Linhas por exportação: acima disso o CSV sai cortado e avisa para estreitar os filtros. */
+export const AUDIT_EXPORT_LIMIT = 10_000;
+
+/**
+ * Exportação da auditoria com os filtros da tela. Exige a mesma permissão da leitura
+ * e fica registrada (`audit.exported`, com filtros e linhas) na mesma transação da
+ * leitura: não há exportação sem registro.
+ */
+export async function exportAuditLogs(db: Db, admin: Actor, filters: AuditFilters) {
+  assertAdminPermission(admin, "audit:read");
+  const where = auditWhere(filters);
+  return db.$transaction(async (tx) => {
+    const rows = await tx.auditLog.findMany({ where, include: AUDIT_INCLUDE, orderBy: AUDIT_ORDER, take: AUDIT_EXPORT_LIMIT + 1 });
+    const truncated = rows.length > AUDIT_EXPORT_LIMIT;
+    const items = truncated ? rows.slice(0, AUDIT_EXPORT_LIMIT) : rows;
+    const params = Object.fromEntries(Object.entries(auditFilterParams(filters)).filter(([, v]) => v));
+    await audit(tx, {
+      actorUserId: admin.id,
+      action: "audit.exported",
+      entityType: "AuditLog",
+      entityId: "export",
+      metadata: { filters: params, rows: items.length, truncated },
+    });
+    return { items, truncated };
+  });
+}
+
+/** CSV da auditoria: horário de São Paulo, ID completo da entidade e detalhes em JSON. */
+export function auditLogsToCsv(items: Awaited<ReturnType<typeof exportAuditLogs>>["items"], truncated: boolean): string {
+  const rows: unknown[][] = [["Quando (São Paulo)", "Ação", "Ator", "ID do ator", "Organização", "Entidade", "ID da entidade", "Detalhes"]];
+  for (const l of items) {
+    rows.push([
+      formatDateTimeShort(l.createdAt),
+      l.action,
+      l.actorUserId ? (l.actor?.email ?? "") : AUDIT_SYSTEM_ACTOR,
+      l.actorUserId ?? "",
+      l.organization?.name ?? "",
+      l.entityType,
+      l.entityId,
+      l.metadata == null ? "" : JSON.stringify(l.metadata),
+    ]);
+  }
+  if (truncated) rows.push([`Exportação limitada a ${AUDIT_EXPORT_LIMIT} registros; estreite os filtros para ver o restante.`]);
+  return toCsv(rows);
 }
