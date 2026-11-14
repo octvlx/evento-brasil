@@ -46,7 +46,9 @@ function parsePercentToBps(v: string): number | null {
 
 const limitOrNull = (v: string) => (v.trim() ? Number(v) : null);
 
-export function CouponsManager({ eventId, items, ticketTypes, locked }: { eventId: string; items: ManagedCoupon[]; ticketTypes: CouponTicketOption[]; locked?: boolean }) {
+/** `eventId` nulo = cupons da organização inteira (página /organizador/cupons). */
+export function CouponsManager({ eventId, items, ticketTypes, locked }: { eventId: string | null; items: ManagedCoupon[]; ticketTypes: CouponTicketOption[]; locked?: boolean }) {
+  const orgMode = eventId === null;
   const [editing, setEditing] = useState<string | null>(null);
   const [f, setF] = useState(empty);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +109,11 @@ export function CouponsManager({ eventId, items, ticketTypes, locked }: { eventI
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        O comprador digita o código no checkout. O desconto sai do seu repasse e não vale para meia-entrada. Cupom já usado não pode ser apagado, só desativado.
+        {orgMode
+          ? "Cupons daqui valem em todos os eventos da organização, nos ingressos pagos (exceto meia-entrada). Validade no horário de Brasília. "
+          : "O comprador digita o código no checkout. "}
+        O desconto sai do seu repasse e não vale para meia-entrada. Cupom já usado não pode ser apagado, só desativado.
+        {!orgMode && items.some((c) => c.organizationWide) && " Cupons da organização inteira são editados em Cupons, no menu do painel."}
       </p>
       {items.length === 0 && <p className="text-sm text-muted-foreground">Nenhum cupom cadastrado.</p>}
       <ul className="space-y-2">
@@ -124,7 +130,7 @@ export function CouponsManager({ eventId, items, ticketTypes, locked }: { eventI
                 {c.description ? ` · ${c.description}` : ""}
               </p>
             </div>
-            {!locked && !c.organizationWide && (
+            {!locked && c.organizationWide === orgMode && (
               <div className="flex gap-1">
                 <Button variant="ghost" size="sm" onClick={() => edit(c)}>
                   <Pencil aria-hidden /> Editar
