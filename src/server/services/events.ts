@@ -442,10 +442,23 @@ export async function moderateEvent(db: Db, admin: Actor, eventId: string, decis
   });
 }
 
+/** Destaque na vitrine. Alteração e auditoria (com o valor anterior) juntas, sob trava do evento. */
 export async function setEventFeatured(db: Db, admin: Actor, eventId: string, featured: boolean) {
   assertAdminPermission(admin, "events:moderate");
-  await db.event.update({ where: { id: eventId }, data: { isFeatured: featured } });
-  await audit(db, { actorUserId: admin.id, action: "event.featured", entityType: "Event", entityId: eventId, metadata: { featured } });
+  await db.$transaction(async (tx) => {
+    const [row] = await tx.$queryRaw<{ isFeatured: boolean; organizationId: string }[]>`SELECT "isFeatured", "organizationId" FROM "Event" WHERE id = ${eventId} FOR NO KEY UPDATE`;
+    if (!row) throw notFound("Evento não encontrado.");
+    if (row.isFeatured === featured) return;
+    await tx.event.update({ where: { id: eventId }, data: { isFeatured: featured } });
+    await audit(tx, {
+      actorUserId: admin.id,
+      organizationId: row.organizationId,
+      action: "event.featured",
+      entityType: "Event",
+      entityId: eventId,
+      metadata: { featured, previous: row.isFeatured },
+    });
+  });
 }
 
 /**

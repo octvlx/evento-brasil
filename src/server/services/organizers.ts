@@ -199,10 +199,23 @@ export async function setOrganizationSuspended(db: Db, admin: Actor, organizatio
   });
 }
 
+/** Liga/desliga a publicação sem revisão. Alteração e auditoria (com o valor anterior) juntas, sob trava. */
 export async function setAutoPublish(db: Db, admin: Actor, organizationId: string, value: boolean) {
   assertAdminPermission(admin, "organizers:review");
-  await db.organization.update({ where: { id: organizationId }, data: { autoPublishEvents: value } });
-  await audit(db, { actorUserId: admin.id, organizationId, action: "organization.auto_publish", entityType: "Organization", entityId: organizationId, metadata: { value } });
+  await db.$transaction(async (tx) => {
+    const [row] = await tx.$queryRaw<{ autoPublishEvents: boolean }[]>`SELECT "autoPublishEvents" FROM "Organization" WHERE id = ${organizationId} FOR NO KEY UPDATE`;
+    if (!row) throw notFound("Organização não encontrada.");
+    if (row.autoPublishEvents === value) return;
+    await tx.organization.update({ where: { id: organizationId }, data: { autoPublishEvents: value } });
+    await audit(tx, {
+      actorUserId: admin.id,
+      organizationId,
+      action: "organization.auto_publish",
+      entityType: "Organization",
+      entityId: organizationId,
+      metadata: { value, previous: row.autoPublishEvents },
+    });
+  });
 }
 
 /**
@@ -492,29 +505,37 @@ export async function declineInvitation(db: Db, actor: Actor & { email: string }
   });
 }
 
+/**
+ * Atribui ou retira um membro da portaria de um evento. Trava a equipe da
+ * organização: a retirada espera as leituras de check-in em curso, e as seguintes
+ * já não admitem (ver `lockOrganizationForCheckin`).
+ */
 export async function assignStaffToEvent(db: Db, actor: Actor, eventId: string, userId: string, assign: boolean) {
   const event = await db.event.findUniqueOrThrow({ where: { id: eventId }, select: { organizationId: true } });
-  await assertOrgPermission(db, actor, event.organizationId, "members:manage");
-  const member = await db.organizationMember.findUnique({
-    where: { organizationId_userId: { organizationId: event.organizationId, userId } },
-  });
-  if (!member) throw new AppError("VALIDATION", "Usuário não pertence à organização.");
-  if (assign) {
-    await db.eventStaffAssignment.upsert({
-      where: { eventId_userId: { eventId, userId } },
-      create: { eventId, userId, assignedById: actor.id },
-      update: {},
+  await db.$transaction(async (tx) => {
+    await lockOrganizationTeam(tx, event.organizationId);
+    await assertOrgPermission(tx, actor, event.organizationId, "members:manage");
+    const member = await tx.organizationMember.findUnique({
+      where: { organizationId_userId: { organizationId: event.organizationId, userId } },
     });
-  } else {
-    await db.eventStaffAssignment.deleteMany({ where: { eventId, userId } });
-  }
-  await audit(db, {
-    actorUserId: actor.id,
-    organizationId: event.organizationId,
-    action: assign ? "staff.assigned" : "staff.unassigned",
-    entityType: "Event",
-    entityId: eventId,
-    metadata: { userId },
+    if (!member) throw new AppError("VALIDATION", "Usuário não pertence à organização.");
+    if (assign) {
+      await tx.eventStaffAssignment.upsert({
+        where: { eventId_userId: { eventId, userId } },
+        create: { eventId, userId, assignedById: actor.id },
+        update: {},
+      });
+    } else {
+      await tx.eventStaffAssignment.deleteMany({ where: { eventId, userId } });
+    }
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: event.organizationId,
+      action: assign ? "staff.assigned" : "staff.unassigned",
+      entityType: "Event",
+      entityId: eventId,
+      metadata: { userId },
+    });
   });
 }
 

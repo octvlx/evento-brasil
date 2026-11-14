@@ -48,6 +48,19 @@ async function lockEventForCheckin(tx: Tx, eventId: string) {
   return { status: rows[0].status, endsAt: new Date(rows[0].endsAt), organizationId: rows[0].organizationId };
 }
 
+/**
+ * Trava compartilhada da organização do evento, ANTES do evento. Mudanças de equipe
+ * (papel, remoção, atribuição por evento) e de status da organização travam a mesma
+ * linha em modo exclusivo: uma leitura nunca admite com uma permissão que já foi
+ * retirada, e a retirada espera as leituras em curso. FOR SHARE não bloqueia outras
+ * leituras. Ordem: Organization → Event (a mesma de quem trava os dois).
+ */
+async function lockOrganizationForCheckin(tx: Tx, eventId: string) {
+  const event = await tx.event.findUnique({ where: { id: eventId }, select: { organizationId: true } });
+  if (!event) throw forbidden();
+  await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${event.organizationId} FOR SHARE`;
+}
+
 async function lockOrderForCheckin(tx: Tx, orderId: string) {
   await tx.$queryRaw`SELECT status FROM "Order" WHERE id = ${orderId} FOR KEY SHARE`;
 }
@@ -86,7 +99,6 @@ export async function checkInTicket(
   // localResult (só offline): o que o aparelho mostrou na porta, enviado na sincronização.
   opts: { offline?: boolean; skipCounters?: boolean; localResult?: CheckinResult } = {},
 ): Promise<CheckinResponse> {
-  await resolveCheckinAccess(db, actor, eventId);
   const local = opts.offline ? opts.localResult : undefined;
   // Divergência entre o aparelho offline e o servidor, gravada junto com a leitura.
   let divergence: OfflineDivergence | undefined;
@@ -99,6 +111,10 @@ export async function checkInTicket(
           data: { eventId, ticketId, scannedById: actor.id, result, scannedAt: now, offline: opts.offline === true, offlineLocalResult: local ?? null, divergence: divergence ?? null },
         });
       };
+
+      // 0. Permissão conferida sob a trava da organização, na mesma transação da entrada.
+      await lockOrganizationForCheckin(tx, eventId);
+      await resolveCheckinAccess(tx, actor, eventId);
 
       // 1. Evento (trava compartilhada) e janela de check-in.
       const event = await lockEventForCheckin(tx, eventId);

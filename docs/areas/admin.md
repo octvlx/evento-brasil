@@ -95,19 +95,18 @@ novas; admin aprova o protocolo do seed com motivo e duplo clique).
 ## Lacunas restantes (por prioridade)
 
 1. **Outras escritas do admin sem trava/transação:**
-   - `setUserSuspended` (`users.ts`): `update`, `revokeAllSessions` e `audit`
-     são escritas separadas, sem `previousStatus`. Suspender × reativar
-     simultâneos podem deixar sessões revogadas com usuário ativo (ou vice-versa)
-     e auditoria fora de ordem.
-   - `setAutoPublish` e `setEventFeatured`: `update` e `audit` fora de
-     transação; a auditoria não registra o valor anterior.
+   - ~~`setUserSuspended`, `setAutoPublish` e `setEventFeatured`~~ — feitos: uma
+     transação com trava da linha (`User` FOR UPDATE; `Organization`/`Event` FOR NO
+     KEY UPDATE); status, sessões e auditoria juntos; auditoria com
+     `previousStatus`/`newStatus` ou `previous`; sem auditoria quando nada muda.
+     Testes em `zz-integrity-checkin-admin.test.ts`.
    - `resubmitOrganizerApplication` (dono: `area-organizador`) tem o mesmo
      padrão lê-depois-grava sem trava; o reenvio duplo pode criar duas
      verificações. Sugerido usar o mesmo `lockOrganization`.
    - `cancelEvent` (`cancellation.ts`) já trava o evento — sem ação.
-2. **AuditLog append-only:** falta o trigger (reaproveitar o padrão do razão);
-   paginação, filtros por data/ator/entidade e exportação CSV autorizada.
-   Exige migração (`banco-de-dados`).
+2. **AuditLog append-only:** ~~trigger~~ — já existia (`AuditLog_immutable`,
+   migração `20261026150000_audit_log_append_only`, coberto em `m-audit-log.test.ts`).
+   Falta: filtros por data/ator/entidade e exportação CSV autorizada.
 3. **Colunas de auditoria:** `previousStatus`/`newStatus`/`reason`/correlation id
    vivem em `metadata` (JSON). Propor colunas próprias ao `banco-de-dados` se a
    tela de auditoria precisar filtrar por elas.

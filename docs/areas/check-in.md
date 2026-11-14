@@ -164,10 +164,12 @@ transação e não são reenviados se falharem.
    e guardar só `validationTokenHash` (único, para busca), com `tokenVersion` para
    reemitir o QR invalidando o anterior. A página, o PDF e o e-mail recalculam o
    token. `scripts/dev-ticket-qr.mjs` passa a calcular o HMAC.
-3. **Permissão verificada fora da transação.** `resolveCheckinAccess` roda antes
-   do `$transaction`. Se a atribuição for removida no meio da leitura, a leitura
-   ainda pode admitir. A solução é verificar dentro da transação, depois de
-   travar o evento. Não exige schema.
+3. ~~**Permissão verificada fora da transação.**~~ — feito: `checkInTicket` trava a
+   organização (FOR SHARE, antes do evento) e chama `resolveCheckinAccess` dentro da
+   transação. Atribuição/retirada da portaria (`assignStaffToEvent`, agora em
+   transação), troca de papel e remoção de membro travam a mesma linha em modo
+   exclusivo, então a retirada espera as leituras em curso e as seguintes recusam.
+   Teste em `zz-integrity-checkin-admin.test.ts`.
 4. **Janela de abertura do check-in.** Hoje qualquer ingresso de evento
    PUBLISHED é admitido a qualquer momento, até semanas antes. A proposta é abrir
    N horas antes de `startsAt`: com uma constante não exige schema; por evento,
