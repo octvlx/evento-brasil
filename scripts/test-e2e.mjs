@@ -53,6 +53,7 @@ try {
     AUTH_SECRET: randomBytes(32).toString("hex"),
     DATA_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
     CRON_SECRET: randomBytes(16).toString("hex"),
+    QR_TOKEN_SECRET: randomBytes(32).toString("hex"),
     PAYMENT_PROVIDER: "simulated",
     SIMULATED_WEBHOOK_SECRET: randomBytes(32).toString("hex"),
     EMAIL_PROVIDER: "console",

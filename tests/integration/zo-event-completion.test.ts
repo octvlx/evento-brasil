@@ -52,7 +52,7 @@ async function paidEvent(opts: { title?: string; quantity?: number } = {}) {
 /** Tudo o que o encerramento precisa preservar, para comparar antes e depois. */
 async function history(eventId: string) {
   const [tickets, checkins, orders, payments, ledger, refunds, items] = await Promise.all([
-    db.issuedTicket.findMany({ where: { eventId }, orderBy: { id: "asc" }, select: { id: true, status: true, code: true, validationToken: true, checkedInAt: true, revokedAt: true, holderName: true } }),
+    db.issuedTicket.findMany({ where: { eventId }, orderBy: { id: "asc" }, select: { id: true, status: true, code: true, validationTokenHash: true, checkedInAt: true, revokedAt: true, holderName: true } }),
     db.ticketCheckin.findMany({ where: { eventId }, orderBy: { id: "asc" } }),
     db.order.findMany({ where: { eventId }, orderBy: { id: "asc" }, select: { id: true, status: true, totalCents: true, serviceFeeCents: true, paidAt: true, buyerEmail: true } }),
     db.payment.findMany({ where: { order: { eventId } }, orderBy: { id: "asc" }, select: { id: true, status: true, amountCents: true, paidAt: true } }),

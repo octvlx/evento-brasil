@@ -4,7 +4,7 @@ import { cancelEvent } from "@/server/services/cancellation";
 import { checkInTicket, checkinHistory } from "@/server/services/checkin";
 import { createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
-import { qrPayload } from "@/server/services/tickets";
+import { qrPayload, ticketQrToken } from "@/server/services/tickets";
 import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
@@ -142,7 +142,7 @@ describe("E/F — check-in", () => {
     const forged = qrPayload({ code: tickets[1].code, validationToken: "A".repeat(43) });
     expect((await checkInTicket(db, staff, event.id, forged)).result).toBe("INVALID");
     // Token correto com código de outro ingresso.
-    const mixed = qrPayload({ code: tickets[0].code, validationToken: tickets[1].validationToken });
+    const mixed = qrPayload({ code: tickets[0].code, validationToken: ticketQrToken(tickets[1])! });
     expect((await checkInTicket(db, staff, event.id, mixed)).result).toBe("INVALID");
   });
 

@@ -2,10 +2,39 @@ import "server-only";
 import type { OrderItem } from "@/generated/prisma/client";
 import type { Tx } from "../db";
 import { enqueueOrderEmailsTx } from "../email/events";
-import { randomCode, randomToken } from "../crypto";
+import { deriveQrToken, qrTokenHash, randomCode } from "../crypto";
+import { qrPayload as formatQrPayload } from "@/lib/qr-payload";
 
 // Formato do QR compartilhado com o leitor offline da portaria.
-export { QR_PREFIX, parseQrPayload, qrPayload } from "@/lib/qr-payload";
+export { QR_PREFIX, parseQrPayload } from "@/lib/qr-payload";
+
+/** Campos do ingresso que bastam para recalcular o token do QR. */
+export interface QrTokenSource {
+  code: string;
+  tokenVersion: number;
+  legacyValidationToken: string | null;
+}
+
+/**
+ * Token do QR. Versão 0 (emitido antes do hash): o token aleatório antigo, se ainda
+ * guardado; nulo depois do check-in, quando o QR não é mais exibido.
+ */
+export function ticketQrToken(t: QrTokenSource): string | null {
+  if (t.tokenVersion > 0) return deriveQrToken(t.code, t.tokenVersion);
+  return t.legacyValidationToken;
+}
+
+/** Colunas de uma versão nova do QR (a anterior deixa de valer). */
+export function qrTokenColumns(code: string, version: number) {
+  return { tokenVersion: version, validationTokenHash: qrTokenHash(deriveQrToken(code, version)), legacyValidationToken: null };
+}
+
+/** Conteúdo do QR, de um ingresso do banco ou de um token já calculado. */
+export function qrPayload(t: QrTokenSource | { code: string; validationToken: string }): string {
+  const token = "validationToken" in t ? t.validationToken : ticketQrToken(t);
+  if (!token) throw new Error(`QR indisponível para o ingresso ${t.code}`);
+  return formatQrPayload({ code: t.code, validationToken: token });
+}
 
 interface IssuableOrder {
   id: string;
@@ -38,8 +67,9 @@ export async function issueTicketsTx(tx: Tx, order: IssuableOrder): Promise<numb
         .filter((seq) => !have.has(`${item.id}:${seq}`))
         .map((seq) => {
           const attendee = attendeeAt(item, seq - 1);
+          const code = randomCode(10);
           return {
-            code: randomCode(10),
+            code,
             orderId: order.id,
             orderItemId: item.id,
             eventId: order.eventId,
@@ -48,7 +78,7 @@ export async function issueTicketsTx(tx: Tx, order: IssuableOrder): Promise<numb
             sequence: seq,
             holderName: attendee.name ?? order.buyerName,
             holderEmail: attendee.email ?? order.buyerEmail,
-            validationToken: randomToken(32),
+            ...qrTokenColumns(code, 1),
           };
         }),
     );

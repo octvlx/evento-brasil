@@ -1,5 +1,6 @@
 // Formato do QR do ingresso, usado no servidor (check-in online) e no aparelho da
-// portaria (check-in offline). Sem segredos: o token é aleatório e não derivável.
+// portaria (check-in offline). Sem segredos aqui: o token chega pronto (no servidor,
+// `ticketQrToken` em services/tickets.ts o recalcula com a chave do QR).
 
 export const QR_PREFIX = "EB1";
 

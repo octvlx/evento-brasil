@@ -6,7 +6,7 @@
 // banco) → o destinatário, logado com o e-mail indicado, aceita ou recusa; o
 // titular pode cancelar; o cron de manutenção expira as vencidas.
 //
-// No aceite o ingresso muda de titular e ganha um NOVO validationToken: o QR, o
+// No aceite o ingresso muda de titular e ganha uma NOVA versão do token do QR: o QR, o
 // PDF e os passes de carteira anteriores deixam de valer na portaria.
 //
 // Ordem de travas (a mesma de check-in, reembolso e cancelamento):
@@ -28,6 +28,7 @@ import { enqueueEmail, dispatchEmailOutbox } from "../email/outbox";
 import { AppError, invalidState, notFound } from "../errors";
 import { formatEventDateTime } from "@/lib/datetime";
 import { lockEvent, ticketsHeldByAccount } from "./orders";
+import { qrTokenColumns, ticketQrToken } from "./tickets";
 import {
   DEFAULT_TRANSFER_POLICY,
   TRANSFER_ACCEPT_WINDOW_HOURS,
@@ -506,20 +507,21 @@ export async function acceptTransfer(
       }
 
       const toName = current.toHolderName ?? user.name;
-      const oldToken = t.validationToken;
+      const oldToken = ticketQrToken(t);
+      if (!oldToken) throw invalidState("Este ingresso não pode mais ser transferido.");
       // Condicional, como o check-in: só um VALID do mesmo titular muda de mãos.
       const { count } = await tx.issuedTicket.updateMany({
         where: {
           id: t.id,
           status: "VALID",
           holderUserId: current.fromUserId,
-          validationToken: oldToken,
+          validationTokenHash: t.validationTokenHash,
         },
         data: {
           holderUserId: recipient.id,
           holderName: toName,
           holderEmail: user.email,
-          validationToken: randomToken(32),
+          ...qrTokenColumns(t.code, t.tokenVersion + 1),
         },
       });
       if (count !== 1)

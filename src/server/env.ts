@@ -17,6 +17,8 @@ const schema = z.object({
   AUTH_SECRET: z.string().min(16),
   DATA_ENCRYPTION_KEY: z.string().min(16),
   CRON_SECRET: z.string().min(8),
+  // Chave dos tokens do QR dos ingressos (HMAC). Trocar invalida todos os QRs emitidos.
+  QR_TOKEN_SECRET: z.string().min(16).default("dev-only-qr-token-secret-0123456789"),
   PAYMENT_PROVIDER: z.enum(["simulated", "mercadopago"]).default("simulated"),
   SIMULATED_WEBHOOK_SECRET: z
     .string()
@@ -117,6 +119,7 @@ export function env(): Env {
         "AUTH_SECRET",
         "DATA_ENCRYPTION_KEY",
         "CRON_SECRET",
+        "QR_TOKEN_SECRET",
         "SIMULATED_WEBHOOK_SECRET",
       ] as const
     ).filter((k) => e[k].startsWith("dev-only"));

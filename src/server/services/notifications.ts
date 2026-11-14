@@ -18,6 +18,7 @@ import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { renderTicketsPdf, type PdfTicket } from "../tickets/pdf";
 import { BRAND } from "@/lib/brand";
+import { ticketQrToken } from "./tickets";
 import {
   appleWallet,
   buildApplePass,
@@ -44,7 +45,11 @@ export async function loadPdfTickets(
     },
     orderBy: [{ orderItemId: "asc" }, { sequence: "asc" }],
   });
-  return tickets.map((t) => {
+  // Ingresso anterior ao hash do QR que já foi usado: o token antigo foi apagado no
+  // check-in e não há QR para remontar, então fica fora do PDF e das carteiras.
+  return tickets.flatMap((t) => {
+    const validationToken = ticketQrToken(t);
+    if (!validationToken) return [];
     const city = t.event.venue?.city ?? t.event.city;
     const place =
       t.event.locationType === "ONLINE"
@@ -54,7 +59,7 @@ export async function loadPdfTickets(
             .join(", ");
     return {
       code: t.code,
-      validationToken: t.validationToken,
+      validationToken,
       holderName: t.holderName,
       ticketTypeName: t.ticketType.name,
       orderCode: t.order.publicCode,
@@ -68,7 +73,7 @@ export async function loadPdfTickets(
         organizer: t.event.organization.name,
         ageRestriction: t.event.ageRestriction,
       },
-    };
+    } satisfies PdfTicket;
   });
 }
 

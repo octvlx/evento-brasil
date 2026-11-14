@@ -100,6 +100,7 @@ jobs:
       AUTH_SECRET: ci-only-auth-secret-0123456789
       DATA_ENCRYPTION_KEY: Y2ktb25seS1rZXktMDEyMzQ1Njc4OWFiY2RlZjAxMjM=
       CRON_SECRET: ci-only-cron-secret
+      QR_TOKEN_SECRET: ci-only-qr-token-secret-0123456789
       PAYMENT_PROVIDER: simulated
       SIMULATED_WEBHOOK_SECRET: ci-only-webhook-secret
       VITE_CONFIG_NATIVE_IGNORE_WARNING: "true"

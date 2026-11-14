@@ -80,7 +80,7 @@ describe("ZD — política do evento e integridade financeira", () => {
     const outbound = await moved(buyer, ticket.id, recipient);
     const returned = await moved(recipient, ticket.id, buyer);
     expect(returned).toMatchObject({ holderUserId: buyer.id, userId: buyer.id });
-    expect(new Set([ticket.validationToken, outbound.validationToken, returned.validationToken]).size).toBe(3);
+    expect(new Set([ticket.validationTokenHash, outbound.validationTokenHash, returned.validationTokenHash]).size).toBe(3);
     const after = await snapshot(ticket.id);
     expect(after.transfers).toHaveLength(2);
     expect(after.transfers.every((t) => t.status === "ACCEPTED")).toBe(true);
@@ -167,7 +167,7 @@ describe("ZD — política do evento e integridade financeira", () => {
     expect(acceptance.status).toBe("rejected");
     expect(refund).toMatchObject({ status: "fulfilled", value: { paymentId: payment.id, amountCents: order.totalCents, status: "SUCCEEDED" } });
     const final = await snapshot(ticket.id);
-    expect(final.ticket).toMatchObject({ holderUserId: buyer.id, validationToken: ticket.validationToken, status: "REVOKED" });
+    expect(final.ticket).toMatchObject({ holderUserId: buyer.id, validationTokenHash: ticket.validationTokenHash, status: "REVOKED" });
     expect(final.transfers[0].status).not.toBe("PENDING");
     expect(await db.refund.count({ where: { orderId: order.id } })).toBe(1);
   });

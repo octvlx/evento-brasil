@@ -9,6 +9,17 @@ export function hashToken(token: string): string {
   return createHmac("sha256", env().AUTH_SECRET).update(token).digest("hex");
 }
 
+/** SHA-256 (hex) do token do QR: o que o banco e a lista offline guardam. */
+export const qrTokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+
+/**
+ * Token do QR de um ingresso: HMAC(QR_TOKEN_SECRET, código, versão), 43 caracteres
+ * base64url. Não é guardado; quem tem só o banco não consegue montar QRs.
+ */
+export function deriveQrToken(code: string, version: number): string {
+  return createHmac("sha256", env().QR_TOKEN_SECRET).update(`eb-qr:${code}:${version}`).digest("base64url");
+}
+
 export function safeEqual(a: string, b: string): boolean {
   const ba = Buffer.from(a);
   const bb = Buffer.from(b);

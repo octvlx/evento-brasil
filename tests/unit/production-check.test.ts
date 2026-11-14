@@ -7,6 +7,7 @@ const good: Record<string, string> = {
   DATABASE_URL: "postgresql://u:p@db.exemplo.com.br:5432/app?sslmode=require",
   AUTH_SECRET: "a".repeat(48),
   CRON_SECRET: "c".repeat(32),
+  QR_TOKEN_SECRET: "q".repeat(40),
   DATA_ENCRYPTION_KEY: key32("d"),
   PAYMENT_PROVIDER: "mercadopago",
   MERCADO_PAGO_CLIENT_ID: "123",
@@ -53,6 +54,8 @@ describe("verificação de produção: configuração", () => {
     expect(fails(checkProductionEnv({ ...good, CRON_SECRET: "curto-demais" }))).toContain("CRON_SECRET");
     expect(fails(checkProductionEnv({ ...good, DATA_ENCRYPTION_KEY: Buffer.alloc(16).toString("base64") }))).toContain("DATA_ENCRYPTION_KEY");
     expect(fails(checkProductionEnv({ ...good, CRON_SECRET: good.AUTH_SECRET }))).toContain("Segredos repetidos");
+    expect(fails(checkProductionEnv({ ...good, QR_TOKEN_SECRET: "dev-only-qr-token-secret-0123456789" }))).toContain("QR_TOKEN_SECRET");
+    expect(fails(checkProductionEnv({ ...good, QR_TOKEN_SECRET: good.CRON_SECRET }))).toContain("Segredos repetidos");
     expect(fails(checkProductionEnv({ ...good, MERCADO_PAGO_TOKEN_ENCRYPTION_KEY: good.DATA_ENCRYPTION_KEY }))).toContain("Segredos repetidos");
   });
 

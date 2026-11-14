@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { cancelEvent } from "@/server/services/cancellation";
 import { checkInTicket, checkinOfflinePackage, listOfflineDivergences, offlineTokenHash, syncOfflineCheckins } from "@/server/services/checkin";
-import { qrPayload } from "@/server/services/tickets";
+import { qrPayload, ticketQrToken } from "@/server/services/tickets";
 import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
@@ -40,10 +40,10 @@ describe("check-in offline: lista baixada", () => {
     expect(byCode.get(tickets[0].code)?.status).toBe("CHECKED_IN");
     expect(byCode.get(tickets[1].code)?.status).toBe("VALID");
     // Hash = SHA-256 do token (o mesmo que o aparelho calcula); o token nunca sai.
-    expect(byCode.get(tickets[1].code)?.h).toBe(createHash("sha256").update(tickets[1].validationToken).digest("hex"));
-    expect(offlineTokenHash(tickets[1].validationToken)).toBe(byCode.get(tickets[1].code)?.h);
+    expect(byCode.get(tickets[1].code)?.h).toBe(createHash("sha256").update(ticketQrToken(tickets[1])!).digest("hex"));
+    expect(offlineTokenHash(ticketQrToken(tickets[1])!)).toBe(byCode.get(tickets[1].code)?.h);
     const json = JSON.stringify(pkg);
-    for (const t of tickets) expect(json).not.toContain(t.validationToken);
+    for (const t of tickets) expect(json).not.toContain(ticketQrToken(t)!);
     expect(new Date(pkg.validUntil).getTime() - new Date(pkg.generatedAt).getTime()).toBe(12 * 3600_000);
   });
 

@@ -74,7 +74,7 @@ fora do inventário, com essa ressalva.
 | `IssuedTicket.userId` | COMP | dono do ingresso (= comprador hoje) | `tickets.ts`, Meus ingressos | claro | — |
 | `IssuedTicket.holderName` | ID | titular impresso no ingresso | `tickets.ts`, `src/server/tickets/pdf.ts`, `notifications.ts`, `checkin.ts` (leitor mostra o nome), `reports.ts`, `/organizador/participantes`, `/ingressos/[code]`, `/pedido/[orderId]` | claro | **CSV de participantes**, PDF, tela do leitor |
 | `IssuedTicket.holderEmail` | CT | contato do titular | `tickets.ts`, `reports.ts`, `/organizador/participantes` | claro | **CSV de participantes** |
-| `IssuedTicket.validationToken`/`code` | CRED | QR de entrada | `tickets.ts`, `checkin.ts` | claro (é o próprio segredo do QR) | PDF/e-mail |
+| `IssuedTicket.validationTokenHash`/`code` (e `legacyValidationToken`, só de ingressos anteriores ainda não usados) | CRED | QR de entrada | `tickets.ts`, `checkin.ts` | só o SHA-256; o token é HMAC(`QR_TOKEN_SECRET`) recalculado. `legacyValidationToken` em claro até o check-in ou a transferência | PDF/e-mail |
 | `IssuedTicket.checkedInAt`, `status` | COMP | presença no evento | `checkin.ts`, `reports.ts` | claro | **CSV de participantes** (`check_in`) |
 | `TicketCheckin.ticketId`, `scannedAt`, `result` | COMP | histórico de leituras (presença do titular) | `checkin.ts` (histórico do leitor) | claro | equipe de portaria |
 | `TicketCheckin.scannedById` | COMP (do funcionário) | quem leu | `checkin.ts` | claro | equipe |
