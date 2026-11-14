@@ -1,0 +1,27 @@
+# Varredura de segredos (gitleaks) usada pelo job "security" da CI.
+# Regras padrão do gitleaks + exceções só para valores FALSOS conhecidos do projeto.
+# Não adicione aqui um segredo real para "silenciar" a CI: troque o segredo
+# (rotacione no provedor) e remova-o do código.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Valores de exemplo, de teste e de CI (não são segredos reais)"
+paths = [
+  # Modelo de configuração com valores de desenvolvimento.
+  '''^\.env\.example$''',
+  # Testes e suas configurações: chaves e certificados gerados só para os testes.
+  '''^tests/''',
+  '''^vitest(\.[a-z]+)?\.config\.mts$''',
+  '''^playwright\.config\.ts$''',
+  '''^scripts/test-e2e\.mjs$''',
+  # Ambiente da CI: valores marcados como "ci-only".
+  '''^\.github/workflows/ci\.yml$''',
+  # Hashes de integridade dos pacotes.
+  '''^package-lock\.json$''',
+]
+regexes = [
+  '''(?i)(ci|test)[-_]only''',
+  '''not_a_real''',
+]
