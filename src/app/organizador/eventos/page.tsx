@@ -2,10 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { Plus } from "lucide-react";
-import { Badge, Skeleton } from "@/components/ui/primitives";
+import { Badge, Input, Select, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
 import { db } from "@/server/db";
+import { Pager } from "@/features/admin/pager";
+import { listOrganizationEventsPage, ORGANIZER_EVENT_FILTERS, type OrganizerEventFilter } from "@/server/services/events";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { isWizardComplete, wizardProgressByEvent } from "@/server/services/event-wizard-progress";
 import { firstIncompleteStep } from "@/features/organizer/wizard-steps";
@@ -15,21 +17,24 @@ import { effectiveEventStatus } from "@/lib/event-lifecycle";
 
 export const metadata: Metadata = { title: "Eventos — organizador", robots: { index: false } };
 
-export default function OrganizerEventsPage() {
+export default function OrganizerEventsPage({ searchParams }: PageProps<"/organizador/eventos">) {
   return (
     <Suspense fallback={<Skeleton className="h-96" />}>
-      <Content />
+      <Content searchParams={searchParams as Promise<Params>} />
     </Suspense>
   );
 }
 
-async function Content() {
-  const { org, can } = await requireOrganizer("/organizador/eventos");
-  const events = await db.event.findMany({
-    where: { organizationId: org.id },
-    include: { ticketTypes: { select: { quantityTotal: true, quantitySold: true, quantityReserved: true } }, city: true, _count: { select: { tickets: { where: { status: "CHECKED_IN" } } } } },
-    orderBy: { startsAt: "desc" },
-  });
+type Params = { q?: string; status?: string; pagina?: string };
+const PATH = "/organizador/eventos";
+
+async function Content({ searchParams }: { searchParams: Promise<Params> }) {
+  const sp = await searchParams;
+  const { user, org, can } = await requireOrganizer("/organizador/eventos");
+  const status = ORGANIZER_EVENT_FILTERS.find((s) => s === sp.status) as OrganizerEventFilter | undefined;
+  const list = await listOrganizationEventsPage(db, user, org.id, { q: typeof sp.q === "string" ? sp.q : "", status, page: Number(sp.pagina) || 1 });
+  const events = list.rows;
+  const filtered = !!(list.q || status);
   // Rascunhos do assistente ainda incompletos: data provisória e link para continuar.
   const progress = await wizardProgressByEvent(db, events.filter((e) => e.status === "DRAFT").map((e) => e.id));
   return (
@@ -44,8 +49,29 @@ async function Content() {
           )
         }
       />
+      {list.all > 0 && (
+        <form className="mb-4 flex flex-wrap items-end gap-2" role="search" aria-label="Buscar eventos">
+          <Input name="q" defaultValue={list.q} placeholder="Nome do evento" aria-label="Buscar pelo nome do evento" className="min-w-0 basis-full sm:max-w-sm sm:flex-1 sm:basis-0" />
+          <Select name="status" defaultValue={status ?? ""} aria-label="Situação" className="w-auto">
+            <option value="">Todas as situações</option>
+            {ORGANIZER_EVENT_FILTERS.map((s) => (
+              <option key={s} value={s}>
+                {EVENT_STATUS[s].label}
+              </option>
+            ))}
+          </Select>
+          <button className={buttonVariants({ variant: "secondary" })}>Filtrar</button>
+          {filtered && (
+            <Link href={PATH} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+              Limpar
+            </Link>
+          )}
+        </form>
+      )}
       {events.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-border p-10 text-center text-muted-foreground">Nenhum evento ainda. Crie o primeiro!</p>
+        <p className="rounded-2xl border border-dashed border-border p-10 text-center text-muted-foreground">
+          {filtered ? "Nenhum evento com esses filtros." : "Nenhum evento ainda. Crie o primeiro!"}
+        </p>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-border">
           <table className="w-full min-w-[640px] text-sm">
@@ -104,6 +130,7 @@ async function Content() {
           </table>
         </div>
       )}
+      {events.length > 0 && <Pager path={PATH} params={{ q: list.q || undefined, status }} page={list.page} pageCount={list.pageCount} total={list.total} />}
     </>
   );
 }
