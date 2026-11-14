@@ -44,3 +44,14 @@ describe("motivo do cancelamento do ingresso", () => {
     expect(revocationText(null)).toBe("Ingresso cancelado");
   });
 });
+
+describe("reembolso parcial", () => {
+  it("com o pedido pago, fala só dos ingressos escolhidos", () => {
+    expect(refundView("PAID", [{ status: "SUCCEEDED", partial: true }])?.title).toBe("Reembolso parcial concluído");
+    expect(refundView("PAID", [{ status: "PROCESSING", partial: true }])?.detail).toMatch(/demais continuam válidos/);
+    expect(refundView("PAID", [{ status: "FAILED", partial: true }])?.title).toBe("Reembolso parcial em reprocessamento");
+    expect(refundView("PAID", [{ status: "REJECTED", partial: true }])).toBeNull();
+    // O último ingresso fecha o pedido: volta ao texto do integral.
+    expect(refundView("REFUNDED", [{ status: "SUCCEEDED", partial: true }])?.title).toBe("Reembolso concluído");
+  });
+});

@@ -66,6 +66,8 @@ export interface ProviderPaymentSnapshot {
   rawStatus: string;
   amountCents: number;
   processingFeeCents: number | null;
+  /** Total já estornado no provedor (estornos parciais somados); null se o provedor não informa. */
+  refundedCents?: number | null;
   /** Instruções da cobrança existente, inclusive na recuperação por referência. */
   pixCopyPaste?: string;
   pixQrCodeBase64?: string;

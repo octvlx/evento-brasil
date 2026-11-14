@@ -37,7 +37,7 @@ export async function enqueueRefundEmailTx(tx: Tx, refundId: string) {
       [
         "Status do reembolso: confirmado pelo sistema financeiro.",
         "Pedido " + o.publicCode,
-        "Valor: " + formatBRL(refund.amountCents),
+        "Valor: " + formatBRL(refund.amountCents) + (refund.partial ? " (reembolso parcial; os demais ingressos do pedido seguem válidos)" : ""),
         "O prazo para aparecer na sua conta depende do meio de pagamento e da instituição.",
       ],
       env().APP_URL + "/pedido/" + o.id,
@@ -162,7 +162,7 @@ export async function enqueueRefundRestoredEmailTx(tx: Tx, refundId: string) {
         o.event.title,
         "Pedido " + o.publicCode,
         "Não foi possível concluir o reembolso deste pedido, então ele não foi feito e nenhum valor foi devolvido.",
-        "O pedido voltou a ficar pago e seus ingressos são válidos de novo, com o mesmo QR code.",
+        refund.partial ? "Os ingressos deste reembolso são válidos de novo, com o mesmo QR code." : "O pedido voltou a ficar pago e seus ingressos são válidos de novo, com o mesmo QR code.",
         "Se ainda quiser o reembolso, você pode pedir de novo na página do pedido ou falar com o atendimento.",
       ],
       env().APP_URL + "/pedido/" + o.id,
@@ -180,7 +180,7 @@ export async function enqueueRefundDelayedEmailTx(tx: Tx, refundId: string) {
     include: { order: { include: { event: { select: { title: true } } } } },
   });
   const o = refund.order;
-  if (refund.status !== "FAILED" || o.status !== "REFUND_PENDING") return;
+  if (refund.status !== "FAILED" || !(o.status === "REFUND_PENDING" || (refund.partial && o.status === "PAID"))) return;
   await enqueueEmail(tx, {
     dedupeKey: "refund-delayed:" + refund.id,
     template: "REFUND_DELAYED",
@@ -194,7 +194,9 @@ export async function enqueueRefundDelayedEmailTx(tx: Tx, refundId: string) {
         "Valor: " + formatBRL(refund.amountCents),
         "Não conseguimos concluir o estorno com o meio de pagamento, e nenhum valor foi devolvido ainda.",
         "Nossa equipe já foi avisada e vai resolver; você não precisa fazer nada nem pedir de novo.",
-        "Os ingressos deste pedido continuam cancelados. Você receberá outro e-mail quando houver uma resposta.",
+        refund.partial
+          ? "Os ingressos deste reembolso continuam cancelados; os demais do pedido seguem válidos. Você receberá outro e-mail quando houver uma resposta."
+          : "Os ingressos deste pedido continuam cancelados. Você receberá outro e-mail quando houver uma resposta.",
       ],
       env().APP_URL + "/pedido/" + o.id,
     ),

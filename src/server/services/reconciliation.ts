@@ -273,9 +273,20 @@ export async function checkFinancialInvariants(db: Db): Promise<InvariantViolati
     [
       "REVOKED_TICKET_ON_PAID_ORDER",
       "Ingresso revogado em pedido ainda pago (sem reembolso/chargeback)",
+      // Reembolso parcial revoga ingressos com o pedido pago: esses têm reembolso ligado.
       db.$queryRaw`SELECT t.id FROM "IssuedTicket" t JOIN "Order" o ON o.id = t."orderId"
         JOIN "Event" e ON e.id = t."eventId"
-        WHERE t.status = 'REVOKED' AND o.status = 'PAID' AND e.status <> 'CANCELLED'`,
+        LEFT JOIN "Refund" r ON r.id = t."refundId"
+        WHERE t.status = 'REVOKED' AND o.status = 'PAID' AND e.status <> 'CANCELLED'
+          AND (r.id IS NULL OR r.status = 'REJECTED')`,
+    ],
+    [
+      "PARTIAL_REFUND_AMOUNT_MISMATCH",
+      "Reembolso parcial com valor diferente dos ingressos que cobre (preço + taxa)",
+      db.$queryRaw`SELECT r.id FROM "Refund" r
+        LEFT JOIN (SELECT t."refundId", SUM(oi."unitPriceCents" + oi."serviceFeePerUnitCents") AS s
+                   FROM "IssuedTicket" t JOIN "OrderItem" oi ON oi.id = t."orderItemId" GROUP BY 1) c ON c."refundId" = r.id
+        WHERE r.partial AND r.status <> 'REJECTED' AND COALESCE(c.s, 0) <> r."amountCents"`,
     ],
     [
       "REFUND_PENDING_WITHOUT_OPEN_REFUND",

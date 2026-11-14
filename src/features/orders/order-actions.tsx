@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/primitives";
+import { formatBRL } from "@/lib/money";
 import { refreshPaymentStatusAction, requestRefundAction } from "./actions";
+import { RefundTicketList, type RefundableTicket } from "./refund-ticket-list";
 
 /**
  * Reconsulta o provedor enquanto o pedido está pendente (nunca confia no redirect):
@@ -43,22 +45,35 @@ export function PendingPoller({ orderId, returnedPaymentId }: { orderId: string;
   );
 }
 
-export function RefundButton({ orderId }: { orderId: string }) {
+/**
+ * Pedido de reembolso do comprador. Com `tickets` (os ingressos ainda válidos), dá para
+ * escolher quais devolver; `usedTickets` conta os já utilizados, que ficam de fora.
+ */
+export function RefundButton({ orderId, tickets, usedTickets = 0 }: { orderId: string; tickets?: RefundableTicket[]; usedTickets?: number }) {
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [selected, setSelected] = useState<string[]>(() => tickets?.map((t) => t.id) ?? []);
   if (msg) return <Alert variant={msg.ok ? "success" : "danger"}>{msg.text}</Alert>;
+  const choosing = !!tickets && (tickets.length > 1 || usedTickets > 0);
+  const whole = !choosing || (selected.length === tickets!.length && usedTickets === 0);
+  const total = tickets?.filter((t) => selected.includes(t.id)).reduce((s, t) => s + t.amountCents, 0) ?? 0;
   return confirming ? (
     <div className="space-y-2 rounded-xl bg-muted p-3 text-sm">
-      <p>Confirmar o reembolso integral? Os ingressos deste pedido serão cancelados.</p>
+      {choosing && <RefundTicketList tickets={tickets!} selected={selected} onChange={setSelected} disabled={pending} />}
+      <p>
+        {whole
+          ? "Confirmar o reembolso integral? Os ingressos deste pedido serão cancelados."
+          : `Confirmar o reembolso de ${selected.length} ${selected.length === 1 ? "ingresso" : "ingressos"} (${formatBRL(total)}, com a taxa de serviço)? Os ingressos escolhidos serão cancelados e os demais continuam válidos.`}
+      </p>
       <div className="flex gap-2">
         <Button
           size="sm"
           variant="destructive"
-          disabled={pending}
+          disabled={pending || (choosing && !selected.length)}
           onClick={() =>
             start(async () => {
-              const r = await requestRefundAction(orderId);
+              const r = await requestRefundAction(orderId, tickets ? selected : undefined);
               setMsg(r.ok ? { ok: true, text: r.data.status === "SUCCEEDED" ? "Reembolso concluído." : "Reembolso solicitado; você será avisado por e-mail." } : { ok: false, text: r.error });
             })
           }

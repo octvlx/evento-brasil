@@ -116,6 +116,7 @@ const paymentSchema = z.object({
   status_detail: z.string().nullish(),
   currency_id: z.literal("BRL"),
   transaction_amount: z.number().nonnegative(),
+  transaction_amount_refunded: z.number().nonnegative().nullish(),
   date_of_expiration: z.string().nullish(),
   fee_details: z.array(z.object({ amount: z.number().nonnegative(), type: z.string().nullish() })).nullish(),
   point_of_interaction: z.object({
@@ -235,6 +236,7 @@ function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
     processingFeeCents: fees
       ? fees.filter((fee) => fee.type !== "application_fee").reduce((total, fee) => total + cents(fee.amount), 0)
       : null,
+    refundedCents: payment.transaction_amount_refunded == null ? null : cents(payment.transaction_amount_refunded),
     pixCopyPaste: payment.point_of_interaction?.transaction_data?.qr_code ?? undefined,
     pixQrCodeBase64: payment.point_of_interaction?.transaction_data?.qr_code_base64 ?? undefined,
     expiresAt: providerDate(expiration),

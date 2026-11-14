@@ -14,7 +14,7 @@ import { financeLog } from "./finance-log";
 import { postProcessingFee, postReversal, postSale } from "./ledger";
 import { acquireLateInventoryTx, finalizePaidOrderTx, lockEvent, lockOrder, releaseOrderTx } from "./orders";
 import { notifyOrderPaid } from "./notifications";
-import { closePendingTransfersTx, confirmRefundTx, processRefund } from "./refunds";
+import { closePendingTransfersTx, confirmRefundTx, partialRefundCents, processRefund } from "./refunds";
 
 export async function startPayment(
   db: Db,
@@ -406,18 +406,26 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
       }
       case "REFUNDED": {
         if (payment.status === "REFUNDED" || payment.status === "CHARGED_BACK") return "no_change";
-        let refund = await tx.refund.findFirst({ where: { orderId: order.id, status: { in: ["REQUESTED", "PROCESSING", "FAILED"] } } });
-        refund ??= await tx.refund.create({
-          data: {
-            orderId: order.id,
-            paymentId: payment.id,
-            amountCents: order.totalCents,
-            reason: "ADMIN",
-            idempotencyKey: `refund:${order.id}:provider-initiated`,
-            note: "Reembolso iniciado diretamente no provedor.",
-          },
-        });
-        await confirmRefundTx(tx, refund.id, now);
+        // Estorno total no provedor: conclui o reembolso em aberto (integral ou parcial)
+        // e, se ainda sobrarem ingressos, um integral pelo restante.
+        const open = await tx.refund.findFirst({ where: { orderId: order.id, status: { in: ["REQUESTED", "PROCESSING", "FAILED"] } } });
+        if (open) await confirmRefundTx(tx, open.id, now);
+        const after = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { status: true } });
+        if (after.status !== "REFUNDED") {
+          const refund = await tx.refund.upsert({
+            where: { idempotencyKey: `refund:${order.id}:provider-initiated` },
+            create: {
+              orderId: order.id,
+              paymentId: payment.id,
+              amountCents: order.totalCents - (await partialRefundCents(tx, order.id)),
+              reason: "ADMIN",
+              idempotencyKey: `refund:${order.id}:provider-initiated`,
+              note: "Reembolso iniciado diretamente no provedor.",
+            },
+            update: {},
+          });
+          await confirmRefundTx(tx, refund.id, now);
+        }
         return "refunded";
       }
       case "CHARGED_BACK": {
@@ -430,7 +438,10 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         await closePendingTransfersTx(tx, { orderId: order.id }, "Pagamento contestado (chargeback)", now);
         await tx.order.update({ where: { id: order.id }, data: { status: "DISPUTED" } });
         // Política padrão: perda do chargeback é do organizador (comissão retida). Revisão necessária.
-        await postReversal(tx, "CHARGEBACK", order, { paymentId: payment.id, returnCommission: false });
+        // Reembolsos parciais já concluídos saíram do razão: o chargeback estorna só o restante.
+        const partials = await tx.refund.aggregate({ where: { orderId: order.id, partial: true, status: "SUCCEEDED" }, _sum: { amountCents: true } });
+        const chargedCents = order.totalCents - (partials._sum.amountCents ?? 0);
+        if (chargedCents > 0) await postReversal(tx, "CHARGEBACK", { ...order, totalCents: chargedCents }, { paymentId: payment.id, returnCommission: false });
         await audit(tx, { organizationId: order.organizationId, action: "payment.charged_back", entityType: "Order", entityId: order.id });
         return "charged_back";
       }

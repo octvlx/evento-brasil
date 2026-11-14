@@ -678,6 +678,11 @@ export async function couponUsage(db: Db, actor: Actor, organizationId: string) 
 
 const SOLD_STATUSES = Prisma.sql`('PAID', 'REFUND_PENDING', 'REFUNDED', 'DISPUTED')`;
 const REFUND_STATUSES = Prisma.sql`('REFUND_PENDING', 'REFUNDED')`;
+// Reembolsos que contam (integrais e parciais): todos menos os desfeitos pelo admin.
+const COUNTED_REFUNDS = Prisma.sql`SELECT "orderId", SUM("amountCents") AS cents FROM "Refund" WHERE status <> 'REJECTED' GROUP BY 1`;
+// Ingressos cobertos por reembolso parcial, por item (o integral conta o item inteiro).
+const PARTIAL_REFUND_TICKETS = Prisma.sql`SELECT t."orderItemId", COUNT(*) AS c FROM "IssuedTicket" t JOIN "Refund" r ON r.id = t."refundId"
+  WHERE r.partial AND r.status <> 'REJECTED' GROUP BY 1`;
 
 export interface SalesFilters {
   eventId?: string | null;
@@ -710,9 +715,9 @@ export async function salesReport(db: Db, actor: Actor, organizationId: string, 
     db.$queryRaw<{ orders: number; gross: bigint | null; ticket_net: bigint | null; discount: bigint | null; service_fee: bigint | null; refunded_orders: number; refunded: bigint | null }[]>`
       SELECT COUNT(*)::int AS orders, SUM(o."totalCents")::bigint AS gross, SUM(o."subtotalCents")::bigint AS ticket_net,
              SUM(o."discountCents")::bigint AS discount, SUM(o."serviceFeeCents")::bigint AS service_fee,
-             (COUNT(*) FILTER (WHERE o.status::text IN ${REFUND_STATUSES}))::int AS refunded_orders,
-             (SUM(o."totalCents") FILTER (WHERE o.status::text IN ${REFUND_STATUSES}))::bigint AS refunded
-      FROM "Order" o WHERE ${where}`,
+             (COUNT(*) FILTER (WHERE rf."orderId" IS NOT NULL))::int AS refunded_orders,
+             SUM(rf.cents)::bigint AS refunded
+      FROM "Order" o LEFT JOIN (${COUNTED_REFUNDS}) rf ON rf."orderId" = o.id WHERE ${where}`,
     db.$queryRaw<{ tickets: bigint | null }[]>`
       SELECT SUM(oi.quantity)::bigint AS tickets FROM "OrderItem" oi JOIN "Order" o ON o.id = oi."orderId" WHERE ${where}`,
     db.$queryRaw<{ ticket_type_id: string; name: string; kind: string; event_id: string; event_title: string; price_cents: number; tickets: bigint; net: bigint; discount: bigint; refunded_tickets: bigint }[]>`
@@ -721,9 +726,10 @@ export async function salesReport(db: Db, actor: Actor, organizationId: string, 
              SUM(oi.quantity)::bigint AS tickets,
              SUM(oi."unitPriceCents" * oi.quantity)::bigint AS net,
              SUM(oi."discountPerUnitCents" * oi.quantity)::bigint AS discount,
-             COALESCE(SUM(oi.quantity) FILTER (WHERE o.status::text IN ${REFUND_STATUSES}), 0)::bigint AS refunded_tickets
+             COALESCE(SUM(CASE WHEN o.status::text IN ${REFUND_STATUSES} THEN oi.quantity ELSE COALESCE(pt.c, 0) END), 0)::bigint AS refunded_tickets
       FROM "OrderItem" oi
       JOIN "Order" o ON o.id = oi."orderId"
+      LEFT JOIN (${PARTIAL_REFUND_TICKETS}) pt ON pt."orderItemId" = oi.id
       JOIN "TicketType" tt ON tt.id = oi."ticketTypeId"
       JOIN "Event" e ON e.id = o."eventId"
       WHERE ${where}
@@ -816,6 +822,7 @@ export async function listSalesOrders(db: Db, actor: Actor, organizationId: stri
       trackingLink: { select: { name: true } },
       items: { select: { ticketTypeName: true, quantity: true } },
       payments: { where: { paidAt: { not: null } }, select: { method: true } },
+      refunds: { where: { status: { not: "REJECTED" } }, select: { amountCents: true } },
     },
     orderBy: { paidAt: "asc" },
     take: SALES_CSV_LIMIT,
@@ -833,7 +840,7 @@ export function salesOrdersToCsv(
       ["Evento", meta.event ?? "Todos"],
       ["Gerado em", formatDateTimeShort(meta.generatedAt)],
       [],
-      ["Pedido", "Pago em", "Evento", "Situação", "Ingressos", "Tipos", "Ingressos líquido (R$)", "Desconto (R$)", "Taxa de serviço (R$)", "Total (R$)", "Comissão (R$)", "Pagamento", "Cupom", "Origem", "Simulado"],
+      ["Pedido", "Pago em", "Evento", "Situação", "Ingressos", "Tipos", "Ingressos líquido (R$)", "Desconto (R$)", "Taxa de serviço (R$)", "Total (R$)", "Comissão (R$)", "Reembolsado (R$)", "Pagamento", "Cupom", "Origem", "Simulado"],
       ...rows.map((o) => [
         o.publicCode,
         o.paidAt ? formatDateTimeShort(o.paidAt) : "",
@@ -846,6 +853,7 @@ export function salesOrdersToCsv(
         centsBR(o.serviceFeeCents),
         centsBR(o.totalCents),
         centsBR(o.commissionCents),
+        centsBR(o.refunds.reduce((sum, r) => sum + r.amountCents, 0)),
         [...new Set(o.payments.map((p) => p.method))].join(", "),
         o.couponCode ?? "",
         o.trackingLink?.name ?? o.utmSource ?? "",

@@ -76,6 +76,7 @@ export class SimulatedPaymentAdapter implements PaymentProviderAdapter {
       amountCents: row.amountCents,
       // O simulado não cobra taxa de processamento.
       processingFeeCents: 0,
+      refundedCents: row.refundedCents,
       pixCopyPaste: row.method === "PIX" ? `SIMULADO-NAO-PAGUE-${row.id}` : undefined,
       expiresAt: row.expiresAt,
     };
@@ -88,12 +89,22 @@ export class SimulatedPaymentAdapter implements PaymentProviderAdapter {
 
   async refundPayment(input: { providerPaymentId: string; amountCents: number; idempotencyKey: string }): Promise<RefundResult> {
     const row = await this.db.simulatedProviderPayment.findUniqueOrThrow({ where: { id: input.providerPaymentId } });
-    if (row.state === "REFUNDED") return { providerRefundId: `sim-refund-${row.id}`, status: "SUCCEEDED" };
-    if (row.state !== "APPROVED" || input.amountCents !== row.amountCents) {
-      return { providerRefundId: `sim-refund-${row.id}`, status: "FAILED" };
+    const refundId = `sim-refund-${row.id}-${row.refundKeys.length + 1}`;
+    // Mesma chave de idempotência: o estorno já foi aplicado.
+    if (row.refundKeys.includes(input.idempotencyKey)) return { providerRefundId: `sim-refund-${row.id}-${row.refundKeys.indexOf(input.idempotencyKey) + 1}`, status: "SUCCEEDED" };
+    // Estorno integral anterior a este controle (sem chaves registradas).
+    if (row.state === "REFUNDED" && !row.refundKeys.length) return { providerRefundId: `sim-refund-${row.id}`, status: "SUCCEEDED" };
+    // Aceita estornos parciais (como o Mercado Pago) até o valor pago.
+    if (row.state !== "APPROVED" || input.amountCents <= 0 || row.refundedCents + input.amountCents > row.amountCents) {
+      return { providerRefundId: refundId, status: "FAILED" };
     }
-    await this.db.simulatedProviderPayment.update({ where: { id: row.id }, data: { state: "REFUNDED", refundedAt: new Date() } });
-    return { providerRefundId: `sim-refund-${row.id}`, status: "SUCCEEDED" };
+    const refundedCents = row.refundedCents + input.amountCents;
+    const full = refundedCents === row.amountCents;
+    await this.db.simulatedProviderPayment.update({
+      where: { id: row.id },
+      data: { refundedCents, refundKeys: { push: input.idempotencyKey }, ...(full ? { state: "REFUNDED", refundedAt: new Date() } : {}) },
+    });
+    return { providerRefundId: refundId, status: "SUCCEEDED" };
   }
 
   async verifyWebhook(req: WebhookRequest): Promise<WebhookVerification> {

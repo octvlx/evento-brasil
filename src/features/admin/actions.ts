@@ -65,6 +65,8 @@ export const deleteUserAccountAction = async (id: string, confirmEmail: string, 
     await adminDeleteAccount(db, a, id, { confirmEmail: String(confirmEmail), reason: String(reason), adminCode: String(adminCode) });
   });
 export const adminRefundAction =async (orderId: string, note?: string) => run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, note ?? ""));
+export const adminPartialRefundAction = async (orderId: string, ticketIds: string[], note: string) =>
+  run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, String(note ?? ""), Array.isArray(ticketIds) ? ticketIds.map(String).slice(0, 200) : []));
 export const retryRefundAction = async (refundId: string) => run(() => processRefund(db, getPaymentAdapter(), refundId));
 
 export async function saveCommissionRuleAction(_prev: ActionResult | undefined, formData: FormData): Promise<ActionResult> {

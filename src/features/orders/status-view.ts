@@ -25,8 +25,21 @@ export interface RefundView {
  * reembolso é solicitado; se o estorno falhar no provedor, o pedido fica em
  * REFUND_PENDING e a equipe reprocessa — o comprador não precisa pedir de novo.
  */
-export function refundView(orderStatus: string, refunds: { status: string }[]): RefundView | null {
+export function refundView(orderStatus: string, refunds: { status: string; partial?: boolean }[]): RefundView | null {
   const latest = refunds[0];
+  // Reembolso parcial com o pedido ainda pago: só os ingressos escolhidos foram cancelados.
+  if (latest?.partial && orderStatus === "PAID") {
+    if (latest.status === "SUCCEEDED")
+      return { tone: "success", title: "Reembolso parcial concluído", detail: "O valor dos ingressos escolhidos foi devolvido pela mesma forma de pagamento. Os demais ingressos continuam válidos." };
+    if (latest.status === "FAILED")
+      return {
+        tone: "warning",
+        title: "Reembolso parcial em reprocessamento",
+        detail: "O provedor de pagamento não concluiu o estorno na primeira tentativa. Nossa equipe vai reprocessá-lo; não é preciso solicitar de novo. Os ingressos escolhidos continuam cancelados e os demais, válidos.",
+      };
+    if (latest.status === "REJECTED") return null;
+    return { tone: "warning", title: "Reembolso parcial em andamento", detail: "Os ingressos escolhidos já foram cancelados; os demais continuam válidos. Avisaremos por e-mail quando o estorno for concluído." };
+  }
   if (orderStatus === "REFUNDED" || latest?.status === "SUCCEEDED") {
     return { tone: "success", title: "Reembolso concluído", detail: "O valor foi devolvido pela mesma forma de pagamento. O prazo para aparecer no extrato depende do seu banco." };
   }

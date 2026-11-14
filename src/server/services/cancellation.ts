@@ -8,7 +8,7 @@ import { AppError } from "../errors";
 import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { assertEventTransition } from "./events";
 import { lockCouponsOfOrders, lockEvent, releaseOrderTx } from "./orders";
-import { closePendingTransfersTx, processRefund } from "./refunds";
+import { closePendingTransfersTx, partialRefundCents, processRefund } from "./refunds";
 
 /**
  * Cancela o evento: libera reservas pendentes, revoga ingressos e abre um
@@ -50,9 +50,11 @@ export async function cancelEvent(
       const key = `refund:${o.id}:event_cancelled`;
       const refund = await tx.refund.upsert({
         where: { idempotencyKey: key },
-        create: { orderId: o.id, paymentId: o.payments[0]?.id ?? null, amountCents: o.totalCents, reason: "EVENT_CANCELLED", requestedById: actor.id, idempotencyKey: key },
+        // Ingressos já cobertos por reembolso parcial não entram de novo no valor.
+        create: { orderId: o.id, paymentId: o.payments[0]?.id ?? null, amountCents: o.totalCents - (await partialRefundCents(tx, o.id)), reason: "EVENT_CANCELLED", requestedById: actor.id, idempotencyKey: key },
         update: {},
       });
+      await tx.issuedTicket.updateMany({ where: { orderId: o.id, refundId: null }, data: { refundId: refund.id } });
       await tx.order.update({ where: { id: o.id }, data: { status: "REFUND_PENDING" } });
       refundIds.push(refund.id);
     }
