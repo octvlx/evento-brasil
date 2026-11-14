@@ -241,8 +241,10 @@ e `organizer-team.spec.ts` (convites e papéis).
    zerados; não copia cupons, links, equipe, regras de comissão nem o regime de
    meia-entrada. Despublicar volta PUBLISHED/PENDING_REVIEW a rascunho, recusado com
    ingresso válido/usado ou pedido aguardando pagamento (aí é cancelar), sob a mesma
-   trava do evento que `createOrder`. Falta: galeria de imagens (`EventImage` existe
-   mas não é usado), busca/filtro na lista, paginação.
+   trava do evento que `createOrder`. ~~Busca/filtro na lista e paginação~~ — feitos
+   (`listOrganizationEventsPage`: título sem diferenciar maiúsculas, situação com
+   publicado/encerrado pelo relógio, 20 por página). Falta: galeria de imagens
+   (`EventImage` existe mas não é usado).
 6. ~~Avisar compradores quando data/local de evento com vendas mudar~~ — feito (R8).
    Falta: reenvio manual do aviso e outbox durável (T7).
 7. **Organização:** ~~logo e capa~~ — feitos: `Organization.logoUrl`/`coverUrl`
