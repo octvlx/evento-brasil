@@ -219,6 +219,24 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
             <div className="space-y-3 whitespace-pre-line text-[15px] leading-relaxed text-foreground/90">{event.description}</div>
           </section>
 
+          {event.images.length > 0 && (
+            <section aria-labelledby="event-gallery-title">
+              <h2 id="event-gallery-title" className="mb-3 font-display text-xl font-bold">
+                Fotos
+              </h2>
+              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {event.images.map((img) => (
+                  <li key={img.id}>
+                    <a href={img.url} target="_blank" rel="noopener" className="block aspect-[4/3] overflow-hidden rounded-2xl bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.alt} loading="lazy" decoding="async" className="h-full w-full object-cover transition duration-300 hover:scale-105 motion-reduce:hover:scale-100" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {(event.accessibilityInfo || event.venue?.accessibilityInfo) && (
             <section>
               <h2 className="mb-3 flex items-center gap-2 font-display text-xl font-bold">

@@ -20,6 +20,7 @@ import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/t
 import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, duplicateEvent, submitEventForPublication, unpublishEvent, updateEvent, upsertTicketType } from "@/server/services/events";
 import { extendEventChangeWindow } from "@/server/services/event-changes";
+import { addEventImage, moveEventImage, removeEventImage, updateEventImageAlt } from "@/server/services/event-images";
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
 import { lookupPostalAddress } from "@/server/services/postal-address";
@@ -167,6 +168,43 @@ export async function uploadCoverAction(formData: FormData): Promise<ActionResul
     const { url } = await storeEventImage(orgId, file);
     return { url };
   });
+}
+
+// Galeria de fotos do evento (event-images.ts).
+export async function addEventImageAction(eventId: string, formData: FormData): Promise<ActionResult<{ id: string }>> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    const file = formData.get("file");
+    if (!(file instanceof File) || file.size === 0) throw new AppError("VALIDATION", "Selecione uma imagem.");
+    return { id: (await addEventImage(db, user, eventId, file, String(formData.get("alt") ?? ""))).id };
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function updateEventImageAltAction(imageId: string, alt: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => void (await updateEventImageAlt(db, user, imageId, String(alt ?? ""))));
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function moveEventImageAction(imageId: string, direction: "up" | "down"): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    if (direction !== "up" && direction !== "down") throw new AppError("VALIDATION", "Direção inválida.");
+    await moveEventImage(db, user, imageId, direction);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function removeEventImageAction(imageId: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => void (await removeEventImage(db, user, imageId)));
+  if (res.ok) refresh();
+  return res;
 }
 
 export async function saveTicketTypeAction(eventId: string, input: TicketTypeInput): Promise<ActionResult<{ id: string }>> {
