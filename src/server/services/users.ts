@@ -18,9 +18,8 @@ import { audit } from "../audit";
 import { DUMMY_HASH, hashPassword, verifyPassword } from "../auth/password";
 import { assertAcceptableNewPassword } from "../auth/breached-password";
 import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
-import { revokeAllSessions } from "../auth/sessions";
 import { ADMIN_ROLES } from "../auth/admin-roles";
-import { AppError } from "../errors";
+import { AppError, notFound } from "../errors";
 import { BUYER_KINDS, recordAcceptanceTx } from "./terms";
 
 /** Erro de validação com a primeira mensagem do schema (pt-BR), em vez de ZodError. */
@@ -123,26 +122,29 @@ export async function setUserSuspended(
       "VALIDATION",
       "Você não pode suspender a própria conta.",
     );
-  const target = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { anonymizedAt: true } });
-  // Conta excluída pelo titular: fica suspensa e anonimizada para sempre.
-  if (target.anonymizedAt)
-    throw new AppError("INVALID_STATE", "Esta conta foi excluída pelo titular e não pode ser reativada.");
-  const user = await db.user.update({
-    where: { id: userId },
-    data: {
-      status: suspended ? "SUSPENDED" : "ACTIVE",
-      suspendedReason: suspended ? (reason ?? null) : null,
-    },
+  // Uma transação sob trava do usuário: suspender × reativar ao mesmo tempo ficam em
+  // ordem, e status, sessões e auditoria nunca discordam.
+  return db.$transaction(async (tx) => {
+    const [target] = await tx.$queryRaw<{ status: "ACTIVE" | "SUSPENDED"; anonymizedAt: Date | null }[]>`SELECT status, "anonymizedAt" FROM "User" WHERE id = ${userId} FOR UPDATE`;
+    if (!target) throw notFound("Usuário não encontrado.");
+    // Conta excluída pelo titular: fica suspensa e anonimizada para sempre.
+    if (target.anonymizedAt)
+      throw new AppError("INVALID_STATE", "Esta conta foi excluída pelo titular e não pode ser reativada.");
+    const newStatus = suspended ? "SUSPENDED" : "ACTIVE";
+    const user = await tx.user.update({
+      where: { id: userId },
+      data: { status: newStatus, suspendedReason: suspended ? (reason ?? null) : null },
+    });
+    if (suspended) await tx.session.deleteMany({ where: { userId } });
+    await audit(tx, {
+      actorUserId: admin.id,
+      action: suspended ? "user.suspended" : "user.reinstated",
+      entityType: "User",
+      entityId: userId,
+      metadata: { reason: reason ?? null, previousStatus: target.status, newStatus },
+    });
+    return user;
   });
-  if (suspended) await revokeAllSessions(db, userId);
-  await audit(db, {
-    actorUserId: admin.id,
-    action: suspended ? "user.suspended" : "user.reinstated",
-    entityType: "User",
-    entityId: userId,
-    metadata: { reason: reason ?? null },
-  });
-  return user;
 }
 
 /**
