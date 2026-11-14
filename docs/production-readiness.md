@@ -38,8 +38,13 @@ criação do primeiro administrador (`npm run admin:promote`): `docs/deploy-prod
 - [x] Limitação de taxa distribuída: contadores no Postgres (`RateLimitBucket`, `src/server/rate-limit.ts`), valem entre instâncias e reinícios; janelas vencidas saem no expurgo programado.
 - [x] Cabeçalhos de segurança (CSP sem nonce, HSTS fora do dev, `frame-ancestors`/`X-Frame-Options`, `Permissions-Policy`) em `next.config.ts`. CSP com nonce exigiria renderização dinâmica e é incompatível com o pré-render parcial.
 - [x] Revisão de dependências e varredura de segredos no CI (job `security` em `.github/workflows/ci.yml`): `npm audit` falha com vulnerabilidade moderada ou pior nas dependências de produção e alta ou pior nas de desenvolvimento; gitleaks (versão fixa, checksum conferido) varre os commits de cada PR e push na `main`, com exceções só para valores falsos em `.gitleaks.toml`. Disparo manual do workflow (`workflow_dispatch`) varre o histórico inteiro.
-- [ ] Observabilidade: logs estruturados, rastreamento de erros, alertas para
-      webhooks não processados e reembolsos com falha.
+- [x] Observabilidade: logs estruturados em JSON (`src/server/log.ts`, campos sensíveis
+      mascarados) e alertas (`src/server/services/ops-health.ts`) para webhooks parados,
+      reembolsos aguardando o admin, reembolsos presos, pagamentos para reembolso manual,
+      e-mails com falha e invariantes violados — por e-mail (`ALERT_EMAILS`), no quadro da
+      home do `/admin` e em `GET /api/cron/health` para monitor externo.
+- [ ] Rastreamento de erros da aplicação (ex.: Sentry): exige escolher o serviço e
+      adicionar dependência.
 
 ## Pendências funcionais conhecidas
 

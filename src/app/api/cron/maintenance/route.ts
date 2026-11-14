@@ -3,6 +3,8 @@
 // liberação da cota de meia-entrada (L7c), reconcilia pagamentos/reembolsos com o
 // provedor e verifica os invariantes financeiros e, no máximo uma vez por hora,
 // expurga dados pessoais vencidos (prazos provisórios em src/server/retention.ts).
+// Por último verifica a saúde operacional e enfileira alertas (ops-health.ts) antes
+// do envio de e-mails, para o alerta sair na mesma passada.
 // Protegido por segredo no header x-cron-secret.
 // Cada etapa é idempotente e isolada: a falha de uma é registrada e não impede as
 // demais; a resposta sai com 500 para o agendador alertar. Nada aqui é a única
@@ -16,6 +18,8 @@ import { completeEndedEvents } from "@/server/services/events";
 import { recordHalfPriceReleases } from "@/server/services/half-price";
 import { expireStaleOrders } from "@/server/services/orders";
 import { financeLog } from "@/server/services/finance-log";
+import { logEvent } from "@/server/log";
+import { operationalHealth, raiseOperationalAlerts } from "@/server/services/ops-health";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { runRetentionPurgeIfDue } from "@/server/services/retention-purge";
 import { expireTicketTransfers } from "@/server/services/transfers";
@@ -31,7 +35,7 @@ export async function POST(req: Request) {
       return await run();
     } catch (error) {
       failed.push(name);
-      console.error(`[cron] ${JSON.stringify({ step: name, error: error instanceof Error ? error.message : String(error), at: new Date().toISOString() })}`);
+      logEvent("error", "cron", "step_failed", { step: name, error: error instanceof Error ? error.message : String(error) });
       return null;
     }
   };
@@ -46,11 +50,16 @@ export async function POST(req: Request) {
   const violations = (await step("checkFinancialInvariants", () => checkFinancialInvariants(db))) ?? [];
   if (violations.length) {
     // Incidente: nunca corrigir automaticamente — registrar para análise humana.
-    console.error("[financeiro] violações de invariantes:", JSON.stringify(violations));
+    logEvent("error", "financeiro", "invariant_violations", { violations });
   }
   for (const e of reconciliation?.errors ?? []) {
     financeLog("error", `reconciliation.${e.kind}_failed`, { orderId: e.orderId }, { entityId: e.id, message: e.message });
   }
+  // Alertas: problemas que precisam de alguém (não falham o cron; o próprio problema já é o aviso).
+  const health = await step("operationalHealth", async () => {
+    const checks = await operationalHealth(db, new Date(), violations);
+    return { checks, ...(await raiseOperationalAlerts(db, checks)) };
+  });
   const emailDelivery = await step("dispatchEmailOutbox", () => dispatchEmailOutbox(db));
   const retention = await step("runRetentionPurgeIfDue", () => runRetentionPurgeIfDue(db));
   // Eventos externos: coleta limitada das fontes ativas, no máximo a cada 6 h por fonte.
@@ -66,6 +75,7 @@ export async function POST(req: Request) {
       retention,
       externalSync,
       invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
+      alerts: health && { problems: health.checks.map((c) => ({ code: c.code, severity: c.severity, count: c.count })), emailsQueued: health.queued },
       failedSteps: failed,
       at: new Date().toISOString(),
     },

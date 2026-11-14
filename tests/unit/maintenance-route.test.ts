@@ -13,6 +13,8 @@ vi.mock("@/server/services/retention-purge", () => ({ runRetentionPurgeIfDue: as
 vi.mock("@/server/services/external-events", () => ({ runExternalSyncIfDue: async () => ({}) }));
 vi.mock("@/server/services/finance-log", () => ({ financeLog: vi.fn() }));
 vi.mock("@/server/email/outbox", () => ({ dispatchEmailOutbox: mocks.email }));
+vi.mock("@/server/services/ops-health", () => ({ operationalHealth: async () => [], raiseOperationalAlerts: async () => ({ problems: 0, queued: 0 }) }));
+vi.mock("@/server/log", () => ({ logEvent: vi.fn() }));
 import { POST } from "@/app/api/cron/maintenance/route";
 
 beforeEach(() => {

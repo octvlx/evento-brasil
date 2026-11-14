@@ -50,6 +50,9 @@ const schema = z.object({
     .optional()
     .transform((v) => (v ? v === "true" : process.env.NODE_ENV !== "test")),
   EMAIL_FROM: z.string().default("QQPega <nao-responda@example.com>"),
+  // Alertas operacionais (webhook parado, reembolso com falha, etc.): e-mails separados
+  // por vírgula. Vazio = só log e o quadro na home do /admin.
+  ALERT_EMAILS: z.string().optional(),
   STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
   OBJECT_STORAGE_ENDPOINT: z.string().optional(),
   OBJECT_STORAGE_REGION: z.string().default("auto"),

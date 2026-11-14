@@ -54,6 +54,7 @@ segredos repetidos.
 | `STORAGE_PROVIDER` e `OBJECT_STORAGE_*` | `s3`, bucket, chaves e URL pública HTTPS |
 | `MFA_REQUIRED` | vazio ou `true` (2FA obrigatório para admins e donos de organização) |
 | `PASSWORD_BREACH_CHECK` | vazio (ligado) |
+| `ALERT_EMAILS` | e-mail(s) da equipe para alertas operacionais, separados por vírgula |
 
 ☐ **Guarde a `DATA_ENCRYPTION_KEY` e a `MERCADO_PAGO_TOKEN_ENCRYPTION_KEY` num cofre
 fora da hospedagem.** Sem elas, CPF/CNPJ, segredos de 2FA e as credenciais dos
@@ -76,7 +77,12 @@ vendedores ficam ilegíveis, e não há como recuperar.
 
 - ☐ **Cron** a cada minuto: `POST <APP_URL>/api/cron/maintenance` com o header
   `x-cron-secret: <CRON_SECRET>`. Ele expira reservas, encerra eventos, envia a fila
-  de e-mails e reprocessa webhooks. Sem o cron, nenhum e-mail sai.
+  de e-mails e reprocessa webhooks. Sem o cron, nenhum e-mail sai. Também envia os
+  alertas para `ALERT_EMAILS` (webhook parado, reembolso com falha aguardando o admin,
+  pagamento para reembolso manual, e-mails com falha), no máximo 1 por problema a cada 6 h.
+- ☐ **Monitor externo** (ex.: UptimeRobot) a cada 5 min: `GET <APP_URL>/api/cron/health`
+  com o mesmo header. Responde 503 com problema crítico. Configure também o aviso de
+  falha do próprio agendador do cron: se o cron parar, ninguém mais recebe alerta.
 - ☐ **Mercado Pago**: redirecionamento OAuth `<APP_URL>/api/mercadopago/callback` e
   webhooks `<APP_URL>/api/webhooks/mercadopago`, com a mesma assinatura de
   `MERCADO_PAGO_WEBHOOK_SECRET`.

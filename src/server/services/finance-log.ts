@@ -2,6 +2,7 @@
 // id do pedido como correlation id quando conhecido, para cruzar cron, webhook,
 // reembolso e auditoria do mesmo pedido.
 import "server-only";
+import { logEvent } from "../log";
 
 export interface FinanceLogContext {
   orderId?: string | null;
@@ -11,6 +12,5 @@ export interface FinanceLogContext {
 }
 
 export function financeLog(level: "error" | "warn" | "info", event: string, ctx: FinanceLogContext, details: Record<string, unknown> = {}) {
-  const line = JSON.stringify({ area: "financeiro", event, correlationId: ctx.orderId ?? null, ...ctx, ...details, at: new Date().toISOString() });
-  console[level](`[financeiro] ${line}`);
+  logEvent(level, "financeiro", event, { correlationId: ctx.orderId ?? null, ...ctx, ...details });
 }
