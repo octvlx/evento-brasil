@@ -11,7 +11,7 @@ import { enqueueEmail } from "../email/outbox";
 import { transactionalEmail } from "../email/templates";
 import { env } from "../env";
 import { logEvent } from "../log";
-import { refundRetryStates } from "./refunds";
+import { AWAITING_REFUND_WHERE, refundRetryStates } from "./refunds";
 
 export type HealthSeverity = "critical" | "warning";
 
@@ -48,7 +48,7 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
       _min: { receivedAt: true },
     }),
     db.refund.findMany({
-      where: { status: "FAILED", order: { status: "REFUND_PENDING" } },
+      where: AWAITING_REFUND_WHERE,
       select: { id: true, note: true, updatedAt: true },
     }),
     db.refund.aggregate({

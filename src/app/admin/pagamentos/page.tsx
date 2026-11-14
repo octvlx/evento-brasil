@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
 import { AdminActionButton } from "@/features/admin/controls";
+import { AdminPartialRefund } from "@/features/admin/partial-refund";
 import { adminRefundAction, retryRefundAction } from "@/features/admin/actions";
 import { ReasonedDecisionButton } from "@/features/admin/decision-controls";
 import { ADMIN_REFUND_REASON } from "@/features/admin/labels";
@@ -29,7 +30,17 @@ async function Content() {
   const [failed, orders, refunds, flagged, webhooks] = await Promise.all([
     listFailedRefunds(db, admin),
     db.order.findMany({
-      include: { event: { select: { title: true } }, organization: { select: { name: true } }, payments: { orderBy: { createdAt: "desc" } } },
+      include: {
+        event: { select: { title: true } },
+        organization: { select: { name: true } },
+        payments: { orderBy: { createdAt: "desc" } },
+        // Ingressos que ainda podem entrar num reembolso parcial.
+        tickets: {
+          where: { status: "VALID", refundId: null },
+          select: { id: true, holderName: true, ticketType: { select: { name: true } }, orderItem: { select: { unitPriceCents: true, serviceFeePerUnitCents: true } } },
+          orderBy: [{ orderItemId: "asc" }, { sequence: "asc" }],
+        },
+      },
       orderBy: { createdAt: "desc" },
       take: 100,
     }),
@@ -69,7 +80,10 @@ async function Content() {
                       <span className="block text-xs text-muted-foreground">{f.eventTitle}</span>
                     </td>
                     <td className="p-3">{ADMIN_REFUND_REASON[f.reason] ?? f.reason}</td>
-                    <td className="p-3 text-right tabular-nums">{formatBRL(f.amountCents)}</td>
+                    <td className="p-3 text-right tabular-nums">
+                    {formatBRL(f.amountCents)}
+                    {f.partial && <span className="block text-xs text-muted-foreground">parcial</span>}
+                  </td>
                     <td className="p-3">
                       {f.attempts}/{REFUND_RETRY_POLICY.maxAutomaticAttempts}
                       <span className="block text-xs text-muted-foreground">
@@ -194,7 +208,19 @@ async function Content() {
                     {ORDER_STATUS[o.status].label} {o.isSimulated && <Badge variant="warning">simulado</Badge>}
                   </td>
                   <td className="p-3 text-xs">{o.payments.map((p) => `${p.method} ${PAYMENT_STATUS[p.status]}`).join(" · ") || "—"}</td>
-                  <td className="p-3">{o.status === "PAID" && <AdminActionButton label="Reembolsar" variant="outline" askReason="Motivo do reembolso" reasonRequired action={adminRefundAction.bind(null, o.id)} />}</td>
+                  <td className="p-3">
+                    {o.status === "PAID" && (
+                      <div className="flex flex-col items-start gap-1">
+                        <AdminActionButton label="Reembolsar" variant="outline" askReason="Motivo do reembolso" reasonRequired action={adminRefundAction.bind(null, o.id)} />
+                        {o.tickets.length > 1 && (
+                          <AdminPartialRefund
+                            orderId={o.id}
+                            tickets={o.tickets.map((t) => ({ id: t.id, label: t.ticketType.name, holder: t.holderName, amountCents: t.orderItem.unitPriceCents + t.orderItem.serviceFeePerUnitCents }))}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -1,7 +1,12 @@
-// Reembolsos integrais (MVP). Reembolso parcial não é suportado.
+// Reembolsos por ingresso. Integral: cobre todos os ingressos ainda não reembolsados
+// e leva o pedido a REFUND_PENDING/REFUNDED. Parcial (`Refund.partial`): cobre só os
+// ingressos escolhidos; o pedido continua PAID com os demais válidos. Cada ingresso
+// aponta para o reembolso que o cobre (`IssuedTicket.refundId`). Valor por ingresso:
+// preço pago (com desconto) + taxa de serviço; a comissão segue a regra do pedido.
+// Regras em docs/areas/financeiro.md (Pendências, item 3).
 import "server-only";
 import { enqueueRefundDelayedEmailTx, enqueueRefundEmailTx, enqueueRefundRestoredEmailTx } from "../email/events";
-import type { RefundReason, RefundStatus } from "@/generated/prisma/client";
+import type { Prisma, RefundReason, RefundStatus } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
@@ -116,6 +121,49 @@ async function committedRefundCents(client: Db | Tx, orderId: string, statuses: 
 
 export class OverRefundError extends Error {}
 
+/** Reembolsos ainda não terminados: enquanto existir um, o pedido não aceita outro. */
+const OPEN_REFUND_STATUSES: RefundStatus[] = ["REQUESTED", "PROCESSING", "FAILED"];
+
+/**
+ * Reembolsos FAILED que aguardam reprocessamento ou decisão do admin: integrais
+ * (pedido em REFUND_PENDING) e parciais (o pedido segue PAID).
+ */
+export const AWAITING_REFUND_WHERE: Prisma.RefundWhereInput = {
+  status: "FAILED",
+  OR: [{ order: { status: "REFUND_PENDING" } }, { partial: true, order: { status: "PAID" } }],
+};
+
+/** O pedido ainda espera este reembolso (o integral deixa o pedido em REFUND_PENDING; o parcial, em PAID). */
+export function orderAwaitsRefund(refund: { partial: boolean }, orderStatus: string) {
+  return orderStatus === "REFUND_PENDING" || (refund.partial && orderStatus === "PAID");
+}
+
+/** Valores dos ingressos: preço pago + taxa de serviço, taxa e comissão (a comissão inclui a taxa). */
+export async function ticketRefundAmounts(client: Db | Tx, where: Prisma.IssuedTicketWhereInput) {
+  const tickets = await client.issuedTicket.findMany({
+    where,
+    select: { id: true, ticketTypeId: true, orderItem: { select: { unitPriceCents: true, serviceFeePerUnitCents: true, commissionPerUnitCents: true } } },
+  });
+  let totalCents = 0;
+  let serviceFeeCents = 0;
+  let commissionCents = 0;
+  for (const t of tickets) {
+    totalCents += t.orderItem.unitPriceCents + t.orderItem.serviceFeePerUnitCents;
+    serviceFeeCents += t.orderItem.serviceFeePerUnitCents;
+    commissionCents += t.orderItem.commissionPerUnitCents;
+  }
+  return { tickets, totalCents, serviceFeeCents, commissionCents };
+}
+
+/** Soma dos reembolsos parciais do pedido que não foram desfeitos (exceto `excludeId`). */
+export async function partialRefundCents(client: Db | Tx, orderId: string, excludeId?: string) {
+  const agg = await client.refund.aggregate({
+    where: { orderId, partial: true, status: { not: "REJECTED" }, ...(excludeId ? { NOT: { id: excludeId } } : {}) },
+    _sum: { amountCents: true },
+  });
+  return agg._sum.amountCents ?? 0;
+}
+
 /** Motivos pedidos pelo comprador: ingresso já usado impede o reembolso. */
 const BUYER_REASONS: RefundReason[] = ["CUSTOMER_REQUEST", "EVENT_CHANGED"];
 
@@ -126,9 +174,12 @@ const BUYER_REASONS: RefundReason[] = ["CUSTOMER_REQUEST", "EVENT_CHANGED"];
  * para as duas pessoas até vencer. Pré-condição: travas Event → Order (a ordem de
  * transfers.ts: Event → Order → IssuedTicket → TicketTransfer).
  */
-export async function closePendingTransfersTx(tx: Tx, scope: { orderId: string } | { eventId: string }, reason: string, now = new Date()) {
+export async function closePendingTransfersTx(tx: Tx, scope: { orderId: string } | { eventId: string } | { ticketIds: string[] }, reason: string, now = new Date()) {
+  if ("ticketIds" in scope && !scope.ticketIds.length) return 0;
+  const where: Prisma.TicketTransferWhereInput =
+    "orderId" in scope ? { ticket: { orderId: scope.orderId } } : "eventId" in scope ? { eventId: scope.eventId } : { ticketId: { in: scope.ticketIds } };
   const { count } = await tx.ticketTransfer.updateMany({
-    where: { status: "PENDING", ...("orderId" in scope ? { ticket: { orderId: scope.orderId } } : { eventId: scope.eventId }) },
+    where: { status: "PENDING", ...where },
     data: { status: "CANCELLED", decidedAt: now, decisionReason: reason },
   });
   return count;
@@ -141,39 +192,62 @@ export interface RefundRequestLinks {
 }
 
 /**
- * Abre o reembolso integral de um pedido pago. Pré-condição: travas do evento e
- * do pedido (nessa ordem). Recusa se o pedido não está PAID ou se já há
- * reembolso em aberto/concluído — é a guarda contra reembolso em dobro.
+ * Abre o reembolso de um pedido pago. Sem `ticketIds`, cobre todos os ingressos
+ * ainda não reembolsados (integral). Com `ticketIds`, só esses; se forem todos os
+ * que restam, vira integral. Pré-condição: travas do evento e do pedido (nessa
+ * ordem). Recusa se o pedido não está PAID ou se já há reembolso em aberto — é a
+ * guarda contra reembolso em dobro.
  */
-export async function createRefundRequestTx(tx: Tx, orderId: string, reason: RefundReason, requestedById: string | null, links: RefundRequestLinks = {}) {
+export async function createRefundRequestTx(
+  tx: Tx,
+  orderId: string,
+  reason: RefundReason,
+  requestedById: string | null,
+  links: RefundRequestLinks = {},
+  ticketIds?: string[],
+) {
   const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: VALID_PAID_PAYMENTS } });
   if (order.status !== "PAID") throw invalidState("Pedido não está pago.");
-  // Reembolsos são integrais (MVP): qualquer outro em aberto ou concluído impede um novo.
-  if ((await committedRefundCents(tx, orderId, ["REQUESTED", "PROCESSING", "SUCCEEDED"])) > 0) {
+  if (await tx.refund.count({ where: { orderId, status: { in: OPEN_REFUND_STATUSES } } })) {
     throw invalidState("Este pedido já tem um reembolso em andamento.");
   }
-  // Revoga os ingressos AGORA, sob as travas: um check-in concorrente
-  // (UPDATE … WHERE status='VALID') não consegue mais usar o ingresso, e um
-  // check-in que chegou antes é detectado abaixo. Antes, a verificação era
-  // feita fora da trava e o comprador podia entrar E ser reembolsado.
-  // Vale também para ingressos transferidos: o dinheiro volta a quem pagou (D7).
-  const now = new Date();
-  await tx.issuedTicket.updateMany({ where: { orderId, status: "VALID" }, data: { status: "REVOKED", revokedAt: now, revocationReason: "REFUNDED" } });
-  if (BUYER_REASONS.includes(reason)) {
-    const used = await tx.issuedTicket.count({ where: { orderId, status: "CHECKED_IN" } });
-    if (used > 0) throw new AppError("VALIDATION", "Há ingressos já utilizados neste pedido.");
+  // Ingressos que ainda podem ser cobertos por um reembolso.
+  const open = await tx.issuedTicket.findMany({ where: { orderId, refundId: null, status: { in: ["VALID", "CHECKED_IN"] } }, select: { id: true, status: true } });
+  let selected = open.map((t) => t.id);
+  let partial = false;
+  if (ticketIds) {
+    const ids = [...new Set(ticketIds)];
+    if (!ids.length) throw new AppError("VALIDATION", "Escolha ao menos um ingresso para reembolsar.");
+    const byId = new Map(open.map((t) => [t.id, t]));
+    for (const id of ids) {
+      const t = byId.get(id);
+      if (!t) throw new AppError("VALIDATION", "Um dos ingressos escolhidos não pode ser reembolsado neste pedido.");
+      if (t.status === "CHECKED_IN") throw new AppError("VALIDATION", "Ingresso já utilizado não pode ser reembolsado.");
+    }
+    partial = ids.length < open.length;
+    selected = ids;
   }
-  const transfersClosed = await closePendingTransfersTx(tx, { orderId }, "Ingresso em reembolso", now);
+  const amountCents = partial
+    ? (await ticketRefundAmounts(tx, { id: { in: selected } })).totalCents
+    : order.totalCents - (await partialRefundCents(tx, orderId));
+
   // Um reembolso anterior com o mesmo motivo pode ter sido encerrado como
   // REJECTED (admin restaurou os ingressos): o novo pedido precisa de chave própria.
-  const rejected = await tx.refund.count({ where: { orderId, reason, status: "REJECTED" } });
-  const key = `refund:${orderId}:${reason.toLowerCase()}${rejected ? `:${rejected + 1}` : ""}`;
+  // Parciais são numerados pela quantidade de reembolsos do pedido.
+  let key: string;
+  if (partial) {
+    key = `refund:${orderId}:${reason.toLowerCase()}:partial:${(await tx.refund.count({ where: { orderId } })) + 1}`;
+  } else {
+    const rejected = await tx.refund.count({ where: { orderId, reason, status: "REJECTED", partial: false } });
+    key = `refund:${orderId}:${reason.toLowerCase()}${rejected ? `:${rejected + 1}` : ""}`;
+  }
   const refund = await tx.refund.upsert({
     where: { idempotencyKey: key },
     create: {
       orderId,
       paymentId: order.payments[0]?.id ?? null,
-      amountCents: order.totalCents,
+      amountCents,
+      partial,
       reason,
       requestedById,
       note: links.note,
@@ -183,24 +257,43 @@ export async function createRefundRequestTx(tx: Tx, orderId: string, reason: Ref
     },
     update: {},
   });
-  await tx.order.update({ where: { id: orderId }, data: { status: "REFUND_PENDING" } });
+  // Revoga os ingressos AGORA, sob as travas: um check-in concorrente
+  // (UPDATE … WHERE status='VALID') não consegue mais usar o ingresso, e um
+  // check-in que chegou antes é detectado abaixo. Antes, a verificação era
+  // feita fora da trava e o comprador podia entrar E ser reembolsado.
+  // Vale também para ingressos transferidos: o dinheiro volta a quem pagou (D7).
+  const now = new Date();
+  await tx.issuedTicket.updateMany({ where: { id: { in: selected } }, data: { refundId: refund.id } });
+  await tx.issuedTicket.updateMany({ where: { id: { in: selected }, status: "VALID" }, data: { status: "REVOKED", revokedAt: now, revocationReason: "REFUNDED" } });
+  if (partial || BUYER_REASONS.includes(reason)) {
+    const used = await tx.issuedTicket.count({ where: { id: { in: selected }, status: "CHECKED_IN" } });
+    if (used > 0) throw new AppError("VALIDATION", partial ? "Ingresso já utilizado não pode ser reembolsado." : "Há ingressos já utilizados neste pedido.");
+  }
+  const transfersClosed = await closePendingTransfersTx(tx, partial ? { ticketIds: selected } : { orderId }, "Ingresso em reembolso", now);
+  if (!partial) await tx.order.update({ where: { id: orderId }, data: { status: "REFUND_PENDING" } });
   await audit(tx, {
     actorUserId: requestedById,
     organizationId: order.organizationId,
     action: "refund.requested",
     entityType: "Refund",
     entityId: refund.id,
-    metadata: { reason, ...(transfersClosed ? { transfersClosed } : {}), ...(links.eventChangeId ? { eventChangeId: links.eventChangeId } : {}), ...(links.cancellationRequestId ? { cancellationRequestId: links.cancellationRequestId } : {}) },
+    metadata: {
+      reason,
+      ...(partial ? { partial: true, tickets: selected.length } : {}),
+      ...(transfersClosed ? { transfersClosed } : {}),
+      ...(links.eventChangeId ? { eventChangeId: links.eventChangeId } : {}),
+      ...(links.cancellationRequestId ? { cancellationRequestId: links.cancellationRequestId } : {}),
+    },
   });
   return refund;
 }
 
-async function createRefundRequest(db: Db, orderId: string, reason: RefundReason, requestedById: string | null, links?: RefundRequestLinks) {
+async function createRefundRequest(db: Db, orderId: string, reason: RefundReason, requestedById: string | null, links?: RefundRequestLinks, ticketIds?: string[]) {
   return db.$transaction(async (tx) => {
     const ref = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { eventId: true } });
     await lockEvent(tx, ref.eventId);
     await lockOrder(tx, orderId);
-    return createRefundRequestTx(tx, orderId, reason, requestedById, links);
+    return createRefundRequestTx(tx, orderId, reason, requestedById, links, ticketIds);
   }, TX_OPTIONS);
 }
 
@@ -208,27 +301,31 @@ async function createRefundRequest(db: Db, orderId: string, reason: RefundReason
  * Reembolso pedido pelo comprador (quem pagou o pedido). Com janela de alteração
  * relevante aberta, o motivo é `EVENT_CHANGED` e o reembolso fica ligado à
  * alteração; senão vale a política normal do evento (`CUSTOMER_REQUEST`).
+ * Com `ticketIds`, reembolsa só esses ingressos; os prazos são os mesmos, e um
+ * ingresso já usado fora da escolha não impede o reembolso dos outros.
  */
-export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdapter, actor: Actor, orderId: string, now = new Date()) {
+export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdapter, actor: Actor, orderId: string, now = new Date(), ticketIds?: string[]) {
   assertActive(actor);
-  const order = await db.order.findUnique({ where: { id: orderId }, include: { event: true, tickets: { select: { status: true } } } });
+  const order = await db.order.findUnique({ where: { id: orderId }, include: { event: true, tickets: { select: { id: true, status: true } } } });
   if (!order) throw notFound();
   if (order.userId !== actor.id) throw forbidden();
   const window = await openChangeRefundWindow(db, order.eventId, order.paidAt, now);
-  const check = refundEligibility(order, order.event, order.tickets, now, window);
+  const tickets = ticketIds ? order.tickets.filter((t) => ticketIds.includes(t.id)) : order.tickets;
+  const check = refundEligibility(order, order.event, tickets, now, window);
   if (!check.eligible) throw new AppError("VALIDATION", check.reason);
   const refund =
     check.basis === "EVENT_CHANGED"
-      ? await createRefundRequest(db, orderId, "EVENT_CHANGED", actor.id, { eventChangeId: check.window.eventChangeId })
-      : await createRefundRequest(db, orderId, "CUSTOMER_REQUEST", actor.id);
+      ? await createRefundRequest(db, orderId, "EVENT_CHANGED", actor.id, { eventChangeId: check.window.eventChangeId }, ticketIds)
+      : await createRefundRequest(db, orderId, "CUSTOMER_REQUEST", actor.id, undefined, ticketIds);
   await processRefund(db, adapter, refund.id);
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
 }
 
-export async function adminRefundOrder(db: Db, adapter: PaymentProviderAdapter, admin: Actor, orderId: string, note: string) {
+/** Reembolso pelo admin: o pedido inteiro ou, com `ticketIds`, só esses ingressos (não usados). */
+export async function adminRefundOrder(db: Db, adapter: PaymentProviderAdapter, admin: Actor, orderId: string, note: string, ticketIds?: string[]) {
   assertAdminPermission(admin, "finance:refunds");
   if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo do reembolso.");
-  const refund = await createRefundRequest(db, orderId, "ADMIN", admin.id, { note });
+  const refund = await createRefundRequest(db, orderId, "ADMIN", admin.id, { note }, ticketIds);
   await processRefund(db, adapter, refund.id);
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
 }
@@ -362,11 +459,11 @@ export async function refundRetryStates(client: Db | Tx, refunds: { id: string; 
 
 /**
  * Reprocessamento automático (chamado pela reconciliação/cron). Só toca reembolsos
- * FAILED de pedidos em REFUND_PENDING cuja espera já passou; nunca os que aguardam o admin.
+ * FAILED que o pedido ainda espera (`AWAITING_REFUND_WHERE`) cuja espera já passou; nunca os que aguardam o admin.
  */
 export async function retryFailedRefunds(db: Db, adapter: PaymentProviderAdapter, now = new Date(), limit = 200) {
   const failed = await db.refund.findMany({
-    where: { status: "FAILED", order: { status: "REFUND_PENDING" } },
+    where: AWAITING_REFUND_WHERE,
     select: { id: true, orderId: true, note: true, updatedAt: true },
     orderBy: { updatedAt: "asc" },
     take: limit,
@@ -410,6 +507,7 @@ export interface FailedRefundView extends RefundRetryState {
   eventTitle: string;
   reason: RefundReason;
   amountCents: number;
+  partial: boolean;
   note: string | null;
   failedAt: Date;
   restoreBlockedReason: string | null;
@@ -419,7 +517,7 @@ export interface FailedRefundView extends RefundRetryState {
 export async function listFailedRefunds(db: Db, admin: Actor, now = new Date()): Promise<FailedRefundView[]> {
   assertAdminPermission(admin, "finance:refunds");
   const refunds = await db.refund.findMany({
-    where: { status: "FAILED", order: { status: "REFUND_PENDING" } },
+    where: AWAITING_REFUND_WHERE,
     include: { order: { select: { publicCode: true, event: { select: { id: true, title: true, status: true, endsAt: true } } } } },
     orderBy: { updatedAt: "asc" },
   });
@@ -433,6 +531,7 @@ export async function listFailedRefunds(db: Db, admin: Actor, now = new Date()):
     eventTitle: r.order.event.title,
     reason: r.reason,
     amountCents: r.amountCents,
+    partial: r.partial,
     note: r.note,
     failedAt: r.updatedAt,
     restoreBlockedReason: restoreBlockedReason(r.reason, r.order.event, now),
@@ -446,7 +545,7 @@ export async function adminRetryRefund(db: Db, adapter: PaymentProviderAdapter, 
   const refund = await db.refund.findUnique({ where: { id: refundId }, include: { order: { select: { status: true, organizationId: true } } } });
   if (!refund) throw notFound("Reembolso não encontrado.");
   if (refund.status !== "FAILED") throw invalidState("Só reembolsos com falha podem ser reprocessados.");
-  if (refund.order.status !== "REFUND_PENDING") throw invalidState("O pedido não está aguardando reembolso.");
+  if (!orderAwaitsRefund(refund, refund.order.status)) throw invalidState("O pedido não está aguardando reembolso.");
   await audit(db, {
     actorUserId: admin.id,
     organizationId: refund.order.organizationId,
@@ -486,7 +585,7 @@ export async function adminRestoreAfterFailedRefund(
   const refund = await db.refund.findUnique({ where: { id: refundId }, include: { payment: true, order: { include: { event: true } } } });
   if (!refund) throw notFound("Reembolso não encontrado.");
   if (refund.status !== "FAILED") throw invalidState("Só reembolsos com falha podem ser desfeitos.");
-  if (refund.order.status !== "REFUND_PENDING") throw invalidState("O pedido não está aguardando reembolso.");
+  if (!orderAwaitsRefund(refund, refund.order.status)) throw invalidState("O pedido não está aguardando reembolso.");
   const blocked = restoreBlockedReason(refund.reason, refund.order.event, now);
   if (blocked) throw invalidState(blocked);
 
@@ -502,7 +601,16 @@ export async function adminRestoreAfterFailedRefund(
       financeLog("error", "refund.restore_provider_check_failed", { orderId: refund.orderId, refundId, paymentId: p.id }, { message: String(err).slice(0, 300) });
       throw new AppError("PROVIDER_ERROR", "Não foi possível confirmar com o provedor que o estorno não ocorreu. Tente novamente.");
     }
-    if (snapshot.status === "REFUNDED") {
+    // Parcial: o pagamento continua aprovado no provedor; o que mostra se este estorno
+    // aconteceu é o total estornado, comparado com os reembolsos já concluídos.
+    let refundedHere = snapshot.status === "REFUNDED";
+    if (!refundedHere && refund.partial) {
+      if (snapshot.refundedCents == null) throw new AppError("PROVIDER_ERROR", "O provedor não informou o total estornado: não é possível confirmar que este estorno não ocorreu.");
+      const succeeded = await committedRefundCents(db, refund.orderId, ["SUCCEEDED"], refundId);
+      if (snapshot.refundedCents >= succeeded + refund.amountCents) refundedHere = true;
+      else if (snapshot.refundedCents !== succeeded) throw invalidState("O total estornado no provedor não bate com os reembolsos do pedido: restauração exige análise manual.");
+    }
+    if (refundedHere) {
       // O dinheiro já voltou ao comprador: confirmar, nunca devolver os ingressos.
       await db.$transaction(async (tx) => {
         await lockEvent(tx, refund.order.eventId);
@@ -531,14 +639,16 @@ export async function adminRestoreAfterFailedRefund(
       tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { status: true } }),
       tx.event.findUniqueOrThrow({ where: { id: refund.order.eventId }, select: { status: true, endsAt: true } }),
     ]);
-    if (order.status !== "REFUND_PENDING") throw invalidState("O pedido não está aguardando reembolso.");
+    if (!orderAwaitsRefund(refund, order.status)) throw invalidState("O pedido não está aguardando reembolso.");
     const late = restoreBlockedReason(refund.reason, event, now);
     if (late) throw invalidState(late);
+    // Só os ingressos deste reembolso: os de reembolsos parciais já concluídos continuam cancelados.
     const tickets = await tx.issuedTicket.updateMany({
-      where: { orderId: refund.orderId, status: "REVOKED", revocationReason: "REFUNDED" },
+      where: { refundId, status: "REVOKED", revocationReason: "REFUNDED" },
       data: { status: "VALID", revokedAt: null, revocationReason: null },
     });
-    await tx.order.update({ where: { id: refund.orderId }, data: { status: "PAID" } });
+    await tx.issuedTicket.updateMany({ where: { refundId }, data: { refundId: null } });
+    if (order.status !== "PAID") await tx.order.update({ where: { id: refund.orderId }, data: { status: "PAID" } });
     await audit(tx, {
       actorUserId: admin.id,
       organizationId: refund.order.organizationId,
@@ -598,13 +708,17 @@ async function confirmRefundTxWithLocks(tx: Tx, refundId: string) {
 }
 
 /**
- * Efetiva o reembolso: revoga ingressos, atualiza contadores e lança o estorno
- * no razão. Pré-condição: travas do evento e do pedido. Idempotente.
+ * Efetiva o reembolso: revoga os ingressos que ele cobre, atualiza contadores e
+ * lança o estorno no razão. Integral: cobre também os ingressos do pedido ainda sem
+ * reembolso (cancelamento do evento, estorno iniciado no provedor) e fecha o pedido
+ * como REFUNDED; o valor é o total menos os parciais. Parcial: só os seus ingressos;
+ * o pedido fecha como REFUNDED quando o último ingresso é reembolsado.
+ * Pré-condição: travas do evento e do pedido. Idempotente.
  */
 export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()) {
   const refund = await tx.refund.findUniqueOrThrow({ where: { id: refundId } });
   if (refund.status === "SUCCEEDED") return false;
-  const order = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, include: { commissionRule: true, tickets: true } });
+  const order = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, include: { commissionRule: true } });
   // Última linha de defesa: nunca registrar estorno acima do valor pago.
   if ((await committedRefundCents(tx, order.id, ["SUCCEEDED"], refundId)) + refund.amountCents > order.totalCents) {
     throw new OverRefundError(`Reembolso ${refundId} excederia o valor pago do pedido ${order.publicCode}.`);
@@ -612,21 +726,49 @@ export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()
 
   await tx.refund.update({ where: { id: refundId }, data: { status: "SUCCEEDED", processedAt: now } });
   const reason = refund.reason === "EVENT_CANCELLED" ? "EVENT_CANCELLED" : "REFUNDED";
-  await tx.issuedTicket.updateMany({ where: { orderId: order.id, status: { in: ["VALID", "CHECKED_IN"] } }, data: { status: "REVOKED", revokedAt: now, revocationReason: reason } });
-  await closePendingTransfersTx(tx, { orderId: order.id }, reason === "EVENT_CANCELLED" ? "Evento cancelado" : "Ingresso reembolsado", now);
+  if (!refund.partial) await tx.issuedTicket.updateMany({ where: { orderId: order.id, refundId: null }, data: { refundId } });
+  const covered = await tx.issuedTicket.findMany({ where: { refundId }, select: { id: true, ticketTypeId: true } });
+  const coveredIds = covered.map((t) => t.id);
+  await tx.issuedTicket.updateMany({ where: { id: { in: coveredIds }, status: { in: ["VALID", "CHECKED_IN"] } }, data: { status: "REVOKED", revokedAt: now, revocationReason: reason } });
+  await closePendingTransfersTx(tx, { ticketIds: coveredIds }, reason === "EVENT_CANCELLED" ? "Evento cancelado" : "Ingresso reembolsado", now);
   const perType = new Map<string, number>();
-  for (const t of order.tickets) perType.set(t.ticketTypeId, (perType.get(t.ticketTypeId) ?? 0) + 1);
+  for (const t of covered) perType.set(t.ticketTypeId, (perType.get(t.ticketTypeId) ?? 0) + 1);
   for (const [ticketTypeId, n] of perType) {
     await tx.ticketType.update({ where: { id: ticketTypeId }, data: { quantityRefunded: { increment: n } } });
   }
-  if (refund.paymentId) await tx.payment.update({ where: { id: refund.paymentId }, data: { status: "REFUNDED" } });
-  await tx.order.update({ where: { id: order.id }, data: { status: "REFUNDED" } });
-  await postReversal(tx, "REFUND", order, {
+
+  // Valores do estorno no razão.
+  let amounts: { totalCents: number; commissionCents: number; serviceFeeCents: number };
+  if (refund.partial) {
+    amounts = await ticketRefundAmounts(tx, { refundId });
+  } else {
+    const parts = await ticketRefundAmounts(tx, { orderId: order.id, refund: { partial: true, status: { not: "REJECTED" }, NOT: { id: refundId } } });
+    amounts = { totalCents: order.totalCents - parts.totalCents, commissionCents: order.commissionCents - parts.commissionCents, serviceFeeCents: order.serviceFeeCents - parts.serviceFeeCents };
+  }
+  if (amounts.totalCents !== refund.amountCents) {
+    throw new OverRefundError(`Reembolso ${refundId}: valor ${refund.amountCents} difere dos ingressos cobertos (${amounts.totalCents}).`);
+  }
+
+  // Pedido encerrado quando nenhum ingresso fica fora de um reembolso concluído.
+  const remaining = refund.partial
+    ? await tx.issuedTicket.count({ where: { orderId: order.id, OR: [{ refundId: null }, { refund: { status: { not: "SUCCEEDED" } } }] } })
+    : 0;
+  if (!remaining) {
+    if (refund.paymentId) await tx.payment.update({ where: { id: refund.paymentId }, data: { status: "REFUNDED" } });
+    await tx.order.update({ where: { id: order.id }, data: { status: "REFUNDED" } });
+  }
+  await postReversal(tx, "REFUND", { ...order, ...amounts }, {
     refundId,
     paymentId: refund.paymentId ?? undefined,
     returnCommission: order.commissionRule?.refundCommissionOnRefund ?? true,
   });
-  await audit(tx, { organizationId: order.organizationId, action: "refund.succeeded", entityType: "Refund", entityId: refundId, metadata: { reason: refund.reason } });
+  await audit(tx, {
+    organizationId: order.organizationId,
+    action: "refund.succeeded",
+    entityType: "Refund",
+    entityId: refundId,
+    metadata: { reason: refund.reason, ...(refund.partial ? { partial: true, tickets: coveredIds.length } : {}) },
+  });
   await enqueueRefundEmailTx(tx, refundId);
   return true;
 }

@@ -866,15 +866,18 @@ enum SimulatedPaymentState {
 }
 
 model SimulatedProviderPayment {
-  id          String                @id @default(cuid())
-  externalRef String
-  method      PaymentMethod
-  amountCents Int
-  state       SimulatedPaymentState @default(PENDING)
-  expiresAt   DateTime              @db.Timestamptz(3)
-  refundedAt  DateTime?             @db.Timestamptz(3)
-  createdAt   DateTime              @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime              @updatedAt @db.Timestamptz(3)
+  id            String                @id @default(cuid())
+  externalRef   String
+  method        PaymentMethod
+  amountCents   Int
+  state         SimulatedPaymentState @default(PENDING)
+  expiresAt     DateTime              @db.Timestamptz(3)
+  refundedAt    DateTime?             @db.Timestamptz(3)
+  // Estornos parciais: soma estornada e chaves já aplicadas (idempotência).
+  refundedCents Int                   @default(0)
+  refundKeys    String[]              @default([])
+  createdAt     DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime              @updatedAt @db.Timestamptz(3)
 }
 
 // ───────────────────────────── Ingressos emitidos e check-in ─────────────────────────────
@@ -915,6 +918,9 @@ model IssuedTicket {
   revocationReason TicketRevocationReason?
   checkedInAt      DateTime?               @db.Timestamptz(3)
   issuedAt         DateTime                @default(now()) @db.Timestamptz(3)
+  // Reembolso que cobre este ingresso (total ou parcial). Volta a nulo se o admin
+  // desfaz um reembolso com falha.
+  refundId         String?
 
   order      Order            @relation(fields: [orderId], references: [id])
   orderItem  OrderItem        @relation(fields: [orderItemId], references: [id])
@@ -924,6 +930,7 @@ model IssuedTicket {
   holder     User             @relation("TicketHolder", fields: [holderUserId], references: [id], onDelete: Restrict)
   checkins   TicketCheckin[]
   transfers  TicketTransfer[]
+  refund     Refund?          @relation(fields: [refundId], references: [id], onDelete: Restrict)
 
   // Garante emissão única por unidade do item, mesmo com webhooks concorrentes.
   @@unique([orderItemId, sequence])
@@ -932,6 +939,7 @@ model IssuedTicket {
   @@index([orderId])
   // "Meus ingressos" pelo titular atual.
   @@index([holderUserId, issuedAt])
+  @@index([refundId])
   // Limite por conta por evento (R4): ingressos em mãos e ingressos comprados.
   @@index([eventId, holderUserId])
   @@index([eventId, userId])
@@ -1007,6 +1015,8 @@ model Refund {
   providerRefundId String?
   note             String?
   idempotencyKey   String       @unique
+  // Cobre só parte dos ingressos do pedido (o pedido continua PAID).
+  partial          Boolean      @default(false)
   processedAt      DateTime?    @db.Timestamptz(3)
   createdAt        DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
@@ -1021,6 +1031,7 @@ model Refund {
   eventChange         EventChange?           @relation(fields: [eventChangeId], references: [id], onDelete: Restrict)
   cancellationRequest CancellationRequest?   @relation(fields: [cancellationRequestId], references: [id], onDelete: Restrict)
   ledgerEntries       FinancialLedgerEntry[]
+  tickets             IssuedTicket[]
 
   @@index([status, createdAt])
   @@index([orderId])

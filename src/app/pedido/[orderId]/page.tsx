@@ -15,7 +15,7 @@ import { describeChangeValue, isRelevantField, RELEVANT_FIELD_LABELS, type Chang
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
-import { openChangeRefundWindow, refundEligibility } from "@/server/services/refunds";
+import { openChangeRefundWindow, refundEligibility, type RefundEligibility } from "@/server/services/refunds";
 import { PROVISIONAL_CANCELLATION_RESPONSE_DAYS } from "@/server/services/cancellation-requests";
 import { formatDateShort, formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
@@ -48,7 +48,22 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
     openChangeRefundWindow(db, order.eventId, order.paidAt, now),
     db.cancellationRequest.findMany({ where: { orderId: order.id, requestedById: user.id }, orderBy: { createdAt: "desc" } }),
   ]);
-  const eligibility = refundEligibility(order, order.event, order.tickets, now, changeWindow);
+  // Reembolso por ingresso: os já utilizados ficam de fora e não impedem o dos outros.
+  const usedTickets = order.tickets.filter((t) => t.status === "CHECKED_IN" && !t.refundId).length;
+  const itemById = new Map(order.items.map((i) => [i.id, i]));
+  const refundable = order.tickets
+    .filter((t) => t.status === "VALID" && !t.refundId)
+    .map((t) => {
+      const item = itemById.get(t.orderItemId);
+      return { id: t.id, label: t.ticketType.name, holder: t.holderName, amountCents: (item?.unitPriceCents ?? 0) + (item?.serviceFeePerUnitCents ?? 0) };
+    });
+  // Um reembolso por vez: com outro em aberto (ex.: parcial em reprocessamento), não oferece novo.
+  const openRefund = order.refunds.some((r) => r.status === "REQUESTED" || r.status === "PROCESSING" || r.status === "FAILED");
+  const eligibility: RefundEligibility = openRefund
+    ? { eligible: false, reason: "Há um reembolso em andamento neste pedido." }
+    : refundable.length
+      ? refundEligibility(order, order.event, [], now, changeWindow)
+      : refundEligibility(order, order.event, order.tickets, now, changeWindow);
   // O que mudou: a alteração original que abriu a janela (o prazo pode vir de uma prorrogação).
   const change = eligibility.eligible && eligibility.basis === "EVENT_CHANGED"
     ? await db.eventChange.findUnique({ where: { id: eligibility.window.eventChangeId }, select: { changedFields: true, before: true, after: true, reason: true, createdAt: true } })
@@ -121,7 +136,7 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
             Reembolso integral, com as taxas, até <span data-testid="change-refund-until">{formatDateShort(eligibility.window.refundUntil, tz)}</span> ({formatDateTimeShort(eligibility.window.refundUntil, tz)}).
           </p>
           <p className="text-sm text-muted-foreground">Se preferir manter os ingressos, não precisa fazer nada: eles continuam válidos para a nova data/local.</p>
-          <RefundButton orderId={order.id} />
+          <RefundButton orderId={order.id} tickets={refundable} usedTickets={usedTickets} />
         </Card>
       )}
 
@@ -205,7 +220,8 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
               {order.refunds.map((r) => (
                 <li key={r.id} className="flex flex-wrap justify-between gap-x-3">
                   <span>
-                    {REFUND_REASON[r.reason]} · {formatDateTimeShort(r.createdAt)}
+                    {REFUND_REASON[r.reason]}
+                    {r.partial && ` · ${order.tickets.filter((t) => t.refundId === r.id).length} de ${order.tickets.length} ingressos`} · {formatDateTimeShort(r.createdAt)}
                   </span>
                   <span>
                     <span className="tabular-nums">{formatBRL(r.amountCents)}</span> · <strong>{REFUND_STATUS[r.status]}</strong>
@@ -218,7 +234,7 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
             eligibility.basis === "EVENT_CHANGED" ? (
               <p className="text-sm">{eligibility.message}</p>
             ) : (
-              <RefundButton orderId={order.id} />
+              <RefundButton orderId={order.id} tickets={refundable} usedTickets={usedTickets} />
             )
           ) : (
             !order.refunds.length && <p className="text-sm text-muted-foreground">{eligibility.reason}</p>

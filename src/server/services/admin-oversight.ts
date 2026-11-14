@@ -7,7 +7,7 @@ import type { CancellationRequestStatus, Prisma, TicketTransferStatus } from "@/
 import type { Db } from "../db";
 import { assertPlatformAdmin, type Actor, assertAdminPermission } from "../auth/permissions";
 import { notFound } from "../errors";
-import { openChangeRefundWindow, refundEligibility } from "./refunds";
+import { AWAITING_REFUND_WHERE, openChangeRefundWindow, refundEligibility } from "./refunds";
 
 export const ADMIN_PAGE_SIZE = 25;
 
@@ -78,7 +78,7 @@ export async function adminQueueCounts(db: Db, admin: Actor, now = new Date()) {
   const [openCancellations, overdueCancellations, failedRefunds] = await Promise.all([
     db.cancellationRequest.count({ where: { status: "OPEN" } }),
     db.cancellationRequest.count({ where: { status: "OPEN", respondBy: { lt: now } } }),
-    db.refund.count({ where: { status: "FAILED", order: { status: "REFUND_PENDING" } } }),
+    db.refund.count({ where: AWAITING_REFUND_WHERE }),
   ]);
   return { openCancellations, overdueCancellations, failedRefunds };
 }

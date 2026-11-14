@@ -134,9 +134,10 @@ export async function cancelOrderAction(orderId: string) {
   redirect(`/pedido/${orderId}`);
 }
 
-export async function requestRefundAction(orderId: string): Promise<ActionResult<{ status: string }>> {
+export async function requestRefundAction(orderId: string, ticketIds?: string[]): Promise<ActionResult<{ status: string }>> {
   const user = await requireUser(`/pedido/${orderId}`);
-  const result = await toActionResult(async () => ({ status: (await requestCustomerRefund(db, getPaymentAdapter(), user, orderId)).status }));
+  const ids = Array.isArray(ticketIds) ? ticketIds.map(String).slice(0, 200) : undefined;
+  const result = await toActionResult(async () => ({ status: (await requestCustomerRefund(db, getPaymentAdapter(), user, orderId, new Date(), ids)).status }));
   if (result.ok) refresh();
   return result;
 }

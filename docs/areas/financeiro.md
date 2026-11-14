@@ -422,19 +422,36 @@ reconciliação concorrente não duplica estornos.
    e cartão tokenizado no provedor — nenhuma transação com dinheiro real sem
    aprovação explícita.
 2. Outbox durável para notificações de pedido pago/reembolso.
-3. Reembolso parcial e etapa opcional de aprovação. Regras decididas pelo
-   responsável do produto em 2026-11-14:
+3. ~~Reembolso parcial~~ — feito. Falta: etapa opcional de aprovação. Regras
+   decididas pelo responsável do produto em 2026-11-14:
    - **Por ingresso:** escolhe quais ingressos do pedido são devolvidos; só esses
-     são revogados e voltam ao estoque, os demais seguem válidos. Sem valor livre.
+     são revogados, os demais seguem válidos. Sem valor livre.
    - **Valor:** o preço efetivamente pago por ingresso (`unitPriceCents`, já com o
      desconto do cupom) mais a taxa de serviço proporcional
      (`serviceFeePerUnitCents`).
    - **Comissão:** segue `refundCommissionOnRefund` da regra do pedido, aplicada
      só à comissão dos ingressos devolvidos (`commissionPerUnitCents`).
-   - **Meia-entrada:** o ingresso de meia devolvido libera a vaga na cota, como no
-     reembolso total.
+   - **Estoque e meia-entrada:** como no reembolso integral, o ingresso devolvido
+     não volta ao estoque nem libera vaga na cota de meia (`quantitySold` não
+     desce; só `quantityRefunded` sobe). Devolver estoque seria uma mudança à parte,
+     valendo para os dois tipos de reembolso.
    - A soma dos reembolsos nunca passa de `totalCents`; o pedido só vira
      `REFUNDED` quando o último ingresso é devolvido.
+
+   Como ficou: `IssuedTicket.refundId` liga cada ingresso ao reembolso que o cobre
+   (migração `20261114120000_partial_refunds`, com preenchimento dos dados
+   antigos) e `Refund.partial` marca o parcial. `createRefundRequestTx` aceita
+   `ticketIds`; escolher todos os que restam vira integral (valor = total − parciais).
+   Ingresso já utilizado não entra num parcial e não impede o dos outros.
+   Enquanto um reembolso está em aberto (`REQUESTED`/`PROCESSING`/`FAILED`), o pedido
+   não aceita outro. A fila de falhas usa `AWAITING_REFUND_WHERE` (o parcial falho
+   deixa o pedido PAID); restaurar desfaz só os ingressos daquele reembolso e, no
+   parcial, confere `transaction_amount_refunded` do provedor antes. Cancelamento do
+   evento, estorno total iniciado no provedor e chargeback descontam os parciais já
+   feitos. Relatório de vendas e CSV somam os reembolsos pela tabela `Refund`.
+   Telas: comprador escolhe os ingressos em `/pedido/[id]`; admin tem "Reembolsar
+   parte" em `/admin/pagamentos`. Testes em `zz-partial-refund.test.ts`.
+   Não verificado com o Mercado Pago real (o simulado aceita parciais).
 4. ~~Política para reembolso `FAILED`~~ (feito). Melhoria via `banco-de-dados`:
    colunas `Refund.attemptCount`, `nextRetryAt`, `lastErrorKind` e índice em
    `(status, nextRetryAt)` para não depender da contagem na auditoria.
