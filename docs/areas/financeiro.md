@@ -422,7 +422,19 @@ reconciliação concorrente não duplica estornos.
    e cartão tokenizado no provedor — nenhuma transação com dinheiro real sem
    aprovação explícita.
 2. Outbox durável para notificações de pedido pago/reembolso.
-3. Reembolso parcial e etapa opcional de aprovação.
+3. Reembolso parcial e etapa opcional de aprovação. Regras decididas pelo
+   responsável do produto em 2026-11-14:
+   - **Por ingresso:** escolhe quais ingressos do pedido são devolvidos; só esses
+     são revogados e voltam ao estoque, os demais seguem válidos. Sem valor livre.
+   - **Valor:** o preço efetivamente pago por ingresso (`unitPriceCents`, já com o
+     desconto do cupom) mais a taxa de serviço proporcional
+     (`serviceFeePerUnitCents`).
+   - **Comissão:** segue `refundCommissionOnRefund` da regra do pedido, aplicada
+     só à comissão dos ingressos devolvidos (`commissionPerUnitCents`).
+   - **Meia-entrada:** o ingresso de meia devolvido libera a vaga na cota, como no
+     reembolso total.
+   - A soma dos reembolsos nunca passa de `totalCents`; o pedido só vira
+     `REFUNDED` quando o último ingresso é devolvido.
 4. ~~Política para reembolso `FAILED`~~ (feito). Melhoria via `banco-de-dados`:
    colunas `Refund.attemptCount`, `nextRetryAt`, `lastErrorKind` e índice em
    `(status, nextRetryAt)` para não depender da contagem na auditoria.
