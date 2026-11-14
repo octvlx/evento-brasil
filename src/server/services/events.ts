@@ -504,11 +504,11 @@ export async function unpublishEvent(db: Db, actor: Actor, eventId: string, now 
  * vendas e janelas dos tipos de ingresso) andam o mesmo intervalo. Copia dados, local e
  * tipos de ingresso (contadores zerados). Não copia cupons, links de divulgação, equipe,
  * regras de comissão nem o regime de meia-entrada (esses dependem do admin): o novo evento
- * fica com os padrões e passa pela publicação/moderação normal.
+ * fica com os padrões e passa pela publicação/moderação normal. A galeria de fotos é copiada.
  */
 export async function duplicateEvent(db: Db, actor: Actor, eventId: string, startsAtLocal: string, now = new Date()) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
-  const source = await db.event.findUniqueOrThrow({ where: { id: eventId }, include: { ticketTypes: { orderBy: { sortOrder: "asc" } }, city: { select: { name: true } } } });
+  const source = await db.event.findUniqueOrThrow({ where: { id: eventId }, include: { ticketTypes: { orderBy: { sortOrder: "asc" } }, city: { select: { name: true } }, images: { orderBy: { sortOrder: "asc" } } } });
   let startsAt: Date;
   try {
     startsAt = zonedLocalToUtc(startsAtLocal, source.timezone);
@@ -554,6 +554,9 @@ export async function duplicateEvent(db: Db, actor: Actor, eventId: string, star
         accessibilityInfo: source.accessibilityInfo,
       },
     });
+    // A galeria vem junto (mesmos arquivos; remover na cópia não apaga o arquivo).
+    if (source.images.length)
+      await tx.eventImage.createMany({ data: source.images.map((i) => ({ eventId: event.id, url: i.url, storageKey: i.storageKey, alt: i.alt, sortOrder: i.sortOrder })) });
     if (source.ticketTypes.length)
       await tx.ticketType.createMany({
         data: source.ticketTypes.map((t) => ({

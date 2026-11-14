@@ -241,8 +241,11 @@ e `organizer-team.spec.ts` (convites e papéis).
    zerados; não copia cupons, links, equipe, regras de comissão nem o regime de
    meia-entrada. Despublicar volta PUBLISHED/PENDING_REVIEW a rascunho, recusado com
    ingresso válido/usado ou pedido aguardando pagamento (aí é cancelar), sob a mesma
-   trava do evento que `createOrder`. Falta: galeria de imagens (`EventImage` existe
-   mas não é usado), busca/filtro na lista, paginação.
+   trava do evento que `createOrder`. ~~Galeria de imagens~~ — feita
+   (`event-images.ts`: até 10 fotos além da capa, lado menor ≥ 600 px, descrição
+   obrigatória com padrão, ordem e remoção; card "Galeria de fotos" na gestão; seção
+   "Fotos" na página pública; duplicar copia a galeria). Falta: busca/filtro na lista,
+   paginação.
 6. ~~Avisar compradores quando data/local de evento com vendas mudar~~ — feito (R8).
    Falta: reenvio manual do aviso e outbox durável (T7).
 7. **Organização:** ~~logo e capa~~ — feitos: `Organization.logoUrl`/`coverUrl`
@@ -253,7 +256,7 @@ e `organizer-team.spec.ts` (convites e papéis).
    links sociais adicionais.
 
 8. **Assistente de evento (complementos):** preencher endereço pelo CEP quando
-   houver integração; galeria de imagens (`EventImage`); usar o assistente
+   houver integração; galeria também no assistente (hoje só na gestão); usar o assistente
    também na edição; campos da proposta ao `banco-de-dados` abaixo.
 
 ## Dependências de outros agentes

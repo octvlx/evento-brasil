@@ -12,6 +12,8 @@ import { refundRequestsText, type ChangeSnapshotJson } from "@/features/organize
 import { EventStatusActions } from "@/features/organizer/event-status-actions";
 import { DuplicateEvent } from "@/features/organizer/duplicate-event";
 import { TicketTypesManager } from "@/features/organizer/ticket-types-manager";
+import { EventGallery } from "@/features/organizer/event-gallery";
+import { EVENT_IMAGE_MIN_SIDE, listEventImages, MAX_EVENT_IMAGES } from "@/server/services/event-images";
 import { CouponsManager } from "@/features/organizer/coupons-manager";
 import { TrackingLinksManager } from "@/features/organizer/tracking-links-manager";
 import { eventFormOptions } from "@/features/organizer/form-data";
@@ -64,6 +66,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   // Controle de meia-entrada: mesma permissão dos relatórios do evento (finance:read).
   const halfControl = can("finance:read") ? await halfPriceControl(db, user, id) : null;
   const [coupons, links] = canWrite ? await Promise.all([listEventCoupons(db, user, id), listEventTrackingLinks(db, user, id)]) : [[], []];
+  const images = await listEventImages(db, id);
 
   return (
     <>
@@ -176,6 +179,11 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
           </Card>
         </>
       )}
+
+      <Card className="mb-6 p-6">
+        <h2 className="mb-4 font-display text-lg font-bold">Galeria de fotos</h2>
+        <EventGallery eventId={event.id} images={images} max={MAX_EVENT_IMAGES} minSide={EVENT_IMAGE_MIN_SIDE} locked={locked} />
+      </Card>
 
       <Card className="mb-6 p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Histórico de alterações</h2>
