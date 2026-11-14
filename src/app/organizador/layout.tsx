@@ -9,6 +9,7 @@ const NAV: [string, string][] = [
   ["/organizador/eventos", "Eventos"],
   ["/organizador/equipe", "Equipe"],
   ["/organizador/vendas", "Vendas e repasses"],
+  ["/organizador/cupons", "Cupons"],
   ["/organizador/participantes", "Participantes"],
   ["/organizador/configuracoes", "Configurações"],
   ["/organizador/organizacoes", "Organizações"],

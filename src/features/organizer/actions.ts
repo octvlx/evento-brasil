@@ -15,7 +15,7 @@ import { getPaymentAdapter } from "@/server/payments";
 import { getEmailAdapter, escapeHtml } from "@/server/email";
 import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
-import { createCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
+import { createCoupon, createOrganizationCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, duplicateEvent, submitEventForPublication, unpublishEvent, updateEvent, upsertTicketType } from "@/server/services/events";
@@ -351,10 +351,15 @@ export async function removeMemberAction(userId: string): Promise<ActionResult> 
 // ── Cupons e links de divulgação ──
 
 /** Cria (couponId nulo) ou edita um cupom; devolve avisos que não impedem salvar. */
-export async function saveCouponAction(eventId: string, couponId: string | null, input: CouponInput): Promise<ActionResult<{ warnings: string[] }>> {
+/** `eventId` nulo cria cupom da organização ativa (todos os eventos). */
+export async function saveCouponAction(eventId: string | null, couponId: string | null, input: CouponInput): Promise<ActionResult<{ warnings: string[] }>> {
   const user = await requireUser("/organizador/eventos");
   const res = await toActionResult(async () => {
-    const { warnings } = couponId ? await updateCoupon(db, user, couponId, input) : await createCoupon(db, user, eventId, input);
+    const { warnings } = couponId
+      ? await updateCoupon(db, user, couponId, input)
+      : eventId
+        ? await createCoupon(db, user, eventId, input)
+        : await createOrganizationCoupon(db, user, await activeOrgId(user.id), input);
     return { warnings };
   });
   if (res.ok) refresh();

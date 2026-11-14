@@ -213,8 +213,14 @@ e `organizer-team.spec.ts` (convites e papéis).
 1. **Convites (complementos):** transferir a propriedade com confirmação por
    e-mail; limitar convites pendentes por organização.
 2. ~~Convites: revogar, reenviar, recusar, pendentes~~ e ~~Equipe: alterar papel~~ — feitos.
-   **Cupons e links (ADR 0002):** cupons da organização inteira (sem evento)
-   ainda não têm tela (o serviço lista, mas não cria nem edita). Os avisos do
+   ~~**Cupons da organização inteira**~~ — feito: `/organizador/cupons` (menu
+   "Cupons", permissão `event:write`) cria e edita cupons sem evento
+   (`createOrganizationCoupon`, `listOrganizationCoupons`, `updateCoupon`), válidos em
+   todos os eventos, nos tipos pagos exceto meia-entrada (sem seleção de tipos);
+   validade no horário de Brasília; avisos de repasse negativo e de desconto abaixo
+   da meia calculados para cada evento aberto (até 30). Na página do evento eles
+   aparecem com o selo "Toda a organização", sem edição ali. Testes em
+   `zz-organization-coupons.test.ts`. Os avisos do
    cadastro usam `discountPerUnit`/`undercutHalfPrice` de
    `src/features/fees/discount.ts`, as mesmas regras do checkout.
 3. ~~**Página do evento no painel**~~ — feita: `/organizador/eventos/[id]` (resumo:
