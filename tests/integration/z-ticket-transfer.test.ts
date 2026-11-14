@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkInTicket } from "@/server/services/checkin";
 import { loadPdfTickets } from "@/server/services/notifications";
 import { requestCustomerRefund } from "@/server/services/refunds";
-import { qrPayload } from "@/server/services/tickets";
+import { qrPayload, ticketQrToken } from "@/server/services/tickets";
 import { acceptTransfer, cancelTransfer, declineTransfer, expireTicketTransfers, findTransferByToken, listMyTransfers, requestTransfer, TRANSFER_POLICY } from "@/server/services/transfers";
 import { ticketsHeldByAccount } from "@/server/services/orders";
 import { DEFAULT_TRANSFER_POLICY, transferCutoff, type TransferPolicy } from "@/lib/transfer-policy";
@@ -106,12 +106,12 @@ describe("T-TRANSF — aceite", () => {
 
     const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
     expect(after).toMatchObject({ holderUserId: recipient.id, holderEmail: recipient.email, holderName: `Nome ${recipient.name}`, userId: buyer.id, status: "VALID" });
-    expect(after.validationToken).not.toBe(ticket.validationToken);
+    expect(after.validationTokenHash).not.toBe(ticket.validationTokenHash);
     // Comprador continua o pagador do pedido (D7 provisório).
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).userId).toBe(buyer.id);
 
     const row = await db.ticketTransfer.findUniqueOrThrow({ where: { id: transferId } });
-    expect(row).toMatchObject({ status: "ACCEPTED", toUserId: recipient.id, decidedById: recipient.id, previousTokenHash: hashToken(ticket.validationToken), decisionIp: "198.51.100.1" });
+    expect(row).toMatchObject({ status: "ACCEPTED", toUserId: recipient.id, decidedById: recipient.id, previousTokenHash: hashToken(ticketQrToken(ticket)!), decisionIp: "198.51.100.1" });
     expect(await db.auditLog.count({ where: { action: "ticket.transfer.accepted", entityId: transferId } })).toBe(1);
 
     // QR antigo: inválido. Novo: admite uma vez.
@@ -441,8 +441,8 @@ describe("Política de transferência por evento", () => {
     await acceptTransfer(db, buyer, back.token);
     const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
     expect(after.holderUserId).toBe(buyer.id);
-    expect(after.validationToken).not.toBe(ticket.validationToken);
-    expect(after.validationToken).not.toBe(beforeReturn.validationToken);
+    expect(after.validationTokenHash).not.toBe(ticket.validationTokenHash);
+    expect(after.validationTokenHash).not.toBe(beforeReturn.validationTokenHash);
     expect(await db.ticketTransfer.findUniqueOrThrow({ where: { id: first.transferId } })).toEqual(accepted);
     expect(await db.ticketTransfer.count({ where: { ticketId: ticket.id, status: "ACCEPTED" } })).toBe(2);
     await expect(request(buyer, ticket.id, recipient)).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });

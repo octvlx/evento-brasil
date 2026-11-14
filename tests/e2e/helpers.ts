@@ -46,10 +46,17 @@ export async function acceptSignupTerms(page: Page) {
 export async function qrPayloadFor(code: string) {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
-  const { rows } = await client.query('SELECT code, "validationToken", "eventId" FROM "IssuedTicket" WHERE code = $1', [code]);
+  const { rows } = await client.query('SELECT code, "tokenVersion", "legacyValidationToken", "eventId" FROM "IssuedTicket" WHERE code = $1', [code]);
   await client.end();
   expect(rows[0], `ingresso ${code}`).toBeTruthy();
-  return { payload: `EB1:${rows[0].code}:${rows[0].validationToken}`, eventId: rows[0].eventId as string };
+  return { payload: `EB1:${rows[0].code}:${qrTokenOf(rows[0])}`, eventId: rows[0].eventId as string };
+}
+
+/** Mesmo cálculo de `ticketQrToken` (src/server/services/tickets.ts), com a chave do app. */
+function qrTokenOf(t: { code: string; tokenVersion: number; legacyValidationToken: string | null }) {
+  if (t.tokenVersion === 0) return t.legacyValidationToken;
+  const secret = process.env.QR_TOKEN_SECRET || "dev-only-qr-token-secret-0123456789";
+  return createHmac("sha256", secret).update(`eb-qr:${t.code}:${t.tokenVersion}`).digest("base64url");
 }
 
 /**

@@ -4,6 +4,7 @@ import { makeBuyerReady } from "../support/buyer-ready";
 // exportação dos dados do titular (R9, L9b). As Server Actions e a rota de
 // exportação rodam de verdade; só o pedido HTTP (cookies, cabeçalhos, sessão) é simulado.
 import { createHash, randomUUID } from "node:crypto";
+import { ticketQrToken } from "@/server/services/tickets";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TermsKind } from "@/generated/prisma/client";
 import { registerUser } from "@/server/services/users";
@@ -234,7 +235,7 @@ describe("baixar meus dados (R9)", () => {
     // Nada de segredos nem de dados da outra conta (o e-mail dela só aparece como o
     // destinatário que eu mesmo informei na transferência enviada).
     expect(text.split("outra@test.local")).toHaveLength(2);
-    for (const leak of [me.passwordHash, myTicket.validationToken, other.id, theirs.publicCode, "Nome do remetente", "pixCopyPaste", "tokenHash", "passwordHash"])
+    for (const leak of [me.passwordHash, ticketQrToken(myTicket)!, myTicket.validationTokenHash, other.id, theirs.publicCode, "Nome do remetente", "pixCopyPaste", "tokenHash", "passwordHash"])
       expect(text).not.toContain(leak);
 
     const log = await db.auditLog.findFirstOrThrow({ where: { action: "user.data_exported", actorUserId: me.id } });

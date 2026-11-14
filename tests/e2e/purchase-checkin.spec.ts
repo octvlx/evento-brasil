@@ -205,8 +205,17 @@ async function offlineState(page: Page) {
     const keys: string[] = (await indexedDB.databases()).some((d) => d.name === "qqpega-checkin")
       ? await new Promise((resolve) => {
           const req = indexedDB.open("qqpega-checkin");
+          // O app pode apagar o banco entre databases() e open(): sem isto, o open()
+          // recriaria um banco vazio (sem "kv"), a leitura lançaria e o banco vazio
+          // ficaria no aparelho. Abortar a criação deixa tudo como o app deixou.
+          req.onupgradeneeded = () => req.transaction?.abort();
+          req.onerror = () => resolve([]);
           req.onsuccess = () => {
             const db = req.result;
+            if (!db.objectStoreNames.contains("kv")) {
+              db.close();
+              return resolve([]);
+            }
             const r = db.transaction("kv").objectStore("kv").getAllKeys();
             r.onsuccess = () => {
               db.close();

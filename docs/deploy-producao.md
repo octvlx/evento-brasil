@@ -42,6 +42,7 @@ segredos repetidos.
 | `DATABASE_URL` | banco de produção com `sslmode=require` |
 | `AUTH_SECRET` | ≥ 32 caracteres aleatórios: `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
 | `CRON_SECRET` | ≥ 24 caracteres aleatórios (mesmo comando) |
+| `QR_TOKEN_SECRET` | ≥ 32 caracteres aleatórios (mesmo comando). Gera os QRs dos ingressos: trocar invalida todos os QRs já enviados |
 | `DATA_ENCRYPTION_KEY` | 32 bytes em base64: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
 | `PAYMENT_PROVIDER` | `mercadopago` |
 | `MERCADO_PAGO_CLIENT_ID` / `_CLIENT_SECRET` | da aplicação no painel |

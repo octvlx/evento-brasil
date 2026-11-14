@@ -88,7 +88,7 @@ describe("V1.1 — aceite de transferência × check-in", () => {
         // O aceite venceu: o QR antigo não admitiu e o ingresso tem novo token.
         expect(admittedOld).toBe(0);
         expect(after).toMatchObject({ status: "VALID", holderUserId: recipients[i].id });
-        expect(after.validationToken).not.toBe(old.validationToken);
+        expect(after.validationTokenHash).not.toBe(old.validationTokenHash);
         // Depois da troca: QR antigo e novo ao mesmo tempo → só o novo entra, uma vez.
         const race = await Promise.all([
           ...Array.from({ length: 3 }, () => checkInTicket(db, owner, event.id, qrPayload(old))),
@@ -101,7 +101,7 @@ describe("V1.1 — aceite de transferência × check-in", () => {
         // A leitura venceu: entrou uma vez com o QR antigo e o aceite foi recusado.
         expect(accept.reason).toMatchObject({ code: "INVALID_STATE" });
         expect(admittedOld).toBe(1);
-        expect(after).toMatchObject({ status: "CHECKED_IN", holderUserId: buyer.id, validationToken: old.validationToken });
+        expect(after).toMatchObject({ status: "CHECKED_IN", holderUserId: buyer.id, validationTokenHash: old.validationTokenHash });
         expect((await db.ticketTransfer.findFirstOrThrow({ where: { ticketId: old.id } })).status).toBe("PENDING");
       }
       expect(await db.ticketCheckin.count({ where: { ticketId: old.id, result: "ADMITTED" } })).toBe(1);
@@ -448,7 +448,7 @@ describe("V1.6 — manutenção (cron) no meio dos fluxos", () => {
     expect(accept.status).toBe("rejected");
     expect((await db.ticketTransfer.findUniqueOrThrow({ where: { id: transferId } })).status).toBe("EXPIRED");
     const t = await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } });
-    expect(t).toMatchObject({ holderUserId: buyer.id, validationToken: tickets[0].validationToken, status: "VALID" });
+    expect(t).toMatchObject({ holderUserId: buyer.id, validationTokenHash: tickets[0].validationTokenHash, status: "VALID" });
     expect((await checkInTicket(db, owner, event.id, qrPayload(t))).result).toBe("ADMITTED");
   });
 });

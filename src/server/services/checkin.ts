@@ -1,10 +1,9 @@
 import "server-only";
-import { createHash } from "node:crypto";
 import type { CheckinResult, EventStatus, OfflineDivergence, TicketKind } from "@/generated/prisma/client";
 import { checkinWindowOpen } from "@/lib/event-lifecycle";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
-import { hashToken } from "../crypto";
+import { hashToken, qrTokenHash } from "../crypto";
 import { AppError, forbidden, notFound } from "../errors";
 import { parseQrPayload } from "@/lib/qr-payload";
 
@@ -72,7 +71,7 @@ async function wasTransferred(tx: Tx, ticketId: string) {
 }
 
 /**
- * QR anterior a uma transferência aceita deste evento (o aceite troca o validationToken e
+ * QR anterior a uma transferência aceita deste evento (o aceite sobe a versão do token e
  * guarda o hash do antigo). Só para a portaria da organização do evento: devolve o
  * ingresso com o titular atual; de outra organização, nada.
  */
@@ -128,7 +127,7 @@ export async function checkInTicket(
       // 2. QR → ingresso (busca pelo token; o código precisa bater).
       const parsed = parseQrPayload(rawPayload);
       const ticket = parsed
-        ? await tx.issuedTicket.findUnique({ where: { validationToken: parsed.token }, include: ticketForView })
+        ? await tx.issuedTicket.findUnique({ where: { validationTokenHash: qrTokenHash(parsed.token) }, include: ticketForView })
         : null;
       if (!parsed || !ticket || ticket.code !== parsed.code) {
         // QR antigo de ingresso transferido: continua INVALID, mas a portaria do
@@ -173,13 +172,17 @@ export async function checkInTicket(
       }
       // O token entra no WHERE: se uma transferência aceita trocou o QR depois da busca
       // acima, o QR antigo não admite (defesa extra; o aceite já espera a trava do evento).
-      const { count } = await tx.issuedTicket.updateMany({ where: { id: ticket.id, status: "VALID", validationToken: parsed.token }, data: { status: "CHECKED_IN", checkedInAt: now } });
+      const { count } = await tx.issuedTicket.updateMany({
+        where: { id: ticket.id, status: "VALID", validationTokenHash: ticket.validationTokenHash },
+        // Usado: o QR não volta a ser exibido, então o token antigo (versão 0) sai do banco.
+        data: { status: "CHECKED_IN", checkedInAt: now, legacyValidationToken: null },
+      });
       if (count === 1) {
         await record("ADMITTED", ticket.id);
         return { result: "ADMITTED", ticket: view(now) };
       }
       const current = await tx.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
-      if (current.validationToken !== parsed.token) {
+      if (current.validationTokenHash !== ticket.validationTokenHash) {
         await record("INVALID", null);
         return { result: "INVALID" };
       }
@@ -211,8 +214,8 @@ export const OFFLINE_SYNC_MAX = 500;
 /** Hora informada pelo aparelho: aceita até 24 h no passado; fora disso vale a hora do servidor. */
 const OFFLINE_MAX_AGE_MS = 24 * 3600_000;
 
-/** SHA-256 (hex) do token do QR: é o que a lista offline guarda, nunca o token. */
-export const offlineTokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+/** SHA-256 (hex) do token do QR: é o que a lista offline guarda, nunca o token (o mesmo hash do banco). */
+export const offlineTokenHash = qrTokenHash;
 
 export interface OfflinePackage {
   eventId: string;
@@ -232,13 +235,13 @@ export async function checkinOfflinePackage(db: Db, actor: Actor, eventId: strin
   if (!event || !checkinWindowOpen(event, now)) throw new AppError("INVALID_STATE", "O check-in deste evento não está aberto: não há lista para baixar.");
   const rows = await db.issuedTicket.findMany({
     where: { eventId },
-    select: { code: true, validationToken: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } } },
+    select: { code: true, validationTokenHash: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } } },
   });
   return {
     eventId,
     generatedAt: now.toISOString(),
     validUntil: new Date(now.getTime() + OFFLINE_PACKAGE_TTL_MS).toISOString(),
-    tickets: rows.map((t) => ({ h: offlineTokenHash(t.validationToken), code: t.code, status: t.status, holderName: t.holderName, ticketTypeName: t.ticketType.name, ticketKind: t.ticketType.kind })),
+    tickets: rows.map((t) => ({ h: t.validationTokenHash, code: t.code, status: t.status, holderName: t.holderName, ticketTypeName: t.ticketType.name, ticketKind: t.ticketType.kind })),
   };
 }
 

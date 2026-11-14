@@ -15,7 +15,7 @@ import { SimulatedPaymentAdapter } from "@/server/payments/simulated";
 import { handlePaymentWebhook } from "@/server/services/payments";
 import { checkInTicket } from "@/server/services/checkin";
 import { requestCustomerRefund } from "@/server/services/refunds";
-import { qrPayload } from "@/server/services/tickets";
+import { qrPayload, qrTokenColumns, ticketQrToken } from "@/server/services/tickets";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 
 if (process.env.NODE_ENV === "production") {
@@ -436,7 +436,7 @@ async function main() {
         status: "ACCEPTED",
         toUserId: friend.id,
         toHolderName: friend.name,
-        previousTokenHash: sha256(samba.validationToken),
+        previousTokenHash: sha256(ticketQrToken(samba)!),
         decidedAt: new Date(Date.now() - 86_400_000),
         decidedById: friend.id,
       },
@@ -444,7 +444,7 @@ async function main() {
     // O QR antigo deixa de valer; o titular passa a ser a amiga (o comprador continua userId).
     await tx.issuedTicket.update({
       where: { id: samba.id },
-      data: { holderUserId: friend.id, holderName: friend.name, holderEmail: friend.email, validationToken: randomToken(32) },
+      data: { holderUserId: friend.id, holderName: friend.name, holderEmail: friend.email, ...qrTokenColumns(samba.code, samba.tokenVersion + 1) },
     });
     await tx.auditLog.create({
       data: { actorUserId: friend.id, organizationId: sonora.id, action: "ticket.transfer.accepted", entityType: "TicketTransfer", entityId: t.id, metadata: { ticketId: samba.id, fromUserId: customer.id } },

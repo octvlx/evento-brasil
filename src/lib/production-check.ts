@@ -57,6 +57,8 @@ export function checkProductionEnv(vars: Vars): CheckItem[] {
   const secrets: [string, number][] = [
     ["AUTH_SECRET", 32],
     ["CRON_SECRET", 24],
+    // Trocar depois do lançamento invalida todos os QRs já enviados.
+    ["QR_TOKEN_SECRET", 32],
   ];
   for (const [name, min] of secrets) {
     const v = vars[name];
@@ -69,7 +71,7 @@ export function checkProductionEnv(vars: Vars): CheckItem[] {
   if (!filled(dek) || dek!.startsWith("dev-only")) add("fail", "DATA_ENCRYPTION_KEY", "ausente ou valor de desenvolvimento");
   else if (base64Bytes(dek) !== 32) add("fail", "DATA_ENCRYPTION_KEY", "precisa ter 32 bytes em base64");
   else add("ok", "DATA_ENCRYPTION_KEY", "guarde uma cópia segura: sem ela, CPF/CNPJ e 2FA cifrados ficam ilegíveis");
-  const secretNames = ["AUTH_SECRET", "DATA_ENCRYPTION_KEY", "CRON_SECRET", "MERCADO_PAGO_TOKEN_ENCRYPTION_KEY", "MERCADO_PAGO_WEBHOOK_SECRET", "SIMULATED_WEBHOOK_SECRET"];
+  const secretNames = ["AUTH_SECRET", "DATA_ENCRYPTION_KEY", "CRON_SECRET", "QR_TOKEN_SECRET", "MERCADO_PAGO_TOKEN_ENCRYPTION_KEY", "MERCADO_PAGO_WEBHOOK_SECRET", "SIMULATED_WEBHOOK_SECRET"];
   const seen = new Map<string, string>();
   const repeated: string[] = [];
   for (const n of secretNames) {

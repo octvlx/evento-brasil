@@ -912,7 +912,14 @@ model IssuedTicket {
   holderEmail      String?
   // Titular anonimizado (exclusão da conta ou expurgo por prazo).
   piiRedactedAt    DateTime?               @db.Timestamptz(3)
-  validationToken  String                  @unique
+  // Credencial do QR: o token não é guardado. É HMAC(QR_TOKEN_SECRET, código, versão),
+  // recalculado para a página, o PDF, as carteiras e o e-mail; o banco guarda só o
+  // SHA-256 (hex), usado na busca da portaria e na lista offline. Nova versão = QR novo
+  // (o anterior deixa de valer). Versão 0 = ingresso emitido antes disso: o token
+  // aleatório antigo fica em legacyValidationToken até o ingresso ser usado ou transferido.
+  validationTokenHash   String            @unique
+  tokenVersion          Int               @default(1)
+  legacyValidationToken String?
   status           TicketStatus            @default(VALID)
   revokedAt        DateTime?               @db.Timestamptz(3)
   revocationReason TicketRevocationReason?

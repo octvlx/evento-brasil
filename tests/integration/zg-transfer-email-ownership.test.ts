@@ -27,7 +27,7 @@ describe("transfer recipient mailbox ownership", () => {
     await expect(acceptTransfer(db, recipient, ref)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(declineTransfer(db, recipient, ref)).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(await db.ticketTransfer.findUniqueOrThrow({ where: { id: invite.transferId } })).toMatchObject({ status: "PENDING" });
-    expect(await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } })).toMatchObject({ holderUserId: sender.id, validationToken: ticket.validationToken });
+    expect(await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } })).toMatchObject({ holderUserId: sender.id, validationTokenHash: ticket.validationTokenHash });
 
     await db.user.update({ where: { id: recipient.id }, data: { emailVerifiedAt: new Date() } });
     // Use the same stale actor object: authorization must read the database, not trust caller flags.
@@ -35,7 +35,7 @@ describe("transfer recipient mailbox ownership", () => {
     await expect(acceptTransfer(db, recipient, ref)).resolves.toMatchObject({ ticketCode: ticket.code });
     const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
     expect(after.holderUserId).toBe(recipient.id);
-    expect(after.validationToken).not.toBe(ticket.validationToken);
+    expect(after.validationTokenHash).not.toBe(ticket.validationTokenHash);
   });
 
   it("allows verified recipients to decline by ID", async () => {

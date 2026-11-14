@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
 import { expect, test, type Page } from "@playwright/test";
 import { login, USERS } from "./helpers";
@@ -63,7 +63,7 @@ async function eventWithTicket(hoursUntilStart = 7 * 24) {
     await insert("OrderItem", { ...source.item, id: itemId, orderId, ticketTypeId: typeId, quantity: 1 });
     await insert("IssuedTicket", {
       ...source.ticket, id: ticketId, code, orderId, orderItemId: itemId, eventId: id, ticketTypeId: typeId,
-      sequence: 1, validationToken: randomBytes(32).toString("base64url"),
+      sequence: 1, ...legacyQrColumns(),
     });
     await client.query("COMMIT");
     return { id, title, slug, code, startsAt, timezone };
@@ -73,6 +73,12 @@ async function eventWithTicket(hoursUntilStart = 7 * 24) {
   } finally {
     await client.end();
   }
+}
+
+/** QR no formato anterior ao hash (versão 0): token aleatório e o SHA-256 dele. */
+function legacyQrColumns() {
+  const token = randomBytes(32).toString("base64url");
+  return { tokenVersion: 0, legacyValidationToken: token, validationTokenHash: createHash("sha256").update(token).digest("hex") };
 }
 
 async function sendTicket(page: Page, code: string, toEmail: string, toName: string) {

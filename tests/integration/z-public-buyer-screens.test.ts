@@ -52,7 +52,7 @@ describe("Fase 4 — transferência respondida em Meus ingressos (por id)", () =
     expect(res.ticketCode).toBe(ticket.code);
     const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
     expect(after.holderUserId).toBe(recipient.id);
-    expect(after.validationToken).not.toBe(ticket.validationToken);
+    expect(after.validationTokenHash).not.toBe(ticket.validationTokenHash);
 
     // Para quem enviou, vira histórico ("Transferidos por você").
     const sent = (await listMyTransfers(db, buyer)).sent;

@@ -27,11 +27,14 @@ página de aceite, portaria com "ingresso transferido" e `ticketsHeldByAccount` 
 
 ### Como as garantias são obtidas
 
-- **Credencial do QR:** o código (10 caracteres, 50 bits) e o token (32 bytes
-  aleatórios) são independentes e não sequenciais. A busca é pelo token
-  (`validationToken @unique`) e o código precisa bater. O token fica **em claro**
-  no banco, porque a página do ingresso, o PDF e o e-mail precisam remontar o QR
-  (ver lacuna 2).
+- **Credencial do QR:** o código (10 caracteres, 50 bits) é aleatório e o token
+  é `HMAC(QR_TOKEN_SECRET, código, versão)` (`ticketQrToken` em `tickets.ts`). O
+  token **não fica no banco**: a página, o PDF, as carteiras e o e-mail o recalculam.
+  O banco guarda só o SHA-256 (`validationTokenHash @unique`), usado na busca e na
+  lista offline; o código precisa bater. A transferência aceita sobe `tokenVersion`
+  e o QR anterior deixa de valer. Ingressos emitidos antes da mudança (versão 0)
+  mantêm o QR já enviado: o token aleatório fica em `legacyValidationToken` até o
+  check-in ou a transferência, que o apagam.
 - **Atomicidade:** uma única transação `ReadCommitted` trava o evento e o pedido
   com `FOR KEY SHARE`, na mesma ordem usada por cancelamento, reembolso e
   chargeback (Event → Order → ingressos), e só então faz
@@ -80,7 +83,7 @@ Serviço: `src/server/services/transfers.ts`. Server Actions (todas devolvem
 | Ação | Quem | Efeito |
 | --- | --- | --- |
 | `requestTransferAction(ticketId, { toEmail, toName })` → `{ transferId, expiresAt }` | titular atual (`holderUserId`) | Cria `TicketTransfer` PENDING e envia o convite por e-mail. Limite de 10 pedidos/h por conta. |
-| `acceptTransferAction(token)` → `{ ticketCode }` | conta logada com o e-mail `toEmail` | Novo titular (`holderUserId`, `holderName` = nome indicado, `holderEmail` = e-mail da conta) e **novo `validationToken`**: QR, PDF e passes anteriores deixam de valer. E-mail aos dois. |
+| `acceptTransferAction(token)` → `{ ticketCode }` | conta logada com o e-mail `toEmail` | Novo titular (`holderUserId`, `holderName` = nome indicado, `holderEmail` = e-mail da conta) e **nova versão do token do QR** (`tokenVersion` + 1): QR, PDF e passes anteriores deixam de valer. E-mail aos dois. |
 | `declineTransferAction(token)` | destinatário | CANCELLED, `decidedById` = destinatário, motivo "Recusada pelo destinatário". |
 | `cancelTransferAction(transferId)` | quem pediu | CANCELLED, motivo "Cancelada pelo titular". |
 | `expireTicketTransfers(db)` | cron (`/api/cron/maintenance`) | PENDING vencidas → EXPIRED (`decidedById` nulo). Um novo `requestTransfer` também expira, sob a trava do ingresso, o convite vencido daquele ingresso que o cron ainda não pegou. |
@@ -157,13 +160,11 @@ transação e não são reenviados se falharem.
    ingresso de outra organização, a portaria recebia o código, o titular e o
    tipo do ingresso, e a leitura ficava vinculada ao ingresso alheio. Assim,
    `checkinHistory` da organização errada expunha o nome do comprador.
-2. **Token do QR em claro no banco.** Quem lê o banco (backup, réplica, acesso
-   indevido) pode montar QRs válidos de todos os ingressos. Proposta, que exige
-   mudança de schema (`banco-de-dados`) e de `tickets.ts` (`pagamentos-financeiro`):
-   derivar o token como `HMAC(chave dedicada, ticket.id ‖ versão)`, sem guardá-lo,
-   e guardar só `validationTokenHash` (único, para busca), com `tokenVersion` para
-   reemitir o QR invalidando o anterior. A página, o PDF e o e-mail recalculam o
-   token. `scripts/dev-ticket-qr.mjs` passa a calcular o HMAC.
+2. ~~**Token do QR em claro no banco.**~~ — feito: token = HMAC(`QR_TOKEN_SECRET`,
+   código, versão), banco só com `validationTokenHash` e `tokenVersion` (migração
+   `20261114180000_qr_token_hash`). Resta: ingressos emitidos antes (versão 0) ainda
+   não usados guardam o token antigo em `legacyValidationToken` até o check-in ou a
+   transferência. Testes em `zz-qr-token-hash.test.ts`.
 3. ~~**Permissão verificada fora da transação.**~~ — feito: `checkInTicket` trava a
    organização (FOR SHARE, antes do evento) e chama `resolveCheckinAccess` dentro da
    transação. Atribuição/retirada da portaria (`assignStaffToEvent`, agora em

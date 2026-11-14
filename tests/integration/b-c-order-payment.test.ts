@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
+import { ticketQrToken } from "@/server/services/tickets";
 import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, orderInput, resetDb, ticketType } from "../support/fixtures";
 
 beforeEach(resetDb);
@@ -103,8 +104,9 @@ describe("C — webhook verificado → confirmação idempotente → emissão", 
 
     const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id } });
     expect(tickets).toHaveLength(3);
-    expect(new Set(tickets.map((t) => t.validationToken)).size).toBe(3);
-    expect(tickets.every((t) => t.validationToken.length === 43 && t.status === "VALID")).toBe(true);
+    expect(new Set(tickets.map((t) => t.validationTokenHash)).size).toBe(3);
+    // Token do QR recalculado (43 caracteres); o banco guarda só o SHA-256 (64 hex).
+    expect(tickets.every((t) => ticketQrToken(t)?.length === 43 && t.validationTokenHash.length === 64 && t.legacyValidationToken === null && t.status === "VALID")).toBe(true);
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PAID");
     expect(await ticketType(tt.id)).toMatchObject({ quantityReserved: 0, quantitySold: 3 });
 
