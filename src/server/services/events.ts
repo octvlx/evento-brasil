@@ -590,3 +590,58 @@ export async function duplicateEvent(db: Db, actor: Actor, eventId: string, star
     return event;
   });
 }
+
+// ───────────────────────────── Lista do painel (busca, situação, páginas) ─────────────────────────────
+
+export const ORGANIZER_EVENTS_PAGE_SIZE = 20;
+
+/** Filtro de situação da lista do organizador. "Publicado" e "Encerrado" usam o relógio, como a tela. */
+export const ORGANIZER_EVENT_FILTERS = ["DRAFT", "PENDING_REVIEW", "PUBLISHED", "COMPLETED", "CANCELLED", "ARCHIVED"] as const;
+export type OrganizerEventFilter = (typeof ORGANIZER_EVENT_FILTERS)[number];
+
+function statusWhere(status: OrganizerEventFilter | undefined, now: Date) {
+  switch (status) {
+    case "PUBLISHED":
+      return { status: "PUBLISHED" as const, endsAt: { gt: now } };
+    // Encerrado: status COMPLETED ou publicado com término já passado (antes do job).
+    case "COMPLETED":
+      return { OR: [{ status: "COMPLETED" as const }, { status: "PUBLISHED" as const, endsAt: { lte: now } }] };
+    case undefined:
+      return {};
+    default:
+      return { status };
+  }
+}
+
+/** Eventos da organização com busca no título, filtro de situação e paginação (início mais recente primeiro). */
+export async function listOrganizationEventsPage(
+  db: Db,
+  actor: Actor,
+  organizationId: string,
+  opts: { q?: string; status?: OrganizerEventFilter; page?: number; pageSize?: number } = {},
+  now = new Date(),
+) {
+  await assertOrgPermission(db, actor, organizationId, "org:read");
+  const q = (opts.q ?? "").trim().slice(0, 100);
+  const where = {
+    organizationId,
+    ...statusWhere(opts.status, now),
+    ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
+  };
+  const pageSize = opts.pageSize ?? ORGANIZER_EVENTS_PAGE_SIZE;
+  const [total, all] = await Promise.all([db.event.count({ where }), db.event.count({ where: { organizationId } })]);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Math.floor(opts.page ?? 1) || 1), pageCount);
+  const rows = await db.event.findMany({
+    where,
+    include: {
+      ticketTypes: { select: { quantityTotal: true, quantitySold: true, quantityReserved: true } },
+      city: true,
+      _count: { select: { tickets: { where: { status: "CHECKED_IN" } } } },
+    },
+    orderBy: [{ startsAt: "desc" }, { id: "asc" }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+  });
+  return { rows, total, all, page, pageCount, q, status: opts.status };
+}

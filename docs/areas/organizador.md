@@ -241,11 +241,12 @@ e `organizer-team.spec.ts` (convites e papéis).
    zerados; não copia cupons, links, equipe, regras de comissão nem o regime de
    meia-entrada. Despublicar volta PUBLISHED/PENDING_REVIEW a rascunho, recusado com
    ingresso válido/usado ou pedido aguardando pagamento (aí é cancelar), sob a mesma
-   trava do evento que `createOrder`. ~~Galeria de imagens~~ — feita
+   trava do evento que `createOrder`. ~~Busca/filtro na lista e paginação~~ — feitos
+   (`listOrganizationEventsPage`: título sem diferenciar maiúsculas, situação com
+   publicado/encerrado pelo relógio, 20 por página). ~~Galeria de imagens~~ — feita
    (`event-images.ts`: até 10 fotos além da capa, lado menor ≥ 600 px, descrição
    obrigatória com padrão, ordem e remoção; card "Galeria de fotos" na gestão; seção
-   "Fotos" na página pública; duplicar copia a galeria). Falta: busca/filtro na lista,
-   paginação.
+   "Fotos" na página pública; duplicar copia a galeria).
 6. ~~Avisar compradores quando data/local de evento com vendas mudar~~ — feito (R8).
    Falta: reenvio manual do aviso e outbox durável (T7).
 7. **Organização:** ~~logo e capa~~ — feitos: `Organization.logoUrl`/`coverUrl`
