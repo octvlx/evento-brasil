@@ -9,6 +9,8 @@ import { CancelTransferButton, IncomingTransferActions, TransferForm } from "@/f
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { listMyTransfers } from "@/server/services/transfers";
+import { walletAvailability } from "@/server/tickets/wallet";
+import { WalletLinks } from "@/features/wallet/wallet-links";
 import { formatDateShort, formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import { normalizeTransferPolicy, transferCutoff } from "@/lib/transfer-policy";
@@ -57,6 +59,9 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
   const acceptedByTicket = new Map(acceptedCounts.map((t) => [t.ticketId, t._count._all]));
   const isOpen = (t: { status: string; effectiveExpiresAt: Date | null }) => t.status === "PENDING" && !!t.effectiveExpiresAt && t.effectiveExpiresAt > now;
   const outgoing = new Map(transfers.sent.filter(isOpen).map((t) => [t.ticket.id, t]));
+  const wallet = walletAvailability();
+  // Carteira: ingresso válido de pedido pago, sem transferência pendente (o passe sairia inválido no aceite).
+  const walletReady = (t: (typeof tickets)[number]) => t.status === "VALID" && t.order.status === "PAID" && !outgoing.has(t.id);
   const incoming = transfers.received.filter(isOpen);
   const transferredAway = transfers.sent.filter((t) => t.status === "ACCEPTED");
   // Só decide se o botão aparece; o serviço reconfere tudo (inclusive o limite de transferências).
@@ -105,6 +110,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
                   <Ticket className="size-4 text-secondary" aria-hidden /> {t.ticketType.name}
                   <Badge variant={s.tone === "success" ? "success" : s.tone === "danger" ? "danger" : "default"}>{s.label}</Badge>
                 </Link>
+                {walletReady(t) && <WalletLinks apple={wallet.apple} google={wallet.google} ticketCode={t.code} compact />}
                 {out ? (
                   <span className="flex flex-wrap items-center gap-2 text-sm" data-testid="outgoing-transfer">
                     <Badge variant="warning">Transferência pendente</Badge>

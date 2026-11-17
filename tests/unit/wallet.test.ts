@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "@/server/env";
 import { appleWalletConfig, googleWalletConfig, pemFromEnv } from "@/server/tickets/wallet/config";
 import { applePassJson, buildApplePass } from "@/server/tickets/wallet/apple";
-import { googleWalletJwtPayload, googleWalletResources, googleWalletSaveUrl } from "@/server/tickets/wallet/google";
+import { googleWalletJwtPayload, googleWalletResources, googleWalletSaveUrl, setGoogleObjectState } from "@/server/tickets/wallet/google";
 import type { WalletTicket } from "@/server/tickets/wallet/types";
 import { TEST_SIGNER_CERT, TEST_SIGNER_KEY, TEST_WWDR_CERT } from "../support/wallet-test-certs";
 
@@ -16,6 +16,8 @@ const ticket = (over: Partial<WalletTicket> = {}): WalletTicket => ({
   orderCode: "EB-TESTE01",
   isSimulated: false,
   eventId: "cevento1",
+  ticketId: "cingresso1",
+  tokenVersion: 1,
   event: {
     title: "Noite de Samba",
     startsAt: new Date("2026-12-05T21:00:00Z"),
@@ -73,7 +75,7 @@ describe("Google Wallet", () => {
     expect(createVerify("RSA-SHA256").update(`${header}.${body}`).verify(publicKey, Buffer.from(sig, "base64url"))).toBe(true);
     const payload = JSON.parse(Buffer.from(body, "base64url").toString());
     expect(payload).toMatchObject({ iss: cfg.serviceAccountEmail, aud: "google", typ: "savetowallet", origins: ["https://eventobrasil.example"] });
-    expect(payload.payload.eventTicketObjects[0]).toEqual({ id: `${cfg.issuerId}.ingresso-ABCD1234E0` });
+    expect(payload.payload.eventTicketObjects[0]).toEqual({ id: `${cfg.issuerId}.ingresso-ABCD1234E0-v1` });
     expect(JSON.stringify(payload)).not.toContain("t".repeat(43));
 
     // Token de conta de serviço com o escopo do emissor, assinado com a chave dela.
@@ -88,7 +90,7 @@ describe("Google Wallet", () => {
     expect(JSON.parse(posts[0].body).id).toBe(`${cfg.issuerId}.evento-cevento1`);
     const objects = posts.filter((c) => c.url.endsWith("/eventTicketObject")).map((c) => JSON.parse(c.body));
     expect(objects).toHaveLength(10);
-    expect(objects[0]).toMatchObject({ id: `${cfg.issuerId}.ingresso-ABCD1234E0`, state: "ACTIVE", barcode: { type: "QR_CODE", value: `EB1:ABCD1234E0:${"t".repeat(43)}` } });
+    expect(objects[0]).toMatchObject({ id: `${cfg.issuerId}.ingresso-ABCD1234E0-v1`, state: "ACTIVE", barcode: { type: "QR_CODE", value: `EB1:ABCD1234E0:${"t".repeat(43)}` } });
     expect(objects[0].ticketType.defaultValue.value).toMatch(/meia-entrada/);
   });
 
@@ -104,6 +106,27 @@ describe("Google Wallet", () => {
     await expect(googleWalletSaveUrl([ticket()], cfg, "https://eventobrasil.example", fetchImpl)).rejects.toThrow(/403/);
   });
 
+  it("cada versão do QR é outro objeto: a transferência não sobrescreve o passe do titular anterior", () => {
+    const [v1] = googleWalletResources([ticket()], cfg).objects;
+    const [v2] = googleWalletResources([ticket({ tokenVersion: 2, validationToken: "n".repeat(43) })], cfg).objects;
+    expect(v1.id).toBe(`${cfg.issuerId}.ingresso-ABCD1234EF-v1`);
+    expect(v2.id).toBe(`${cfg.issuerId}.ingresso-ABCD1234EF-v2`);
+  });
+
+  it("muda o estado do objeto com PATCH; objeto inexistente não é erro", async () => {
+    const { calls, fetchImpl } = fakeGoogle();
+    await setGoogleObjectState(`${cfg.issuerId}.ingresso-X-v1`, "INACTIVE", cfg, fetchImpl);
+    const patch = calls.find((c) => c.method === "PATCH")!;
+    expect(patch.url).toBe(`https://walletobjects.googleapis.com/walletobjects/v1/eventTicketObject/${encodeURIComponent(`${cfg.issuerId}.ingresso-X-v1`)}`);
+    expect(JSON.parse(patch.body)).toEqual({ state: "INACTIVE" });
+    const missing = (async (input: string | URL | Request) =>
+      String(input).includes("oauth2") ? Response.json({ access_token: "tok" }) : new Response("não existe", { status: 404 })) as typeof fetch;
+    await expect(setGoogleObjectState("x", "COMPLETED", cfg, missing)).resolves.toBeUndefined();
+    const denied = (async (input: string | URL | Request) =>
+      String(input).includes("oauth2") ? Response.json({ access_token: "tok" }) : new Response("negado", { status: 403 })) as typeof fetch;
+    await expect(setGoogleObjectState("x", "COMPLETED", cfg, denied)).rejects.toThrow(/403/);
+  });
+
   it("ingresso de teste leva o aviso", () => {
     const { objects } = googleWalletResources([ticket({ isSimulated: true })], cfg);
     expect(JSON.stringify(objects)).toMatch(/Pagamento simulado/);
@@ -116,9 +139,26 @@ describe("Apple Wallet", () => {
 
   it("pass.json de evento com QR, data relevante e avisos", () => {
     const json = applePassJson(ticket({ kind: "HALF_PRICE" }), cfg);
-    expect(json).toMatchObject({ passTypeIdentifier: cfg.passTypeIdentifier, teamIdentifier: cfg.teamIdentifier, serialNumber: "ABCD1234EF", relevantDate: "2026-12-05T21:00:00.000Z" });
-    expect(json.barcodes[0]).toMatchObject({ format: "PKBarcodeFormatQR", message: `EB1:ABCD1234EF:${"t".repeat(43)}` });
+    expect(json).toMatchObject({
+      passTypeIdentifier: cfg.passTypeIdentifier,
+      teamIdentifier: cfg.teamIdentifier,
+      serialNumber: "ABCD1234EF-v1",
+      relevantDate: "2026-12-05T21:00:00.000Z",
+      barcodes: [{ format: "PKBarcodeFormatQR", message: `EB1:ABCD1234EF:${"t".repeat(43)}` }],
+    });
+    expect(json).not.toHaveProperty("webServiceURL");
+    expect(json).not.toHaveProperty("voided");
     expect(JSON.stringify(json.eventTicket.backFields)).toMatch(/documento comprobatório/);
+  });
+
+  it("com web service: URL e token de atualização; anulado: sem QR e sem o titular de outra versão", () => {
+    const live = applePassJson(ticket(), cfg, { webService: { url: "https://eventobrasil.example/api/wallet/apple", authenticationToken: "a".repeat(43) } });
+    expect(live).toMatchObject({ webServiceURL: "https://eventobrasil.example/api/wallet/apple", authenticationToken: "a".repeat(43) });
+    const voided = applePassJson(ticket({ validationToken: "" }), cfg, { voided: true, hideHolder: true });
+    expect(voided).toMatchObject({ voided: true });
+    expect(voided).not.toHaveProperty("barcodes");
+    expect(JSON.stringify(voided)).not.toContain("Clara Cliente");
+    expect(JSON.stringify(voided.eventTicket.backFields)).toMatch(/não vale mais/);
   });
 
   it(".pkpass assinado: zip com pass.json, imagens, manifest (sha1) e assinatura", async () => {
@@ -130,7 +170,7 @@ describe("Apple Wallet", () => {
     );
     const manifest = JSON.parse(entries["manifest.json"].toString());
     expect(manifest["pass.json"]).toBe(createHash("sha1").update(entries["pass.json"]).digest("hex"));
-    expect(JSON.parse(entries["pass.json"].toString()).serialNumber).toBe("ABCD1234EF");
+    expect(JSON.parse(entries["pass.json"].toString()).serialNumber).toBe("ABCD1234EF-v1");
     expect(entries.signature.length).toBeGreaterThan(500);
   });
 });

@@ -15,6 +15,8 @@ import { describeChangeValue, isRelevantField, RELEVANT_FIELD_LABELS, type Chang
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
+import { walletAvailability } from "@/server/tickets/wallet";
+import { WalletLinks } from "@/features/wallet/wallet-links";
 import { openChangeRefundWindow, refundEligibility, type RefundEligibility } from "@/server/services/refunds";
 import { PROVISIONAL_CANCELLATION_RESPONSE_DAYS } from "@/server/services/cancellation-requests";
 import { formatDateShort, formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
@@ -48,6 +50,8 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
     openChangeRefundWindow(db, order.eventId, order.paidAt, now),
     db.cancellationRequest.findMany({ where: { orderId: order.id, requestedById: user.id }, orderBy: { createdAt: "desc" } }),
   ]);
+  // Carteiras: só com ingresso válido ainda com o comprador (os transferidos são do novo titular).
+  const wallet = order.status === "PAID" && order.tickets.some((t) => t.status === "VALID" && t.holderUserId === user.id) ? walletAvailability() : { apple: false, google: false };
   // Reembolso por ingresso: os já utilizados ficam de fora e não impedem o dos outros.
   const usedTickets = order.tickets.filter((t) => t.status === "CHECKED_IN" && !t.refundId).length;
   const itemById = new Map(order.items.map((i) => [i.id, i]));
@@ -175,11 +179,14 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
         <section className="mt-8">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-display text-xl font-bold">Ingressos</h2>
-            {order.tickets.some((t) => t.status !== "REVOKED") && (
-              <a href={`/api/orders/${order.id}/pdf`} target="_blank" rel="noopener" className={buttonVariants({ variant: "outline", size: "sm" })}>
-                <Download aria-hidden /> Salvar todos (PDF)
-              </a>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {order.tickets.some((t) => t.status !== "REVOKED") && (
+                <a href={`/api/orders/${order.id}/pdf`} target="_blank" rel="noopener" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                  <Download aria-hidden /> Salvar todos (PDF)
+                </a>
+              )}
+              <WalletLinks apple={wallet.apple} google={wallet.google} orderId={order.id} />
+            </div>
           </div>
           <ul className="grid gap-3 sm:grid-cols-2">
             {order.tickets.map((t) => {

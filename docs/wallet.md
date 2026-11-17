@@ -6,21 +6,62 @@ Ligada:
 
 - **Página do ingresso** (`/ingressos/[code]`, só ingresso válido): botões
   "Adicionar à Apple Wallet" e/ou "Salvar no Google Wallet".
+- **Meus ingressos**: "Apple Wallet" / "Google Wallet" ao lado de cada ingresso
+  válido de pedido pago, sem transferência pendente.
+- **Página do pedido**: "Adicionar todos à Apple Wallet" (um `.pkpasses`, que o
+  iOS 15+ adiciona de uma vez) e "Salvar todos no Google Wallet", com os ingressos
+  válidos que ainda estão com o comprador.
 - **E-mail da compra**: um `.pkpass` por ingresso anexado (Apple) e um link
   "Salvar os ingressos no Google Wallet" que salva todos os ingressos do pedido.
 
-O passe traz o mesmo QR do ingresso e do PDF. A portaria valida online, então um
-ingresso cancelado ou reembolsado depois de salvo continua aparecendo na
-carteira, mas é recusado na entrada. Atualizar ou remover o passe automaticamente
-é uma etapa futura: web service de passes da Apple e, no Google, marcar o objeto
-como inativo pela mesma API que já o grava.
+Só ingressos **válidos** viram passe (usado ou cancelado: a rota responde 410).
+O passe traz o mesmo QR do ingresso e do PDF, e a portaria continua validando
+online: a carteira é só o reflexo para o comprador.
 
-Código: `src/server/tickets/wallet/`. Rotas:
-- `/api/tickets/[code]/wallet/apple`
-- `/api/tickets/[code]/wallet/google`
-- `/api/orders/[orderId]/wallet/google`
+### Atualização do passe
 
-Testes: `tests/unit/wallet.test.ts`, com certificados autoassinados só de teste.
+Cada passe entregue fica registrado (`WalletPass`), **um por versão do QR**:
+serial Apple `<código>-v<versão>` e objeto Google `<issuer>.ingresso-<código>-v<versão>`.
+A transferência gera uma versão nova; o novo titular salva outro passe e o do
+titular anterior nunca recebe o QR novo.
+
+O cron (`/api/cron/maintenance`, etapa `syncWalletPasses`) compara o estado do
+ingresso com o do passe e atualiza a carteira:
+
+| Ingresso | Passe |
+| --- | --- |
+| válido, mesma versão do QR | ACTIVE (QR visível) |
+| utilizado (check-in) | COMPLETED |
+| reembolsado ou evento cancelado | INACTIVE |
+| transferido (versão do QR substituída) | INACTIVE, sem o nome do novo titular |
+| reembolso desfeito pelo admin | volta a ACTIVE |
+
+- **Google**: muda o `state` do objeto pela API (`PATCH eventTicketObject`).
+- **Apple**: marca o passe como alterado e manda um push vazio (APNs) aos aparelhos
+  registrados; o aparelho baixa o passe de novo pelo web service, agora anulado
+  (`voided`) e sem QR. Só funciona com `APP_URL` em **HTTPS**: em HTTP o passe sai
+  sem `webServiceURL` (como antes, sem atualização).
+- Falha na API ou no push: o passe tenta de novo nos próximos ciclos (até 8 vezes;
+  o erro fica em `WalletPass.syncError`). Token de push recusado pela Apple (410)
+  apaga o registro do aparelho.
+
+Passes do Google salvos antes desta versão usavam o objeto sem versão
+(`ingresso-<código>`) e não são acompanhados; como nenhuma carteira estava
+configurada, não há passes antigos a migrar.
+
+Código: `src/server/tickets/wallet/` (`passes.ts`: registro, web service e
+sincronização; `apple-push.ts`: APNs). Rotas:
+- `/api/tickets/[code]/wallet/apple` e `/api/tickets/[code]/wallet/google`
+- `/api/orders/[orderId]/wallet/apple` e `/api/orders/[orderId]/wallet/google`
+- Web service da Apple (`webServiceURL` = `<APP_URL>/api/wallet/apple`):
+  `POST/DELETE /v1/devices/<aparelho>/registrations/<passType>/<serial>`,
+  `GET /v1/devices/<aparelho>/registrations/<passType>?passesUpdatedSince=`,
+  `GET /v1/passes/<passType>/<serial>` e `POST /v1/log`. Autenticação
+  `ApplePass <token>`, com token derivado do serial (HMAC com `AUTH_SECRET`, nada
+  guardado).
+
+Testes: `tests/unit/wallet.test.ts` (certificados autoassinados só de teste) e
+`tests/integration/zz-wallet-passes.test.ts` (registro, sincronização, web service).
 
 ## Apple Wallet
 
@@ -121,3 +162,8 @@ para `oauth2.googleapis.com` e `walletobjects.googleapis.com`.
   Google também não leva o token: ele fica no objeto gravado pela API.
 - Falha ao gerar os `.pkpass` (certificado vencido, chave errada) não impede o
   e-mail: ele segue só com o PDF e o erro fica no log.
+- O web service da Apple só responde a quem apresenta o token do próprio passe.
+  Trocar `AUTH_SECRET` invalida esses tokens: os passes Apple já salvos param de
+  receber atualização (continuam com o QR, que a portaria valida online).
+- Saída de rede necessária: `api.push.apple.com:443` (HTTP/2, certificado do Pass
+  Type ID) para os avisos da Apple, além das do Google acima.

@@ -3,7 +3,9 @@
 // ingresso já passam disso. Por isso a classe do evento e os objetos dos ingressos são
 // gravados antes pela API REST (insert; se já existem, update com os dados atuais) e o
 // JWT só referencia os ids dos objetos. O QR é o mesmo do ingresso e do PDF
-// (validação online na portaria).
+// (validação online na portaria). Um objeto por versão do QR: na transferência o novo
+// titular salva outro objeto, e o do titular anterior (QR antigo) vira INACTIVE pelo
+// cron (passes.ts) — nunca recebe o QR novo.
 import "server-only";
 import { createSign } from "node:crypto";
 import { qrPayload } from "../../services/tickets";
@@ -31,6 +33,10 @@ function signJwt(claims: object, privateKey: string): string {
 
 type Resource = { id: string } & Record<string, unknown>;
 
+/** Id do objeto de um ingresso numa versão do QR. */
+export const googleObjectId = (cfg: Pick<GoogleWalletConfig, "issuerId">, code: string, tokenVersion: number) =>
+  `${cfg.issuerId}.ingresso-${suffix(code)}-v${tokenVersion}`;
+
 /** Classes (uma por evento) e objetos (um por ingresso) gravados na API do Google Wallet. */
 export function googleWalletResources(tickets: WalletTicket[], cfg: GoogleWalletConfig) {
   const classes = new Map<string, Resource>();
@@ -48,7 +54,7 @@ export function googleWalletResources(tickets: WalletTicket[], cfg: GoogleWallet
       });
     }
     return {
-      id: `${cfg.issuerId}.ingresso-${suffix(t.code)}`,
+      id: googleObjectId(cfg, t.code, t.tokenVersion),
       classId,
       state: "ACTIVE",
       ticketHolderName: t.holderName ?? undefined,
@@ -84,6 +90,24 @@ async function accessToken(cfg: GoogleWalletConfig, fetchImpl: typeof fetch, now
   });
   if (!res.ok) throw new Error(`Google Wallet: token recusado (${res.status}) ${await res.text()}`);
   return ((await res.json()) as { access_token: string }).access_token;
+}
+
+/** Muda o estado de um objeto já gravado (ACTIVE, COMPLETED ou INACTIVE). Objeto inexistente: nada a fazer. */
+export async function setGoogleObjectState(
+  objectId: string,
+  state: "ACTIVE" | "COMPLETED" | "INACTIVE",
+  cfg: GoogleWalletConfig,
+  fetchImpl: typeof fetch = fetch,
+  now = new Date(),
+): Promise<void> {
+  const token = await accessToken(cfg, fetchImpl, now);
+  const res = await fetchImpl(`${API_URL}/eventTicketObject/${encodeURIComponent(objectId)}`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ state }),
+  });
+  if (res.status === 404) return;
+  if (!res.ok) throw new Error(`Google Wallet: falha ao mudar o estado de ${objectId} (${res.status}) ${await res.text()}`);
 }
 
 /** Insere o recurso; se já existe (409), atualiza com os dados atuais (evento remarcado etc.). */

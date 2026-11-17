@@ -11,6 +11,7 @@ vi.mock("@/server/services/transfers", () => ({ expireTicketTransfers: async () 
 vi.mock("@/server/services/reconciliation", () => ({ reconcilePayments: mocks.reconcile, checkFinancialInvariants: async () => [] }));
 vi.mock("@/server/services/retention-purge", () => ({ runRetentionPurgeIfDue: async () => null }));
 vi.mock("@/server/services/external-events", () => ({ runExternalSyncIfDue: async () => ({}) }));
+vi.mock("@/server/tickets/wallet/passes", () => ({ syncWalletPasses: async () => ({ google: 0, apple: 0, pushes: 0, failed: 0, skipped: 0 }) }));
 vi.mock("@/server/services/finance-log", () => ({ financeLog: vi.fn() }));
 vi.mock("@/server/email/outbox", () => ({ dispatchEmailOutbox: mocks.email }));
 vi.mock("@/server/services/ops-health", () => ({ operationalHealth: async () => [], raiseOperationalAlerts: async () => ({ problems: 0, queued: 0 }) }));
