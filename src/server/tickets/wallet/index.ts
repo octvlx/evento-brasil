@@ -8,6 +8,7 @@ import type { WalletTicket } from "./types";
 
 export { buildApplePass } from "./apple";
 export { googleWalletSaveUrl } from "./google";
+export { applePassBundleForTickets, applePassForTicket, recordGoogleWalletPasses } from "./passes";
 export type { WalletTicket } from "./types";
 
 export const appleWallet = () => appleWalletConfig(env());
@@ -18,13 +19,19 @@ export function walletAvailability() {
   return { apple: appleWallet() !== null, google: googleWallet() !== null };
 }
 
-/** Acrescenta evento e tipo aos ingressos de loadPdfTickets (não cancelados). */
+/**
+ * Acrescenta evento, tipo e versão do QR aos ingressos de loadPdfTickets. Só ingressos
+ * válidos vão para a carteira (usado ou cancelado não gera passe novo).
+ */
 export async function toWalletTickets(db: Db, tickets: PdfTicket[]): Promise<WalletTicket[]> {
   if (!tickets.length) return [];
   const extra = await db.issuedTicket.findMany({
-    where: { code: { in: tickets.map((t) => t.code) } },
-    select: { code: true, eventId: true, ticketType: { select: { kind: true } } },
+    where: { code: { in: tickets.map((t) => t.code) }, status: "VALID" },
+    select: { id: true, code: true, eventId: true, tokenVersion: true, ticketType: { select: { kind: true } } },
   });
   const byCode = new Map(extra.map((e) => [e.code, e]));
-  return tickets.map((t) => ({ ...t, eventId: byCode.get(t.code)!.eventId, kind: byCode.get(t.code)!.ticketType.kind }));
+  return tickets.flatMap((t) => {
+    const e = byCode.get(t.code);
+    return e ? [{ ...t, eventId: e.eventId, ticketId: e.id, tokenVersion: e.tokenVersion, kind: e.ticketType.kind }] : [];
+  });
 }

@@ -1,6 +1,7 @@
 // Notificações pós-confirmação. Executadas fora da transação; falhas de envio
 // não afetam o estado do pedido (podem ser reenviadas).
 import "server-only";
+import type { Prisma } from "@/generated/prisma/client";
 import type { Db, Tx } from "../db";
 import { enqueueEmail, dispatchEmailOutbox } from "../email/outbox";
 import { enqueueOrderEmailsTx } from "../email/events";
@@ -20,11 +21,28 @@ import { renderTicketsPdf, type PdfTicket } from "../tickets/pdf";
 import { BRAND } from "@/lib/brand";
 import { ticketQrToken } from "./tickets";
 import {
+  applePassForTicket,
   appleWallet,
-  buildApplePass,
   googleWallet,
   toWalletTickets,
 } from "../tickets/wallet";
+
+/** Dados do ingresso usados no PDF e nas carteiras. */
+export const PDF_TICKET_INCLUDE = {
+  ticketType: { select: { name: true } },
+  order: { select: { publicCode: true, isSimulated: true } },
+  event: {
+    include: {
+      venue: { include: { city: true } },
+      city: true,
+      organization: { select: { name: true } },
+    },
+  },
+} as const satisfies Prisma.IssuedTicketInclude;
+
+type PdfTicketRow = Prisma.IssuedTicketGetPayload<{
+  include: typeof PDF_TICKET_INCLUDE;
+}>;
 
 export async function loadPdfTickets(
   db: Db,
@@ -32,49 +50,46 @@ export async function loadPdfTickets(
 ): Promise<PdfTicket[]> {
   const tickets = await db.issuedTicket.findMany({
     where: { ...where, status: { not: "REVOKED" } },
-    include: {
-      ticketType: { select: { name: true } },
-      order: { select: { publicCode: true, isSimulated: true } },
-      event: {
-        include: {
-          venue: { include: { city: true } },
-          city: true,
-          organization: { select: { name: true } },
-        },
-      },
-    },
+    include: PDF_TICKET_INCLUDE,
     orderBy: [{ orderItemId: "asc" }, { sequence: "asc" }],
   });
   // Ingresso anterior ao hash do QR que já foi usado: o token antigo foi apagado no
   // check-in e não há QR para remontar, então fica fora do PDF e das carteiras.
   return tickets.flatMap((t) => {
     const validationToken = ticketQrToken(t);
-    if (!validationToken) return [];
-    const city = t.event.venue?.city ?? t.event.city;
-    const place =
-      t.event.locationType === "ONLINE"
-        ? "Online"
-        : [t.event.venue?.name, city && `${city.name} – ${city.state}`]
-            .filter(Boolean)
-            .join(", ");
-    return {
-      code: t.code,
-      validationToken,
-      holderName: t.holderName,
-      ticketTypeName: t.ticketType.name,
-      orderCode: t.order.publicCode,
-      isSimulated: t.order.isSimulated,
-      event: {
-        title: t.event.title,
-        startsAt: t.event.startsAt,
-        endsAt: t.event.endsAt,
-        timezone: t.event.timezone,
-        place,
-        organizer: t.event.organization.name,
-        ageRestriction: t.event.ageRestriction,
-      },
-    } satisfies PdfTicket;
+    return validationToken ? [toPdfTicket(t, validationToken)] : [];
   });
+}
+
+/** Linha do banco → dados do PDF, com o token do QR já calculado. */
+export function toPdfTicket(
+  t: PdfTicketRow,
+  validationToken: string,
+): PdfTicket {
+  const city = t.event.venue?.city ?? t.event.city;
+  const place =
+    t.event.locationType === "ONLINE"
+      ? "Online"
+      : [t.event.venue?.name, city && `${city.name} – ${city.state}`]
+          .filter(Boolean)
+          .join(", ");
+  return {
+    code: t.code,
+    validationToken,
+    holderName: t.holderName,
+    ticketTypeName: t.ticketType.name,
+    orderCode: t.order.publicCode,
+    isSimulated: t.order.isSimulated,
+    event: {
+      title: t.event.title,
+      startsAt: t.event.startsAt,
+      endsAt: t.event.endsAt,
+      timezone: t.event.timezone,
+      place,
+      organizer: t.event.organization.name,
+      ageRestriction: t.event.ageRestriction,
+    },
+  };
 }
 
 // Os .pkpass são um extra: certificado vencido ou mal configurado não pode impedir
@@ -90,7 +105,7 @@ async function applePassesForEmail(
     return await Promise.all(
       (await toWalletTickets(db, tickets)).map(async (t) => ({
         code: t.code,
-        pass: await buildApplePass(t, apple),
+        pass: await applePassForTicket(db, t, apple),
       })),
     );
   } catch (err) {

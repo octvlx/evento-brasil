@@ -888,6 +888,19 @@ enum TicketStatus {
   REVOKED
 }
 
+enum WalletProvider {
+  APPLE
+  GOOGLE
+}
+
+// Situação do passe na carteira. ACTIVE = QR utilizável; COMPLETED = ingresso usado;
+// INACTIVE = reembolsado, cancelado ou QR substituído (transferência).
+enum WalletPassState {
+  ACTIVE
+  COMPLETED
+  INACTIVE
+}
+
 enum TicketRevocationReason {
   REFUNDED
   EVENT_CANCELLED
@@ -937,6 +950,7 @@ model IssuedTicket {
   holder     User             @relation("TicketHolder", fields: [holderUserId], references: [id], onDelete: Restrict)
   checkins   TicketCheckin[]
   transfers  TicketTransfer[]
+  walletPasses WalletPass[]
   refund     Refund?          @relation(fields: [refundId], references: [id], onDelete: Restrict)
 
   // Garante emissão única por unidade do item, mesmo com webhooks concorrentes.
@@ -1628,4 +1642,46 @@ model ExternalImportRun {
   source ExternalSource @relation(fields: [sourceId], references: [id])
 
   @@index([sourceId, startedAt])
+}
+
+// ───────────────────────────── Carteiras digitais ─────────────────────────────
+
+// Passe entregue à Apple Wallet ou ao Google Wallet: um por versão do QR do ingresso
+// (a transferência gera outro). O cron compara o estado desejado (pelo ingresso) com
+// syncedState e atualiza a carteira: no Google, o estado do objeto pela API; na Apple,
+// um push para os aparelhos registrados, que baixam o passe de novo (anulado).
+model WalletPass {
+  id           String          @id @default(cuid())
+  ticketId     String
+  provider     WalletProvider
+  // Google: id do objeto ("<issuer>.ingresso-<código>-v<versão>"); Apple: serialNumber.
+  serial       String
+  tokenVersion Int
+  syncedState  WalletPassState @default(ACTIVE)
+  // Última mudança do passe (Apple: Last-Modified e passesUpdatedSince).
+  changedAt    DateTime        @default(now()) @db.Timestamptz(3)
+  createdAt    DateTime        @default(now()) @db.Timestamptz(3)
+  // Falhas seguidas de sincronização (o cron desiste depois de algumas e o erro fica aqui).
+  syncAttempts Int             @default(0)
+  syncError    String?
+
+  ticket        IssuedTicket              @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  registrations AppleWalletRegistration[]
+
+  @@unique([provider, serial])
+  @@index([ticketId])
+}
+
+// Aparelho Apple que pediu atualizações de um passe (web service de passes da Apple).
+model AppleWalletRegistration {
+  id              String   @id @default(cuid())
+  passId          String
+  deviceLibraryId String
+  pushToken       String
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  pass WalletPass @relation(fields: [passId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceLibraryId, passId])
+  @@index([passId])
 }

@@ -24,6 +24,7 @@ import { checkFinancialInvariants, reconcilePayments } from "@/server/services/r
 import { runRetentionPurgeIfDue } from "@/server/services/retention-purge";
 import { expireTicketTransfers } from "@/server/services/transfers";
 import { runExternalSyncIfDue } from "@/server/services/external-events";
+import { syncWalletPasses } from "@/server/tickets/wallet/passes";
 
 export async function POST(req: Request) {
   const secret = req.headers.get("x-cron-secret") ?? "";
@@ -45,6 +46,8 @@ export async function POST(req: Request) {
   // Só registra a liberação da cota de meia (auditoria); a regra já vale pelo relógio.
   const halfPriceReleases = await step("recordHalfPriceReleases", () => recordHalfPriceReleases(db));
   const expiredTransfers = await step("expireTicketTransfers", () => expireTicketTransfers(db));
+  // Carteiras: passes de ingressos reembolsados, cancelados, usados ou transferidos.
+  const walletPasses = await step("syncWalletPasses", () => syncWalletPasses(db));
   const reconciliation = await step("reconcilePayments", () => reconcilePayments(db, getPaymentAdapter()));
   if (reconciliation?.errors.length) failed.push("reconcilePayments");
   const violations = (await step("checkFinancialInvariants", () => checkFinancialInvariants(db))) ?? [];
@@ -71,6 +74,7 @@ export async function POST(req: Request) {
       completedEvents,
       halfPriceReleases,
       expiredTransfers,
+      walletPasses,
       reconciliation: reconciliation && { ...reconciliation, errors: reconciliation.errors.length },
       retention,
       externalSync,
