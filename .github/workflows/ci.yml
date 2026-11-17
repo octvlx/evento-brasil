@@ -40,8 +40,11 @@ jobs:
       - name: Auditoria das dependências de produção (moderada ou pior)
         run: npm audit --omit=dev --audit-level=moderate
 
+      # Alta ou pior, com exceções explícitas e com prazo em scripts/audit-allowlist.mjs
+      # (hoje só o picomatch GHSA-fc5q-39xc-vjpf, sem versão corrigida e só em ferramentas
+      # de desenvolvimento). Qualquer outro alerta alto ou crítico continua reprovando.
       - name: Auditoria de todas as dependências (alta ou pior)
-        run: npm audit --audit-level=high
+        run: node scripts/audit-allowlist.mjs
 
       - name: Instalar gitleaks
         run: |
