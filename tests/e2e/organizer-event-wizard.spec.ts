@@ -145,3 +145,35 @@ test("rascunho incompleto aparece na lista com 'Continuar cadastro'", async ({ p
   await page.goto(`/organizador/eventos/${id}/editar`);
   await expect(page).toHaveURL(/eventos\/novo\?evento=.+&etapa=2/);
 });
+
+test("evento publicado com vendas: edição pelo assistente sem autosave e com aviso de motivo", async ({ page }) => {
+  await login(page, USERS.producer, "/organizador/eventos");
+  await page.getByRole("row", { name: /Festival Litoral Sonoro/ }).getByRole("link", { name: "Gerenciar" }).click();
+  await page.getByRole("link", { name: "Editar pelo assistente" }).click();
+  await expect(page).toHaveURL(/\/assistente$/);
+  await expect(page.getByText("Este evento já tem ingressos vendidos.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Informações básicas" })).toBeVisible();
+
+  // Etapa 2 mostra o motivo (exigido para mudar data/local com vendas).
+  await page.getByRole("button", { name: "Continuar", exact: true }).click();
+  await expect(page.getByLabel(/Motivo da alteração/)).toBeVisible();
+  await page.getByRole("button", { name: "Continuar", exact: true }).click();
+  await page.getByRole("button", { name: "Continuar", exact: true }).click();
+
+  // Etapa 4: a mudança só é gravada ao tocar em "Salvar alterações".
+  await expect(page.getByRole("heading", { name: "Imagens e descrição" })).toBeVisible();
+  const info = `Rampa e banheiro acessível (${Date.now()})`;
+  await page.getByLabel("Acessibilidade (opcional)").fill(info);
+  await page.waitForTimeout(2000);
+  await expect(page.getByRole("status").filter({ hasText: /Salvo às/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Salvar alterações" }).click();
+  await waitSaved(page);
+  await page.reload();
+  await expect(page.getByLabel("Acessibilidade (opcional)")).toHaveValue(info);
+
+  // Revisão em modo edição: sem publicar, com volta para a gestão.
+  await page.getByRole("button", { name: /6\. Revisão/ }).click();
+  await expect(page.getByRole("button", { name: /Publicar evento|Enviar para publicação/ })).toHaveCount(0);
+  await page.getByRole("link", { name: "Voltar para a gestão" }).click();
+  await expect(page).toHaveURL(/\/editar$/);
+});

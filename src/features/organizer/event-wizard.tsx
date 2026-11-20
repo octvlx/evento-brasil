@@ -17,7 +17,7 @@ import { formatBRL } from "@/lib/money";
 import { formatEventDateTime, zonedLocalToUtc } from "@/lib/datetime";
 import { TICKET_KIND } from "@/lib/labels";
 import { cn } from "@/lib/utils";
-import { recordWizardVisitAction, saveEventWizardStepAction, startEventDraftAction, submitEventAction } from "./actions";
+import { recordWizardVisitAction, saveEventFromWizardAction, saveEventWizardStepAction, startEventDraftAction, submitEventAction } from "./actions";
 import { ErrorSummary, fieldId, StepBasics, StepDateLocation, StepDescription, StepSettings, StepTicketsSettings, TicketTips, type Errors } from "./event-wizard-steps";
 import { TicketTypesManager, type ManagedTicketType, type TicketEstimate } from "./ticket-types-manager";
 import { EventGallery, type GalleryImage } from "./event-gallery";
@@ -40,6 +40,13 @@ interface Props {
   autoPublish: boolean;
   /** Galeria de fotos (etapa 4): só existe depois que o rascunho foi criado. */
   gallery?: { images: GalleryImage[]; max: number; minSide: number };
+  /**
+   * "edit": evento já enviado ou publicado. Sem autosave: "Salvar alterações" envia o
+   * formulário inteiro para a edição comum (`updateEvent`), com as mesmas regras.
+   */
+  mode?: "create" | "edit";
+  /** Já há ingressos vendidos ou reservados (edição): mudança de data/local pede motivo. */
+  hasSales?: boolean;
 }
 
 type SaveState = { kind: "idle" } | { kind: "saving" } | { kind: "saved"; at: Date } | { kind: "error"; message: string } | { kind: "invalid" } | { kind: "local" };
@@ -77,11 +84,14 @@ const AUTOSAVE_MS = 1200;
 const noopSubscribe = () => () => {};
 /** true só no navegador depois da hidratação (antes disso os botões ficam desativados). */
 const useHydrated = () => useSyncExternalStore(noopSubscribe, () => true, () => false);
-const wizardUrl = (id: string, step: WizardStep) => `/organizador/eventos/novo?evento=${id}&etapa=${step}`;
+const wizardUrl = (id: string, step: WizardStep, edit = false) =>
+  edit ? `/organizador/eventos/${id}/assistente?etapa=${step}` : `/organizador/eventos/novo?evento=${id}&etapa=${step}`;
 const savedJson = (v: WizardValues) => Object.fromEntries(DATA_STEPS.map((s) => [s, JSON.stringify(stepPayload(s, v))])) as Record<DataStep, string>;
 
 export function EventWizard(props: Props) {
   const { eventId, step, initial } = props;
+  const editing = props.mode === "edit";
+  const [changeReason, setChangeReason] = useState("");
   const router = useRouter();
   const [navigating, startNav] = useTransition();
   const form = useForm<WizardValues>({ defaultValues: initial });
@@ -155,6 +165,24 @@ export function EventWizard(props: Props) {
     (s: DataStep, complete: boolean): Promise<boolean> => {
       const run = async (): Promise<boolean> => {
         const values = form.getValues();
+        if (editing) {
+          setState({ kind: "saving" });
+          try {
+            const res = await saveEventFromWizardAction(eventIdRef.current!, values, changeReason);
+            if (!res.ok) {
+              rejected(res);
+              return false;
+            }
+            lastSaved.current = savedJson(values);
+            setState({ kind: "saved", at: new Date() });
+            removeBackup(eventIdRef.current);
+            return true;
+          } catch {
+            setState({ kind: "error", message: "Sem conexão com o servidor. Suas alterações continuam guardadas neste navegador." });
+            backup();
+            return false;
+          }
+        }
         const payload = stepPayload(s, values);
         const json = JSON.stringify(payload);
         if (!complete && eventIdRef.current && lastSaved.current[s] === json) return true;
@@ -201,7 +229,7 @@ export function EventWizard(props: Props) {
       queue.current = p;
       return p;
     },
-    [form, draftKey, router, backup, rejected],
+    [form, draftKey, router, backup, rejected, editing, changeReason],
   );
 
   // Autosave com debounce: só envia quando a etapa está válida.
@@ -217,6 +245,8 @@ export function EventWizard(props: Props) {
               : e,
           );
         backup();
+        // Edição: nada é salvo sozinho (cada salvamento pode avisar compradores).
+        if (editing) return;
         if (timer.current) clearTimeout(timer.current);
         timer.current = setTimeout(() => {
           if (Object.keys(validateStep(step, form.getValues())).length) return setState({ kind: eventIdRef.current ? "invalid" : "local" });
@@ -228,7 +258,7 @@ export function EventWizard(props: Props) {
       unsubscribe();
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [step, form, persist, backup]);
+  }, [step, form, persist, backup, editing]);
 
   // Ao trocar de etapa: foco no título da etapa e registro da última etapa acessada.
   useEffect(() => {
@@ -236,8 +266,8 @@ export function EventWizard(props: Props) {
       shownStep.current = step;
       headingRef.current?.focus();
     }
-    if (eventIdRef.current) void recordWizardVisitAction(eventIdRef.current, step).catch(() => undefined);
-  }, [step]);
+    if (eventIdRef.current && !editing) void recordWizardVisitAction(eventIdRef.current, step).catch(() => undefined);
+  }, [step, editing]);
 
   // Avisa antes de fechar a aba com alterações ainda não salvas.
   useEffect(() => {
@@ -251,13 +281,13 @@ export function EventWizard(props: Props) {
   const go = (n: WizardStep) => {
     if (!eventIdRef.current) return;
     setErrors({});
-    startNav(() => router.push(wizardUrl(eventIdRef.current!, n), { scroll: false }));
+    startNav(() => router.push(wizardUrl(eventIdRef.current!, n, editing), { scroll: false }));
   };
 
   /** Sai da etapa sem validar: salva em segundo plano se estiver válida; nada se perde da memória. */
   const leaveTo = (n: WizardStep) => {
     if (timer.current) clearTimeout(timer.current);
-    if (isDataStep(step) && !Object.keys(validateStep(step, form.getValues())).length) void persist(step, false);
+    if (!editing && isDataStep(step) && !Object.keys(validateStep(step, form.getValues())).length) void persist(step, false);
     go(n);
   };
 
@@ -273,13 +303,37 @@ export function EventWizard(props: Props) {
     const errs = validateStep(step, form.getValues());
     if (step === 3 && !props.ticketTypes.length) errs.tickets = "Cadastre ao menos um tipo de ingresso para continuar.";
     if (Object.keys(errs).length) return showErrors(errs);
+    // Edição: "Continuar" só navega; as alterações ficam no formulário até "Salvar alterações".
+    if (editing) return go((step + 1) as WizardStep);
     setBusy(true);
     const ok = await persist(step, true);
     setBusy(false);
     if (ok) go((step + 1) as WizardStep);
   };
 
+  /** Edição: valida todas as etapas e envia o formulário inteiro. */
+  const saveAll = async (): Promise<boolean> => {
+    if (timer.current) clearTimeout(timer.current);
+    const values = form.getValues();
+    for (const s of DATA_STEPS) {
+      const errs = validateStep(s, values);
+      if (!Object.keys(errs).length) continue;
+      if (s === step) {
+        showErrors(errs);
+        return false;
+      }
+      setErrors({ _server: `Revise a etapa ${s} (${WIZARD_STEPS[s - 1].title}) antes de salvar.` });
+      setState({ kind: "invalid" });
+      return false;
+    }
+    setBusy(true);
+    const ok = await persist(isDataStep(step) ? step : 1, true);
+    setBusy(false);
+    return ok;
+  };
+
   const saveDraft = async () => {
+    if (editing) return void (await saveAll());
     if (!isDataStep(step)) return;
     if (timer.current) clearTimeout(timer.current);
     const errs = validateStep(step, form.getValues());
@@ -361,12 +415,30 @@ export function EventWizard(props: Props) {
             </div>
             {step === 1 && <StepBasics form={form} errors={errors} categories={props.categories} organizationName={props.organizationName} />}
             {step === 2 && <StepDateLocation form={form} errors={errors} venues={props.venues} />}
+            {step === 2 && editing && props.hasSales && (
+              <div className="space-y-1.5 rounded-2xl border border-warning/40 bg-warning/5 p-4">
+                <label htmlFor="ew-change-reason" className="text-sm font-semibold">
+                  Motivo da alteração (obrigatório se mudar data, horário ou local)
+                </label>
+                <p id="ew-change-reason-help" className="text-xs text-muted-foreground">
+                  Este evento já tem ingressos vendidos. Mudança de data, horário ou local é avisada aos compradores com este motivo e abre a janela de reembolso integral.
+                </p>
+                <textarea
+                  id="ew-change-reason"
+                  aria-describedby="ew-change-reason-help"
+                  className="min-h-20 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm"
+                  maxLength={2000}
+                  value={changeReason}
+                  onChange={(e) => setChangeReason(e.target.value)}
+                />
+              </div>
+            )}
             {step === 3 && <StepTicketsSettings form={form} errors={errors} />}
             {step === 4 && <StepDescription form={form} errors={errors} onError={(m) => setState({ kind: "error", message: m })} />}
             {step === 5 && <StepSettings form={form} errors={errors} />}
           </form>
         ) : (
-          <Review {...props} values={form.getValues()} completed={completed} onEdit={(n) => leaveTo(n)} />
+          <Review {...props} values={form.getValues()} completed={completed} onEdit={(n) => leaveTo(n)} onSaveEdit={saveAll} saveError={errors._server} />
         )}
 
         {step === 4 && eventId && props.gallery && (
@@ -399,12 +471,15 @@ export function EventWizard(props: Props) {
                   Voltar
                 </Button>
               ) : (
-                <Link href="/organizador/eventos" className="inline-flex h-11 items-center justify-center rounded-xl px-5 text-sm font-semibold hover:bg-muted">
-                  Sair
+                <Link
+                  href={editing && eventId ? `/organizador/eventos/${eventId}/editar` : "/organizador/eventos"}
+                  className="inline-flex h-11 items-center justify-center rounded-xl px-5 text-sm font-semibold hover:bg-muted"
+                >
+                  {editing ? "Voltar para a gestão" : "Sair"}
                 </Link>
               )}
-              <Button type="button" variant="ghost" onClick={() => void saveDraft()} disabled={!hydrated || busy || state.kind === "saving"}>
-                Salvar rascunho
+              <Button type="button" variant={editing ? "outline" : "ghost"} onClick={() => void saveDraft()} disabled={!hydrated || busy || state.kind === "saving"}>
+                {editing ? "Salvar alterações" : "Salvar rascunho"}
               </Button>
             </div>
             <Button type="submit" form="event-wizard-form" size="lg" disabled={!hydrated || busy || navigating}>
@@ -535,6 +610,9 @@ function Review(
     values: WizardValues;
     completed: DataStep[];
     onEdit: (n: WizardStep) => void;
+    /** Edição: salva o formulário inteiro (em vez de publicar). */
+    onSaveEdit: () => Promise<boolean>;
+    saveError?: string;
   },
 ) {
   const { values: v, ticketTypes, estimates } = props;
@@ -564,8 +642,9 @@ function Review(
     text: string;
     step?: WizardStep;
   }[] = [];
+  const editing = props.mode === "edit";
   for (const s of DATA_STEPS)
-    if (!props.completed.includes(s))
+    if (!editing && !props.completed.includes(s))
       issues.push({
         tone: "danger",
         text: `Etapa ${s} (${WIZARD_STEPS[s - 1].title}) não foi concluída.`,
@@ -589,12 +668,12 @@ function Review(
       text: "Sem imagem de capa: a página usará uma imagem padrão.",
       step: 4,
     });
-  if (!props.orgApproved)
+  if (!editing && !props.orgApproved)
     issues.push({
       tone: "danger",
       text: "Sua organização ainda não foi aprovada pela plataforma. Você pode deixar o evento pronto e publicar depois da aprovação.",
     });
-  if (!props.canPublish)
+  if (!editing && !props.canPublish)
     issues.push({
       tone: "danger",
       text: "Seu papel na organização não permite publicar. Peça a um administrador da organização.",
@@ -694,7 +773,38 @@ function Review(
       {preview && <Preview {...props} values={v} category={category} place={place} fmt={fmt} />}
 
       {result && <Alert variant={result.ok ? "success" : "danger"}>{result.text}</Alert>}
+      {editing && props.saveError && !result && <Alert variant="danger">{props.saveError}</Alert>}
 
+      {editing ? (
+        <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col-reverse gap-3 sm:flex-row">
+            <Button type="button" variant="outline" onClick={() => props.onEdit(5)}>
+              Voltar
+            </Button>
+            <Link href={`/organizador/eventos/${props.eventId}/editar`} className="inline-flex h-11 items-center justify-center rounded-xl px-5 text-sm font-semibold hover:bg-muted">
+              Voltar para a gestão
+            </Link>
+            <Button type="button" variant="ghost" onClick={() => setPreview((p) => !p)} aria-expanded={preview}>
+              <Eye aria-hidden /> {preview ? "Fechar pré-visualização" : "Pré-visualizar"}
+            </Button>
+          </div>
+          <Button
+            type="button"
+            variant="accent"
+            size="lg"
+            disabled={blocked || pending}
+            onClick={() =>
+              start(async () => {
+                setResult(null);
+                if (await props.onSaveEdit()) setResult({ ok: true, text: "Alterações salvas." });
+              })
+            }
+          >
+            {pending && <Loader2 className="animate-spin" aria-hidden />}
+            Salvar alterações
+          </Button>
+        </div>
+      ) : (
       <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col-reverse gap-3 sm:flex-row">
           <Button type="button" variant="outline" onClick={() => props.onEdit(5)}>
@@ -712,7 +822,8 @@ function Review(
           {props.autoPublish ? "Publicar evento" : "Enviar para publicação"}
         </Button>
       </div>
-      {!props.autoPublish && !blocked && <p className="text-right text-xs text-muted-foreground">A plataforma revisa o evento antes de ele aparecer para o público.</p>}
+      )}
+      {!editing && !props.autoPublish && !blocked && <p className="text-right text-xs text-muted-foreground">A plataforma revisa o evento antes de ele aparecer para o público.</p>}
     </div>
   );
 }

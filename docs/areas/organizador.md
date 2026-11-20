@@ -270,8 +270,14 @@ e `organizer-team.spec.ts` (convites e papéis).
 8. **Assistente de evento (complementos):** ~~preencher endereço pelo CEP~~ — feito
    (ViaCEP pelo servidor, `lookupVenuePostalCodeAction`): no assistente já existia; o
    formulário de edição ganhou a mesma busca (preenche rua, bairro e cidade; o número
-   fica com o organizador). Falta: galeria também no assistente (hoje só na gestão);
-   usar o assistente também na edição; campos da proposta ao `banco-de-dados` abaixo.
+   fica com o organizador). ~~Galeria no assistente~~ — feita (etapa 4, cada foto
+   salva na hora; a revisão mostra a quantidade). ~~Assistente na edição~~ — feito:
+   "Editar pelo assistente" na gestão abre `/organizador/eventos/[id]/assistente` para
+   evento enviado ou publicado (rascunho incompleto continua no cadastro). Sem
+   autosave: "Salvar alterações" envia o formulário inteiro para `updateEvent`
+   (`wizardToEventInput`), com as mesmas regras da edição comum; com vendas, a etapa
+   2 pede o motivo da alteração relevante. Os valores vêm de `wizardPageData`
+   (compartilhado com o cadastro). Falta: campos da proposta ao `banco-de-dados` abaixo.
 
 ## Dependências de outros agentes
 
