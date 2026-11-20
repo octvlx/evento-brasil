@@ -171,24 +171,29 @@ transação e não são reenviados se falharem.
    transação), troca de papel e remoção de membro travam a mesma linha em modo
    exclusivo, então a retirada espera as leituras em curso e as seguintes recusam.
    Teste em `zz-integrity-checkin-admin.test.ts`.
-4. **Janela de abertura do check-in.** Hoje qualquer ingresso de evento
-   PUBLISHED é admitido a qualquer momento, até semanas antes. A proposta é abrir
-   N horas antes de `startsAt`: com uma constante não exige schema; por evento,
-   exige uma coluna. A decisão é de produto.
-5. **Ingressos de pagamento simulado** são admitidos sem aviso no leitor. A
-   proposta é retornar `isSimulated` e mostrar "TESTE" no resultado (útil se
-   `ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION` estiver ligado).
-6. **Histórico:** só as últimas 15 leituras na tela, sem paginação, sem filtro
-   por resultado e sem exportação CSV para o organizador. Faltam também um
-   contador por resultado e entradas por hora.
-7. **Limite de leituras em memória por processo** (`rate-limit.ts`). Com várias
-   instâncias, o limite vira N × 120/min. O risco é baixo (o token tem 256 bits),
-   mas o limite precisa ir para Redis/Postgres quando houver escala horizontal.
-8. **Leitor:** sem som (útil em portaria barulhenta); o overlay fica fixo por
-   2,2s; os contadores só atualizam após uma leitura; não há aviso de câmera
-   lenta nem botão de lanterna.
-9. **Testes:** cobrir a janela de 12h, a listagem `/check-in` por papel, o PDF
-   (gera, não gera para REVOKED) e um e2e de ingresso reembolsado → REVOKED.
+4. ~~**Janela de abertura do check-in.**~~ — feito: `Event.checkinOpensMinutesBefore`
+   (padrão 6 h; o organizador escolhe de 0 a 7 dias na página do leitor, auditado como
+   `event.checkin_opening`). Antes da abertura a leitura volta `EVENT_NOT_ACTIVE` com
+   `opensAt` ("Check-in ainda não abriu: abre …") sem gastar o ingresso. A lista
+   offline pode ser baixada nas 12 h anteriores e leva `opensAt`; o aparelho também
+   recusa antes da abertura. O banco aceita até 1 ano (fixtures de teste e seed de
+   demonstração deixam a portaria aberta).
+5. ~~**Ingressos de pagamento simulado**~~ — feito: `ticket.simulated` na resposta e
+   `sim` na lista offline; o leitor mostra "Teste · pagamento simulado, sem valor".
+6. ~~**Histórico**~~ — feito: `/check-in/[eventId]/historico` (quem vê todas as
+   leituras): totais por resultado, entradas por hora no fuso do evento, filtros por
+   resultado e origem, paginação e CSV (`/check-in/[eventId]/historico/csv`,
+   auditado como `checkin.history_exported`).
+7. ~~**Limite de leituras em memória por processo**~~ — já resolvido: `rate-limit.ts`
+   guarda as janelas no Postgres (`RateLimitBucket`), valendo entre instâncias.
+8. **Leitor:** ~~sem som~~ (feito: bipe agudo para entrada liberada, grave repetido
+   para recusa; botão liga/desliga guardado no aparelho) e ~~sem lanterna~~ (já
+   existia). Faltam: overlay fixo por 2,2 s, contadores só atualizam após uma
+   leitura, aviso de câmera lenta.
+9. **Testes:** ~~janela de 12 h, listagem `/check-in` por papel, PDF sem REVOKED~~ —
+   feitos em `zz-checkin-window-history.test.ts` (a listagem virou
+   `listCheckinEvents` e passou a esconder eventos atribuídos a quem não é mais
+   portaria). Falta um e2e de ingresso reembolsado → REVOKED no leitor.
 
 ## Dependências de outros agentes
 

@@ -226,7 +226,7 @@ describe("V1.3 — janela da alteração relevante com ingressos transferidos", 
     };
     const event = await createEvent(db, owner, org.id, input);
     const tt = await db.ticketType.create({ data: { eventId: event.id, name: "Inteira", kind: "GENERAL", priceCents: 5000, quantityTotal: 50 } });
-    await db.event.update({ where: { id: event.id }, data: { status: "PUBLISHED", publishedAt: new Date() } });
+    await db.event.update({ where: { id: event.id }, data: { status: "PUBLISHED", publishedAt: new Date(), checkinOpensMinutesBefore: 525_600 } }); // portaria aberta: o teste lê o QR
     const buyer = await makeUser();
     const { order, payment } = await buyAndPay(buyer, event.id, [{ ticketTypeId: tt.id, quantity: 2 }]);
     const tickets = await ticketsOf(order.id);

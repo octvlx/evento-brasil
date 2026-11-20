@@ -87,6 +87,11 @@ export async function makeEvent(
     /** Cria um Venue na cidade do evento com essa capacidade e liga ao evento. */
     venueCapacity?: number;
     status?: "PUBLISHED" | "DRAFT";
+    /**
+     * Abertura da portaria. Padrão dos testes: 1 ano antes (portaria aberta), para os
+     * testes de leitura não dependerem da data do evento; a janela real tem testes próprios.
+     */
+    checkinOpensMinutesBefore?: number;
   } = {},
 ) {
   const [city, category] = await Promise.all([makeCity(), makeCategory()]);
@@ -107,6 +112,7 @@ export async function makeEvent(
       startsAt,
       endsAt: new Date(startsAt.getTime() + 4 * 3_600_000),
       timezone: "America/Sao_Paulo",
+      checkinOpensMinutesBefore: opts.checkinOpensMinutesBefore ?? 525_600,
       salesStartAt: opts.salesStartAt ?? new Date(Date.now() - 86_400_000),
       salesEndAt: startsAt,
       capacity: opts.capacity ?? 1000,
