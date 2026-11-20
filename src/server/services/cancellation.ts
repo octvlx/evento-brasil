@@ -8,7 +8,7 @@ import { AppError } from "../errors";
 import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { assertEventTransition } from "./events";
 import { lockCouponsOfOrders, lockEvent, releaseOrderTx } from "./orders";
-import { closePendingTransfersTx, partialRefundCents, processRefund } from "./refunds";
+import { autoApproveForCancelledEventTx, closePendingTransfersTx, partialRefundCents, processRefund } from "./refunds";
 
 /**
  * Cancela o evento: libera reservas pendentes, revoga ingressos e abre um
@@ -43,9 +43,11 @@ export async function cancelEvent(
     await tx.issuedTicket.updateMany({ where: { eventId, status: "VALID" }, data: { status: "REVOKED", revokedAt: now, revocationReason: "EVENT_CANCELLED" } });
     const transfersClosed = await closePendingTransfersTx(tx, { eventId }, "Evento cancelado", now);
 
+    // Reembolsos do admin aguardando aprovação: com o evento cancelado o comprador tem
+    // direito ao reembolso, então são aprovados e entram no mesmo lote.
+    const refundIds: string[] = await autoApproveForCancelledEventTx(tx, eventId, actor.id, now);
     const paid = await tx.order.findMany({ where: { eventId, status: "PAID" }, include: { payments: VALID_PAID_PAYMENTS } });
     await enqueueCancelledEventEmailsTx(tx, eventId);
-    const refundIds: string[] = [];
     for (const o of paid) {
       const key = `refund:${o.id}:event_cancelled`;
       const refund = await tx.refund.upsert({

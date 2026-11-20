@@ -202,3 +202,86 @@ export async function enqueueRefundDelayedEmailTx(tx: Tx, refundId: string) {
     ),
   });
 }
+
+// Reembolso manual do admin acima do limite, aguardando aprovação. Quem aprova (OWNER e
+// FINANCE da organização) recebe o pedido; o comprador fica sabendo que os ingressos
+// estão bloqueados até a decisão. A observação interna do admin vai só para a equipe.
+export async function enqueueRefundApprovalRequestedEmailsTx(tx: Tx, refundId: string) {
+  const refund = await tx.refund.findUniqueOrThrow({
+    where: { id: refundId },
+    include: { order: { include: { event: { select: { title: true } } } }, _count: { select: { tickets: true } } },
+  });
+  if (refund.status !== "AWAITING_APPROVAL") return;
+  const o = refund.order;
+  const approvers = await tx.organizationMember.findMany({
+    where: { organizationId: o.organizationId, role: { in: ["OWNER", "FINANCE"] }, user: { status: "ACTIVE" } },
+    select: { user: { select: { email: true } } },
+  });
+  for (const email of new Set(approvers.map((m) => m.user.email))) {
+    await enqueueEmail(tx, {
+      dedupeKey: "refund-approval:" + refund.id + ":" + email,
+      template: "REFUND_APPROVAL_REQUESTED",
+      recipient: email,
+      message: transactionalEmail(
+        "approval",
+        "Reembolso aguardando sua aprovação",
+        [
+          o.event.title,
+          "Pedido " + o.publicCode,
+          "Valor: " + formatBRL(refund.amountCents) + (refund.partial ? " (reembolso parcial, " + refund._count.tickets + " ingresso(s))" : ""),
+          "A equipe da plataforma pediu este reembolso" + (refund.note ? ". Motivo informado: " + refund.note : "."),
+          "Os ingressos deste reembolso já estão bloqueados. Nada é devolvido até alguém aprovar; se você recusar, eles voltam a valer.",
+        ],
+        env().APP_URL + "/organizador/reembolsos",
+      ),
+    });
+  }
+  await enqueueEmail(tx, {
+    dedupeKey: "refund-awaiting:" + refund.id,
+    template: "REFUND_AWAITING_APPROVAL",
+    recipient: o.buyerEmail,
+    message: transactionalEmail(
+      "refund",
+      "Seu reembolso está em análise",
+      [
+        o.event.title,
+        "Pedido " + o.publicCode,
+        "Valor: " + formatBRL(refund.amountCents),
+        "O reembolso foi aberto e aguarda a aprovação do organizador antes de ser enviado ao meio de pagamento.",
+        refund.partial
+          ? "Enquanto isso, os ingressos deste reembolso ficam bloqueados; os demais do pedido seguem válidos."
+          : "Enquanto isso, os ingressos deste pedido ficam bloqueados.",
+        "Você receberá outro e-mail com a decisão.",
+      ],
+      env().APP_URL + "/pedido/" + o.id,
+    ),
+  });
+}
+
+// Reembolso recusado na aprovação: o pedido volta a pago e os ingressos voltam a valer.
+// O motivo da recusa é da equipe e do organizador; não vai no e-mail.
+export async function enqueueRefundApprovalRejectedEmailTx(tx: Tx, refundId: string) {
+  const refund = await tx.refund.findUniqueOrThrow({
+    where: { id: refundId },
+    include: { order: { include: { event: { select: { title: true } } } } },
+  });
+  const o = refund.order;
+  if (refund.status !== "REJECTED" || !refund.approvalRequired || o.status !== "PAID") return;
+  await enqueueEmail(tx, {
+    dedupeKey: "refund-approval-rejected:" + refund.id,
+    template: "REFUND_APPROVAL_REJECTED",
+    recipient: o.buyerEmail,
+    message: transactionalEmail(
+      "refund",
+      "Seus ingressos voltaram a valer",
+      [
+        o.event.title,
+        "Pedido " + o.publicCode,
+        "O reembolso deste pedido não foi aprovado, e nenhum valor foi devolvido.",
+        refund.partial ? "Os ingressos deste reembolso são válidos de novo, com o mesmo QR code." : "O pedido voltou a ficar pago e seus ingressos são válidos de novo, com o mesmo QR code.",
+        "Se tiver dúvidas, fale com o atendimento.",
+      ],
+      env().APP_URL + "/pedido/" + o.id,
+    ),
+  });
+}

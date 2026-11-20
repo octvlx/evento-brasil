@@ -290,16 +290,17 @@ export async function checkFinancialInvariants(db: Db): Promise<InvariantViolati
     ],
     [
       "REFUND_PENDING_WITHOUT_OPEN_REFUND",
-      "Pedido aguardando reembolso sem reembolso em aberto (REQUESTED/PROCESSING/FAILED)",
+      "Pedido aguardando reembolso sem reembolso em aberto (AWAITING_APPROVAL/REQUESTED/PROCESSING/FAILED)",
       db.$queryRaw`SELECT o.id FROM "Order" o
         WHERE o.status = 'REFUND_PENDING'
-          AND NOT EXISTS (SELECT 1 FROM "Refund" r WHERE r."orderId" = o.id AND r.status IN ('REQUESTED', 'PROCESSING', 'FAILED'))`,
+          AND NOT EXISTS (SELECT 1 FROM "Refund" r WHERE r."orderId" = o.id AND r.status IN ('AWAITING_APPROVAL', 'REQUESTED', 'PROCESSING', 'FAILED'))`,
     ],
     [
       "OPEN_REFUND_ON_PAID_ORDER",
-      "Reembolso em aberto em pedido pago (seria reprocessado com os ingressos válidos)",
+      "Reembolso integral em aberto em pedido pago (seria reprocessado com os ingressos válidos)",
+      // O parcial em aberto deixa o pedido PAID de propósito (os demais ingressos valem).
       db.$queryRaw`SELECT r.id FROM "Refund" r JOIN "Order" o ON o.id = r."orderId"
-        WHERE r.status IN ('REQUESTED', 'PROCESSING', 'FAILED') AND o.status = 'PAID'`,
+        WHERE r.status IN ('AWAITING_APPROVAL', 'REQUESTED', 'PROCESSING', 'FAILED') AND o.status = 'PAID' AND NOT r.partial`,
     ],
     [
       "VALID_TICKET_ON_REFUND_PENDING_ORDER",

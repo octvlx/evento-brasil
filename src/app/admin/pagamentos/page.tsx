@@ -10,10 +10,10 @@ import { adminRefundAction, retryRefundAction } from "@/features/admin/actions";
 import { ReasonedDecisionButton } from "@/features/admin/decision-controls";
 import { ADMIN_REFUND_REASON } from "@/features/admin/labels";
 import { adminHref, Pager } from "@/features/admin/pager";
-import { adminRestoreFailedRefundAction, adminRetryFailedRefundAction } from "@/features/orders/actions";
+import { adminRestoreFailedRefundAction, adminRetryFailedRefundAction, decideRefundApprovalAction } from "@/features/orders/actions";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
-import { listFailedRefunds, REFUND_RETRY_POLICY } from "@/server/services/refunds";
+import { listAdminPendingApprovals, listFailedRefunds, REFUND_APPROVAL_THRESHOLD_CENTS, REFUND_RETRY_POLICY } from "@/server/services/refunds";
 import {
   adminFinancialChecks,
   listAdminOrders,
@@ -48,8 +48,9 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
   const status = parseOrderStatus(sp.status);
   const pendingOnly = sp.pendentes === "1";
-  const [failed, violations, flagged, orders, refunds, webhooks] = await Promise.all([
+  const [failed, approvals, violations, flagged, orders, refunds, webhooks] = await Promise.all([
     listFailedRefunds(db, admin),
+    listAdminPendingApprovals(db, admin),
     adminFinancialChecks(db, admin),
     listPaymentsForReview(db, admin),
     listAdminOrders(db, admin, { q: sp.q, status, page: parsePage(sp.pagina) }),
@@ -155,6 +156,75 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
                           />
                         )}
                       </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section id="aguardando-aprovacao" className="mb-8">
+        <h2 className="mb-1 text-sm font-bold">Reembolsos aguardando aprovação ({approvals.length})</h2>
+        <p className="mb-2 text-xs text-muted-foreground">
+          Reembolso manual acima de {formatBRL(REFUND_APPROVAL_THRESHOLD_CENTS)} espera o organizador (responsável ou financeiro) ou outro admin financeiro. Os ingressos
+          já estão bloqueados; recusar devolve os ingressos ao comprador. Quem pediu não decide.
+        </p>
+        {approvals.length === 0 ? (
+          <p className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">Nenhum reembolso aguardando aprovação.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-2xl border border-border">
+            <table className="w-full min-w-[860px] text-sm">
+              <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="p-3">Pedido / evento</th>
+                  <th className="p-3 text-right">Valor</th>
+                  <th className="p-3">Pedido por</th>
+                  <th className="p-3">Motivo</th>
+                  <th className="p-3">Decisão</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approvals.map((r) => (
+                  <tr key={r.refundId} className="border-t border-border align-top">
+                    <td className="p-3">
+                      <span className="font-mono">{r.orderPublicCode}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {r.eventTitle} · {r.organizationName}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right tabular-nums">
+                      {formatBRL(r.amountCents)}
+                      <span className="block text-xs text-muted-foreground">{r.partial ? `parcial · ${r.tickets} ingresso(s)` : "integral"}</span>
+                    </td>
+                    <td className="p-3 text-xs">
+                      {r.requestedByEmail ?? "—"}
+                      <span className="block text-muted-foreground">{formatDateTimeShort(r.requestedAt)}</span>
+                    </td>
+                    <td className="max-w-xs p-3 text-xs text-muted-foreground">{r.note}</td>
+                    <td className="p-3">
+                      {r.requestedById === admin.id ? (
+                        <span className="text-xs text-muted-foreground">Você pediu este reembolso: outra pessoa decide.</span>
+                      ) : (
+                        <div className="flex flex-col items-start gap-2">
+                          <ReasonedDecisionButton
+                            label="Aprovar"
+                            confirmTitle={`Aprovar o reembolso do pedido ${r.orderPublicCode}?`}
+                            confirmText={`${formatBRL(r.amountCents)} vão para o provedor de pagamento agora.`}
+                            doneText="Aprovado e enviado ao provedor."
+                            action={decideRefundApprovalAction.bind(null, r.refundId, "APPROVE")}
+                          />
+                          <ReasonedDecisionButton
+                            label="Recusar"
+                            variant="destructive"
+                            confirmTitle={`Recusar o reembolso do pedido ${r.orderPublicCode}?`}
+                            confirmText="Nada é devolvido; os ingressos voltam a valer e o comprador recebe um e-mail."
+                            doneText="Recusado."
+                            action={decideRefundApprovalAction.bind(null, r.refundId, "REJECT")}
+                          />
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
