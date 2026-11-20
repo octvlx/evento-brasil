@@ -265,6 +265,22 @@ Pré-requisitos: Node 24, `npm ci`, `.env` copiado de `.env.example` (nunca vers
 | Docker | `docker compose up -d` (porta 5433, volume `pgdata`, health check) |
 | Sem Docker | `npm run db:start` (PostgreSQL embutido; dados em `%LOCALAPPDATA%\evento-brasil\pgdata\<porta>` no Windows e `~/.local/share/evento-brasil/pgdata/<porta>` nos demais; `DEV_PG_DATA_DIR` sobrescreve; recusa `NODE_ENV=production`) |
 | Windows, um clique | `INICIAR-EVENTO-BRASIL.bat` |
+| PostgreSQL instalado (serviço) | Instale o PostgreSQL 17 (instalador oficial para Windows) na porta da `DATABASE_URL` e rode `npm run db:setup-service` (cria usuário e banco do `.env`, collation C, fuso `America/Sao_Paulo`; `-- --testes` cria também `evento_test` e `evento_e2e`). Depois `db:deploy` e `db:seed`. Não use `db:start` na mesma porta. |
+
+### Quando o PostgreSQL embutido não inicia no Windows
+
+Visto em 2026-11-20 (Windows 11 24H2, `ucrtbase.dll` 10.0.26100.9711, binário embutido
+17.10.0-beta.17):
+- **Sintoma:** `npm run db:start` termina com `pg_ctl start falhou`, e o
+  `pg-<porta>.log` não ganha nenhuma linha.
+- **Causa:** o Visualizador de Eventos (Aplicativo, ID 1000) mostra `postgres.exe` caindo
+  em `ucrtbase.dll` com `0xc0000409`.
+- **Quando acontece:** a queda ocorre em qualquer processo iniciado fora do app Claude
+  (terminal aberto pelo Explorer, WMI), com ou sem `pg_ctl` e até com o ambiente mínimo.
+  Dentro do app, o mesmo binário inicia normalmente.
+- **Dados:** os dados não são afetados.
+- **Saída:** use o PostgreSQL instalado como serviço (linha acima) ou o Docker. Hoje o
+  `db:start` mostra no erro a mensagem do próprio `pg_ctl`.
 
 ### Banco fora da pasta temporária
 

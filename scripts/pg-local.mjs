@@ -5,7 +5,7 @@
 // iniciados; por isso os binários são copiados uma vez para um diretório curto
 // em localStateDir() quando o projeto está num caminho longo.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -57,14 +57,30 @@ export async function startLocalPostgres({ dataDir, port, user, password, log })
     return { alreadyRunning: true, stop() {} };
   }
   const logFile = log ?? path.join(dataDir, "..", `pg-${port}.log`);
-  // stdio "ignore": o postgres daemonizado herdaria os pipes e o spawnSync
-  // nunca retornaria. A saída do servidor vai para `logFile`.
-  const start = spawnSync(
-    exe(bin, "pg_ctl"),
-    ["start", "-w", "-D", dataDir, "-l", logFile, "-o", `-p ${port} -c listen_addresses=localhost -c max_connections=200`],
-    { stdio: "ignore" },
-  );
-  if (start.status !== 0) throw new Error(`pg_ctl start falhou (código ${start.status}); veja ${logFile}`);
+  // Sem pipes: o postgres daemonizado herdaria os pipes e o spawnSync nunca
+  // retornaria. A saída do servidor vai para `logFile`; as mensagens do próprio
+  // pg_ctl (erros antes de o servidor abrir o log, ex.: permissão ou falha ao
+  // iniciar o processo) vão para um arquivo, para aparecer no erro.
+  const ctlOut = path.join(dataDir, "..", `pg_ctl-${port}.txt`);
+  const fd = openSync(ctlOut, "w");
+  let start;
+  try {
+    start = spawnSync(
+      exe(bin, "pg_ctl"),
+      ["start", "-w", "-D", dataDir, "-l", logFile, "-o", `-p ${port} -c listen_addresses=localhost -c max_connections=200`],
+      { stdio: ["ignore", fd, fd] },
+    );
+  } finally {
+    closeSync(fd);
+  }
+  if (start.status !== 0) {
+    const ctl = existsSync(ctlOut) ? readFileSync(ctlOut, "utf8").trim() : "";
+    throw new Error(
+      `pg_ctl start falhou (código ${start.status ?? start.signal}${start.error ? `, ${start.error.message}` : ""}).\n` +
+        (ctl ? `Mensagem do pg_ctl:\n${ctl}\n` : "") +
+        `Log do servidor: ${logFile}`,
+    );
+  }
   return {
     alreadyRunning: false,
     stop() {
