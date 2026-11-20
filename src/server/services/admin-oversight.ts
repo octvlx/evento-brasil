@@ -13,6 +13,9 @@ import { audit } from "../audit";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { parseSalesPeriod, type SalesPeriod } from "@/features/reports/period";
 import { toCsv } from "./reports";
+import { CANCELLATION_STATUS, TRANSFER_STATUS } from "@/features/admin/labels";
+import { ORDER_STATUS } from "@/lib/labels";
+import { RELEVANT_FIELD_LABELS } from "@/features/organizer/event-change-rules";
 
 export const ADMIN_PAGE_SIZE = 25;
 
@@ -35,6 +38,20 @@ function paging(page: number, total: number) {
   return { page: current, pageCount, skip: (current - 1) * ADMIN_PAGE_SIZE, take: ADMIN_PAGE_SIZE };
 }
 
+/** Exportação CSV das filas: todas as linhas do filtro, até este limite (o CSV avisa se cortou). */
+export const QUEUE_EXPORT_LIMIT = 5000;
+
+/** Página da tela ou, na exportação, tudo até o limite. */
+function pageOrExport(page: number | undefined, total: number, exportAll?: boolean) {
+  if (!exportAll) return paging(page ?? 1, total);
+  return { page: 1, pageCount: 1, skip: 0, take: QUEUE_EXPORT_LIMIT };
+}
+
+/** Registra a exportação de uma fila (quem, qual fila, filtros e quantidade). */
+export async function auditQueueExport(db: Db, admin: Actor, queue: string, filters: Record<string, string | boolean | null | undefined>, rows: number, truncated: boolean) {
+  await audit(db, { actorUserId: admin.id, action: "admin.queue_exported", entityType: "AdminQueue", entityId: queue, metadata: { filters: Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as Record<string, string | boolean | null>, rows, truncated } });
+}
+
 // ───────────────────────────── Pedidos de cancelamento ─────────────────────────────
 
 const CANCELLATION_STATUSES: readonly CancellationRequestStatus[] = ["OPEN", "APPROVED", "REJECTED", "WITHDRAWN"];
@@ -50,20 +67,25 @@ export function parseCancellationStatus(raw: unknown): CancellationRequestStatus
 export async function listCancellationQueue(
   db: Db,
   admin: Actor,
-  opts: { status?: CancellationRequestStatus; overdueOnly?: boolean; page?: number } = {},
+  opts: { status?: CancellationRequestStatus; overdueOnly?: boolean; page?: number; assignee?: "me" | "none"; exportAll?: boolean } = {},
   now = new Date(),
 ) {
   assertAdminPermission(admin, "cancellations:decide");
   const status = opts.overdueOnly ? "OPEN" : (opts.status ?? "OPEN");
-  const where: Prisma.CancellationRequestWhereInput = { status, ...(opts.overdueOnly ? { respondBy: { lt: now } } : {}) };
+  const where: Prisma.CancellationRequestWhereInput = {
+    status,
+    ...(opts.overdueOnly ? { respondBy: { lt: now } } : {}),
+    ...(opts.assignee === "me" ? { assignedToId: admin.id } : opts.assignee === "none" ? { assignedToId: null } : {}),
+  };
   const [total, overdueCount] = await Promise.all([
     db.cancellationRequest.count({ where }),
     db.cancellationRequest.count({ where: { status: "OPEN", respondBy: { lt: now } } }),
   ]);
-  const p = paging(opts.page ?? 1, total);
+  const p = pageOrExport(opts.page, total, opts.exportAll);
   const rows = await db.cancellationRequest.findMany({
     where,
     include: {
+      assignedTo: { select: { id: true, email: true, name: true } },
       order: { select: { publicCode: true, status: true, totalCents: true } },
       event: { select: { title: true, startsAt: true } },
       requestedBy: { select: { email: true } },
@@ -74,7 +96,7 @@ export async function listCancellationQueue(
     take: p.take,
   });
   const items = rows.map((r) => ({ ...r, overdue: r.status === "OPEN" && !!r.respondBy && r.respondBy < now }));
-  return { items, total, page: p.page, pageCount: p.pageCount, overdueCount, status, overdueOnly: !!opts.overdueOnly };
+  return { items, total, page: p.page, pageCount: p.pageCount, overdueCount, status, overdueOnly: !!opts.overdueOnly, assignee: opts.assignee };
 }
 
 /** Contadores para a visão geral do admin. */
@@ -135,7 +157,7 @@ export function parseTransferStatus(raw: unknown): TicketTransferStatus | undefi
 }
 
 /** Histórico de transferências (somente leitura), por código do ingresso, e-mail ou evento. */
-export async function searchTransfers(db: Db, admin: Actor, opts: { q?: string; status?: TicketTransferStatus; page?: number } = {}) {
+export async function searchTransfers(db: Db, admin: Actor, opts: { q?: string; status?: TicketTransferStatus; page?: number; exportAll?: boolean } = {}) {
   assertAdminPermission(admin, "transfers:read");
   const q = opts.q?.trim().slice(0, 200) ?? "";
   const where: Prisma.TicketTransferWhereInput = {
@@ -152,7 +174,7 @@ export async function searchTransfers(db: Db, admin: Actor, opts: { q?: string; 
       : {}),
   };
   const total = await db.ticketTransfer.count({ where });
-  const p = paging(opts.page ?? 1, total);
+  const p = pageOrExport(opts.page, total, opts.exportAll);
   // Nunca seleciona tokenHash/previousTokenHash.
   const items = await db.ticketTransfer.findMany({
     where,
@@ -225,7 +247,7 @@ export async function transferPatternReport(
  * Contagens: reembolsos abertos por meio dela (por status) e pedidos ainda pagos
  * antes da alteração (potencialmente elegíveis).
  */
-export async function listOpenChangeWindows(db: Db, admin: Actor, opts: { page?: number } = {}, now = new Date()) {
+export async function listOpenChangeWindows(db: Db, admin: Actor, opts: { page?: number; exportAll?: boolean } = {}, now = new Date()) {
   assertAdminPermission(admin, "events:moderate");
   const where: Prisma.EventChangeWhereInput = {
     relevant: true,
@@ -233,7 +255,7 @@ export async function listOpenChangeWindows(db: Db, admin: Actor, opts: { page?:
     OR: [{ refundUntil: { gt: now } }, { extensions: { some: { refundUntil: { gt: now } } } }],
   };
   const total = await db.eventChange.count({ where });
-  const p = paging(opts.page ?? 1, total);
+  const p = pageOrExport(opts.page, total, opts.exportAll);
   const rows = await db.eventChange.findMany({
     where,
     select: {
@@ -524,4 +546,78 @@ export async function listWebhookEvents(db: Db, admin: Actor, opts: { page?: num
     take: p.take,
   });
   return { items, total, page: p.page, pageCount: p.pageCount, pendingOnly: !!opts.pendingOnly };
+}
+
+// ───────────────────────────── Exportação CSV das filas ─────────────────────────────
+
+const csvDate = (d: Date | null | undefined) => (d ? formatDateTimeShort(d) : "");
+const truncatedNote = (truncated: boolean) => (truncated ? [[`Exportação limitada a ${QUEUE_EXPORT_LIMIT} linhas; estreite os filtros para ver o restante.`]] : []);
+
+export function cancellationQueueToCsv(items: Awaited<ReturnType<typeof listCancellationQueue>>["items"], truncated: boolean): string {
+  const rows: unknown[][] = [
+    ["Protocolo", "Situação", "Aberto em", "Prazo de resposta", "Vencido", "Pedido", "Valor (R$)", "Situação do pedido", "Evento", "Solicitante", "Responsável", "Motivo", "Decidido em", "Justificativa"],
+  ];
+  for (const r of items) {
+    rows.push([
+      r.protocol,
+      CANCELLATION_STATUS[r.status] ?? r.status,
+      csvDate(r.createdAt),
+      csvDate(r.respondBy),
+      r.overdue ? "sim" : "não",
+      r.order.publicCode,
+      (r.order.totalCents / 100).toFixed(2).replace(".", ","),
+      ORDER_STATUS[r.order.status]?.label ?? r.order.status,
+      r.event.title,
+      r.requestedBy?.email ?? "",
+      r.assignedTo?.email ?? "",
+      r.reason,
+      csvDate(r.decidedAt),
+      r.decisionNote ?? "",
+    ]);
+  }
+  rows.push(...truncatedNote(truncated));
+  return toCsv(rows);
+}
+
+export function transfersToCsv(items: Awaited<ReturnType<typeof searchTransfers>>["items"], truncated: boolean): string {
+  const rows: unknown[][] = [["Ingresso", "Evento", "Situação", "Iniciada por", "De (titular)", "De (e-mail)", "Para (e-mail)", "Para (titular)", "Criada em", "Vence em", "Decidida em", "Motivo", "Motivo da decisão"]];
+  for (const t of items) {
+    rows.push([
+      t.ticket.code,
+      t.event.title,
+      TRANSFER_STATUS[t.status] ?? t.status,
+      t.initiatedBy,
+      t.fromHolderName ?? "",
+      t.fromHolderEmail ?? "",
+      t.toEmail,
+      t.toHolderName ?? "",
+      csvDate(t.createdAt),
+      csvDate(t.expiresAt),
+      csvDate(t.decidedAt),
+      t.reason ?? "",
+      t.decisionReason ?? "",
+    ]);
+  }
+  rows.push(...truncatedNote(truncated));
+  return toCsv(rows);
+}
+
+export function changeWindowsToCsv(items: Awaited<ReturnType<typeof listOpenChangeWindows>>["items"], truncated: boolean): string {
+  const rows: unknown[][] = [["Evento", "Organização", "Alterado em", "O que mudou", "Motivo", "Reembolso integral até", "Prorrogada", "Reembolsos abertos", "Reembolsado (R$)", "Pedidos pagos ainda elegíveis"]];
+  for (const c of items) {
+    rows.push([
+      c.event.title,
+      c.organization.name,
+      csvDate(c.createdAt),
+      c.changedFields.map((f) => RELEVANT_FIELD_LABELS[f as keyof typeof RELEVANT_FIELD_LABELS] ?? f).join("; "),
+      c.reason,
+      csvDate(c.effectiveRefundUntil),
+      c.extended ? "sim" : "não",
+      c.refundsTotal,
+      (c.refundedCents / 100).toFixed(2).replace(".", ","),
+      c.paidOrdersStillEligible,
+    ]);
+  }
+  rows.push(...truncatedNote(truncated));
+  return toCsv(rows);
 }

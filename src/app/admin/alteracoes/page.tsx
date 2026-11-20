@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
+import { Download } from "lucide-react";
 import { PageTitle } from "@/components/site/panel-shell";
+import { buttonVariants } from "@/components/ui/button";
 import { Pager } from "@/features/admin/pager";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
@@ -31,6 +33,11 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
       <PageTitle
         title="Alterações relevantes de evento"
         subtitle="Janelas de reembolso integral ainda abertas (inclui prorrogações). Valem para pedidos pagos antes da alteração."
+        actions={
+          <a href="/admin/alteracoes/csv" className={buttonVariants({ variant: "outline", size: "sm" })}>
+            <Download aria-hidden /> Exportar CSV
+          </a>
+        }
       />
       <div className="overflow-x-auto rounded-2xl border border-border">
         <table className="w-full min-w-[920px] text-sm">

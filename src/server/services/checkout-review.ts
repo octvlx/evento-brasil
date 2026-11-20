@@ -53,7 +53,7 @@ export async function createCheckoutDraft(db: Db, raw: CreateOrderInput, actor?:
     if (existing.expiresAt <= new Date()) throw new AppError("SALES_CLOSED", "Este carrinho expirou. Inicie outra seleção de ingressos.");
     return { draftId: existing.id, token };
   }
-  const event = await db.event.findFirst({ where: { id: input.eventId, status: "PUBLISHED", organization: { status: "APPROVED" } }, select: { id: true, endsAt: true } });
+  const event = await db.event.findFirst({ where: { id: input.eventId, status: "PUBLISHED", suspendedAt: null, organization: { status: "APPROVED" } }, select: { id: true, endsAt: true } });
   if (!event) throw notFound("Evento indisponível.");
   // Pelo relógio, não pelo status: o job pode ainda não ter marcado COMPLETED.
   if (hasEventEnded(event)) throw new AppError("SALES_CLOSED", "Este evento já foi encerrado.");

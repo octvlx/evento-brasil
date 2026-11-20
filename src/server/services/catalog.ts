@@ -22,6 +22,8 @@ import { publicExternalWhere } from "./external-visibility";
 
 export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
+  // Suspenso pela plataforma: fora da vitrine (os ingressos vendidos continuam valendo).
+  suspendedAt: null,
   endsAt: { gt: now },
   organization: { status: "APPROVED" },
 });
@@ -369,7 +371,7 @@ export async function getPublicCity(db: Db, slug: string, now = new Date()) {
  */
 export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
   const event = await db.event.findFirst({
-    where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] }, organization: { status: "APPROVED" } },
+    where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] }, suspendedAt: null, organization: { status: "APPROVED" } },
     include: {
       organization: { select: { name: true, slug: true, description: true } },
       category: true,

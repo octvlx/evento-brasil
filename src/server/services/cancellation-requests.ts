@@ -12,6 +12,7 @@ import { TX_OPTIONS, type Db } from "../db";
 import { audit } from "../audit";
 import { enqueueCancellationDecisionTx, enqueueCancellationRequestReceivedTx } from "../email/events";
 import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
+import { adminHas } from "../auth/admin-roles";
 import { randomCode } from "../crypto";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import type { PaymentProviderAdapter } from "../payments/types";
@@ -213,4 +214,44 @@ export async function decideCancellationRequest(
   // Como nos demais reembolsos: o provedor é chamado fora da transação, com chave de idempotência.
   if (result.outcome === "REFUND_OPENED" && result.refundId) await processRefund(db, adapter, result.refundId);
   return result;
+}
+
+/**
+ * Atribui um pedido de cancelamento ABERTO a um admin que pode decidi-lo (ou libera,
+ * com `assigneeId` nulo). Serve para dividir a fila; qualquer admin com a permissão
+ * continua podendo decidir. Transição condicional (só OPEN) e auditoria.
+ */
+export async function assignCancellationRequest(db: Db, admin: Actor, requestId: string, assigneeId: string | null, now = new Date()) {
+  assertAdminPermission(admin, "cancellations:decide");
+  if (assigneeId) {
+    const target = await db.user.findUnique({ where: { id: assigneeId }, select: { platformRole: true, status: true, adminRoles: true } });
+    if (!target || target.platformRole !== "ADMIN" || target.status !== "ACTIVE" || !adminHas(target.adminRoles, "cancellations:decide"))
+      throw new AppError("VALIDATION", "Escolha um administrador ativo que possa decidir pedidos de cancelamento.");
+  }
+  return db.$transaction(async (tx) => {
+    const current = await tx.cancellationRequest.findUnique({ where: { id: requestId }, select: { id: true, status: true, assignedToId: true, organizationId: true, protocol: true } });
+    if (!current) throw notFound("Pedido de cancelamento não encontrado.");
+    if (current.assignedToId === assigneeId) return current;
+    const { count } = await tx.cancellationRequest.updateMany({
+      where: { id: requestId, status: "OPEN" },
+      data: assigneeId ? { assignedToId: assigneeId, assignedAt: now } : { assignedToId: null, assignedAt: null },
+    });
+    if (!count) throw invalidState("Este pedido já foi decidido; não é possível atribuí-lo.");
+    await audit(tx, {
+      actorUserId: admin.id,
+      organizationId: current.organizationId,
+      action: assigneeId ? "cancellation.assigned" : "cancellation.unassigned",
+      entityType: "CancellationRequest",
+      entityId: requestId,
+      metadata: { protocol: current.protocol, from: current.assignedToId, to: assigneeId },
+    });
+    return { ...current, assignedToId: assigneeId };
+  });
+}
+
+/** Admins que podem receber pedidos de cancelamento (para o seletor de responsável). */
+export async function listCancellationAssignees(db: Db, admin: Actor) {
+  assertAdminPermission(admin, "cancellations:decide");
+  const admins = await db.user.findMany({ where: { platformRole: "ADMIN", status: "ACTIVE", anonymizedAt: null }, select: { id: true, name: true, email: true, adminRoles: true }, orderBy: { email: "asc" } });
+  return admins.filter((a) => adminHas(a.adminRoles, "cancellations:decide")).map(({ id, name, email }) => ({ id, name, email }));
 }

@@ -22,8 +22,9 @@ function cleanAlt(alt: string | null | undefined, fallback: string) {
 
 async function editableEvent(db: Db, actor: Actor, eventId: string) {
   const { organizationId } = await assertEventPermission(db, actor, eventId, "event:write");
-  const event = await db.event.findUniqueOrThrow({ where: { id: eventId }, select: { id: true, title: true, status: true, endsAt: true } });
+  const event = await db.event.findUniqueOrThrow({ where: { id: eventId }, select: { id: true, title: true, status: true, endsAt: true, suspendedAt: true } });
   if (!EDITABLE.includes(event.status) || event.endsAt <= new Date()) throw invalidState("A galeria só pode ser alterada enquanto o evento não terminou.");
+  if (event.suspendedAt) throw invalidState("Evento suspenso pela plataforma: a galeria não pode ser alterada até a reativação.");
   return { organizationId, event };
 }
 

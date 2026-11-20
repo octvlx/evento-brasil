@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { Download } from "lucide-react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
+import { buttonVariants } from "@/components/ui/button";
+import { AdminActionButton } from "@/features/admin/controls";
+import { assignCancellationAction } from "@/features/admin/actions";
 import { PageTitle } from "@/components/site/panel-shell";
 import { adminHref, Pager } from "@/features/admin/pager";
 import { CANCELLATION_STATUS } from "@/features/admin/labels";
@@ -15,7 +19,7 @@ import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Pedidos de cancelamento — admin", robots: { index: false } };
 
-type Search = { status?: string; vencidos?: string; pagina?: string };
+type Search = { status?: string; vencidos?: string; pagina?: string; responsavel?: string };
 
 export default function AdminCancellations({ searchParams }: PageProps<"/admin/cancelamentos">) {
   return (
@@ -29,7 +33,10 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
   const admin = await requireAdmin("cancellations:decide");
   const sp = await searchParams;
   const overdueOnly = sp.vencidos === "1";
-  const queue = await listCancellationQueue(db, admin, { status: parseCancellationStatus(sp.status), overdueOnly, page: parsePage(sp.pagina) });
+  const assignee = sp.responsavel === "eu" ? "me" : sp.responsavel === "ninguem" ? "none" : undefined;
+  const queue = await listCancellationQueue(db, admin, { status: parseCancellationStatus(sp.status), overdueOnly, assignee, page: parsePage(sp.pagina) });
+  const baseParams = { status: overdueOnly ? undefined : queue.status, vencidos: overdueOnly ? "1" : undefined };
+  const params = { ...baseParams, responsavel: sp.responsavel === "eu" || sp.responsavel === "ninguem" ? sp.responsavel : undefined };
   const filters: [string, Record<string, string>][] = [
     ["Abertos", { status: "OPEN" }],
     [`Prazo vencido (${queue.overdueCount})`, { vencidos: "1" }],
@@ -53,6 +60,33 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
           </Link>
         ))}
       </nav>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm">
+        {queue.status === "OPEN" ? (
+          <nav aria-label="Filtrar por responsável" className="flex flex-wrap gap-2">
+            {(
+              [
+                ["Todos", undefined],
+                ["Atribuídos a mim", "eu"],
+                ["Sem responsável", "ninguem"],
+              ] as const
+            ).map(([label, value]) => (
+              <Link
+                key={label}
+                href={adminHref("/admin/cancelamentos", { ...baseParams, responsavel: value })}
+                aria-current={params.responsavel === value ? "page" : undefined}
+                className={cn("rounded-full border px-3 py-1", params.responsavel === value ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-muted")}
+              >
+                {label}
+              </Link>
+            ))}
+          </nav>
+        ) : (
+          <span />
+        )}
+        <a href={adminHref("/admin/cancelamentos/csv", params)} className={buttonVariants({ variant: "outline", size: "sm" })}>
+          <Download aria-hidden /> Exportar CSV
+        </a>
+      </div>
       <div className="overflow-x-auto rounded-2xl border border-border">
         <table className="w-full min-w-[860px] text-sm">
           <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
@@ -63,12 +97,13 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
               <th className="p-3">Aberto em</th>
               <th className="p-3">{queue.status === "OPEN" ? "Responder até" : "Decidido em"}</th>
               <th className="p-3">Status</th>
+              <th className="p-3">Responsável</th>
             </tr>
           </thead>
           <tbody>
             {queue.items.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                <td colSpan={7} className="p-6 text-center text-muted-foreground">
                   Nenhum pedido nesta fila.
                 </td>
               </tr>
@@ -98,12 +133,21 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
                   {CANCELLATION_STATUS[r.status]}
                   {r.refunds[0] && <span className="block text-xs text-muted-foreground">Reembolso: {REFUND_STATUS[r.refunds[0].status]}</span>}
                 </td>
+                <td className="p-3">
+                  <span className="block text-xs">{r.assignedTo ? (r.assignedTo.id === admin.id ? "Você" : r.assignedTo.email) : "—"}</span>
+                  {r.status === "OPEN" &&
+                    (r.assignedTo?.id === admin.id ? (
+                      <AdminActionButton label="Liberar" variant="ghost" action={assignCancellationAction.bind(null, r.id, null)} />
+                    ) : (
+                      <AdminActionButton label={r.assignedTo ? "Assumir no lugar" : "Assumir"} action={assignCancellationAction.bind(null, r.id, "me")} />
+                    ))}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <Pager path="/admin/cancelamentos" params={{ status: overdueOnly ? undefined : queue.status, vencidos: overdueOnly ? "1" : undefined }} page={queue.page} pageCount={queue.pageCount} total={queue.total} />
+      <Pager path="/admin/cancelamentos" params={params} page={queue.page} pageCount={queue.pageCount} total={queue.total} />
     </>
   );
 }

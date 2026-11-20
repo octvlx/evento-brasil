@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
 import { AdminActionButton } from "@/features/admin/controls";
-import { adminCancelEventAction, featureEventAction, moderateEventAction } from "@/features/admin/actions";
+import { adminCancelEventAction, featureEventAction, moderateEventAction, suspendEventAction } from "@/features/admin/actions";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { formatEventDateTime } from "@/lib/datetime";
@@ -46,7 +46,9 @@ async function Content() {
             )}{" "}
             <Badge variant={st.tone === "success" ? "success" : st.tone === "warning" ? "warning" : st.tone === "danger" ? "danger" : "default"}>{st.label}</Badge>
             {e.isFeatured && <Badge variant="accent" className="ml-1">Destaque</Badge>}
+            {e.suspendedAt && <Badge variant="danger" className="ml-1">Suspenso</Badge>}
           </p>
+          {e.suspendedAt && <p className="text-xs text-destructive">Suspenso: {e.suspensionReason}</p>}
           <p className="text-xs text-muted-foreground">
             {e.organization.name} · {formatEventDateTime(e.startsAt, e.timezone)} · {e.city ? `${e.city.name} – ${e.city.state}` : "Online"} · {e.ticketTypes.reduce((s, t) => s + t.quantitySold, 0)} vendidos
           </p>
@@ -58,9 +60,27 @@ async function Content() {
               <AdminActionButton label="Devolver" askReason="O que precisa ser ajustado?" reasonRequired action={moderateEventAction.bind(null, e.id, "REJECT")} />
             </>
           )}
+          {e.suspendedAt && (
+            <AdminActionButton
+              label="Reativar"
+              variant="secondary"
+              confirm="O evento volta para a vitrine e as vendas são retomadas. O organizador é avisado."
+              action={suspendEventAction.bind(null, e.id, false)}
+            />
+          )}
+          {status === "PUBLISHED" && !e.suspendedAt && (
+            <AdminActionButton
+              label="Suspender"
+              variant="outline"
+              askReason="Motivo da suspensão (vai para o organizador)"
+              reasonRequired
+              confirm="Tira o evento da vitrine e pausa as vendas, sem cancelar nem reembolsar. Os ingressos já vendidos continuam valendo e o organizador não edita até a reativação."
+              action={suspendEventAction.bind(null, e.id, true)}
+            />
+          )}
           {status === "PUBLISHED" && (
             <>
-              <AdminActionButton label={e.isFeatured ? "Remover destaque" : "Destacar"} action={featureEventAction.bind(null, e.id, !e.isFeatured)} />
+              {!e.suspendedAt && <AdminActionButton label={e.isFeatured ? "Remover destaque" : "Destacar"} action={featureEventAction.bind(null, e.id, !e.isFeatured)} />}
               <AdminActionButton
                 label="Cancelar"
                 variant="destructive"

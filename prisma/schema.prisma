@@ -491,6 +491,10 @@ model Event {
   transferAllowReturn        Boolean         @default(false)
   accessibilityInfo          String?
   moderationNote             String?
+  // Suspensão pelo admin (sem cancelar): fora da vitrine e das vendas; ingressos valem.
+  suspendedAt                DateTime?       @db.Timestamptz(3)
+  suspensionReason           String?
+  suspendedById              String?
   publishedAt                DateTime?       @db.Timestamptz(3)
   cancelledAt                DateTime?       @db.Timestamptz(3)
   cancellationReason         String?

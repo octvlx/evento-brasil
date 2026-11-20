@@ -9,10 +9,11 @@ import { assertAdminPermission } from "@/server/auth/permissions";
 import { getPaymentAdapter } from "@/server/payments";
 import { cancelEvent } from "@/server/services/cancellation";
 import { setCommissionRule } from "@/server/services/commission";
-import { moderateEvent, setEventFeatured } from "@/server/services/events";
+import { moderateEvent, setEventFeatured, setEventSuspended } from "@/server/services/events";
 import { reviewOrganization, setAutoPublish, setOrganizationSuspended } from "@/server/services/organizers";
 import { adminRefundOrder, processRefund } from "@/server/services/refunds";
 import { setAdminRoles, setUserSuspended } from "@/server/services/users";
+import { assignCancellationRequest } from "@/server/services/cancellation-requests";
 import { adminResetTwoFactor } from "@/server/services/two-factor";
 import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { rateLimit } from "@/server/rate-limit";
@@ -51,6 +52,10 @@ export const suspendOrganizationAction = async (id: string, suspended: boolean, 
 export const autoPublishAction = async (id: string, value: boolean) => run((a) => setAutoPublish(db, a, id, value));
 export const moderateEventAction = async (id: string, decision: "APPROVE" | "REJECT", note?: string) => run((a) => moderateEvent(db, a, id, decision, note));
 export const featureEventAction = async (id: string, featured: boolean) => run((a) => setEventFeatured(db, a, id, featured));
+/** "me" = o próprio admin; null = liberar; outro id = atribuir a esse admin. */
+export const assignCancellationAction = async (id: string, assignee: string | null) =>
+  run((a) => assignCancellationRequest(db, a, id, assignee === "me" ? a.id : assignee ? String(assignee) : null));
+export const suspendEventAction = async (id: string, suspended: boolean, reason?: string) => run((a) => setEventSuspended(db, a, id, suspended, reason));
 export const adminCancelEventAction = async (id: string, reason?: string) =>
   run((a) => cancelEvent(db, getPaymentAdapter(), a, id, reason ?? "", { asAdmin: true }));
 export const suspendUserAction = async (id: string, suspended: boolean, reason?: string) => run((a) => setUserSuspended(db, a, id, suspended, reason));
