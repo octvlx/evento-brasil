@@ -80,6 +80,7 @@
     "unrs-resolver@1.12.2": true
   },
   "overrides": {
-    "joi": "17.13.9"
+    "joi": "17.13.9",
+    "effect": "3.22.5"
   }
 }
