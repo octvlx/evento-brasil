@@ -32,7 +32,7 @@ export default function LoginPage({ searchParams }: PageProps<"/entrar">) {
 
 async function LoginWithNext({ searchParams }: { searchParams: PageProps<"/entrar">["searchParams"] }) {
   const { next, googleError } = await searchParams;
-  return <div className="space-y-4">{googleError && <p role="alert" className="text-sm text-destructive">{googleError === "existing" ? "Este e-mail já tem uma conta. Entre usando sua senha; não vinculamos contas automaticamente." : "Não foi possível entrar com Google. Tente novamente ou use e-mail e senha."}</p>}<GoogleAuthLink enabled={googleConfigured()} next={typeof next === "string" ? next : undefined} /><LoginForm next={typeof next === "string" ? next : undefined} /></div>;
+  return <div className="space-y-4">{googleError && <p role="alert" className="text-sm text-destructive">{googleError === "existing" ? "Este e-mail já tem uma conta. Entre usando sua senha; não vinculamos contas automaticamente." : googleError === "app_url" ? "Login com Google indisponível neste endereço: o APP_URL do .env aponta para outro. Ajuste o APP_URL para o endereço que você está usando e cadastre <APP_URL>/auth/google/callback no Google Cloud (credenciais OAuth)." : "Não foi possível entrar com Google. Tente novamente ou use e-mail e senha."}</p>}<GoogleAuthLink enabled={googleConfigured()} next={typeof next === "string" ? next : undefined} /><LoginForm next={typeof next === "string" ? next : undefined} /></div>;
 }
 
 async function RegisterLink({ searchParams }: { searchParams: PageProps<"/entrar">["searchParams"] }) {
