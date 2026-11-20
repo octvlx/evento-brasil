@@ -37,8 +37,9 @@ async function Content({ params, searchParams }: { params: Promise<{ id: string 
     const progress = await getWizardProgress(db, id);
     if (!isWizardComplete(progress)) redirect(`/organizador/eventos/novo?evento=${id}&etapa=${firstIncompleteStep(progress.completed)}`);
   }
-  // Encerrado, cancelado ou recusado: não há o que editar (a gestão mostra o motivo).
-  if (!EDITABLE.includes(effectiveEventStatus(event))) redirect(`/organizador/eventos/${id}/editar`);
+  // Encerrado, cancelado, recusado ou suspenso pela plataforma: não há o que editar
+  // (a gestão mostra o motivo; updateEvent também recusa).
+  if (!EDITABLE.includes(effectiveEventStatus(event)) || event.suspendedAt) redirect(`/organizador/eventos/${id}/editar`);
 
   const options = await eventFormOptions(db, org.id);
   const completed = [...DATA_STEPS];

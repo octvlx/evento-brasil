@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Badge, Card, Input, Select, Skeleton } from "@/components/ui/primitives";
-import { Button } from "@/components/ui/button";
+import { Download } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { PageTitle } from "@/components/site/panel-shell";
-import { Pager } from "@/features/admin/pager";
+import { adminHref, Pager } from "@/features/admin/pager";
 import { TRANSFER_INITIATOR, TRANSFER_STATUS } from "@/features/admin/labels";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
@@ -52,7 +53,15 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
   const [result, report] = await Promise.all([searchTransfers(db, admin, { q: sp.q, status, page: parsePage(sp.pagina) }), transferPatternReport(db, admin)]);
   return (
     <>
-      <PageTitle title="Transferências de ingressos" subtitle="Histórico somente leitura. Os sinais abaixo são para revisão manual; nada é bloqueado automaticamente." />
+      <PageTitle
+        title="Transferências de ingressos"
+        subtitle="Histórico somente leitura. Os sinais abaixo são para revisão manual; nada é bloqueado automaticamente."
+        actions={
+          <a href={adminHref("/admin/transferencias/csv", { q: result.q || undefined, status })} className={buttonVariants({ variant: "outline", size: "sm" })}>
+            <Download aria-hidden /> Exportar CSV
+          </a>
+        }
+      />
 
       <Card className="mb-6 p-4">
         <h2 className="text-sm font-bold">

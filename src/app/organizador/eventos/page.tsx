@@ -107,6 +107,11 @@ async function Content({ searchParams }: { searchParams: Promise<Params> }) {
                     <td className="p-3">{resumeStep && !p?.completed.includes(2) ? <span className="text-muted-foreground">A definir</span> : formatEventDateTime(e.startsAt, e.timezone)}</td>
                     <td className="p-3">
                       <Badge variant={st.tone === "success" ? "success" : st.tone === "warning" ? "warning" : st.tone === "danger" ? "danger" : "default"}>{st.label}</Badge>
+                      {e.suspendedAt && (
+                        <Badge variant="danger" className="ml-1">
+                          Suspenso
+                        </Badge>
+                      )}
                     </td>
                     <td className="p-3 text-right tabular-nums">
                       {sold}/{e.capacity}

@@ -58,7 +58,8 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
   const tz = event.timezone;
   // Status efetivo: terminado conta como encerrado (sem edição), mesmo antes do job.
   const status = effectiveEventStatus(event);
-  const locked = !["DRAFT", "PENDING_REVIEW", "PUBLISHED"].includes(status) || !can("event:write");
+  // Suspenso pela plataforma: nada é editável até a reativação (os serviços também recusam).
+  const locked = !["DRAFT", "PENDING_REVIEW", "PUBLISHED"].includes(status) || !can("event:write") || !!event.suspendedAt;
   const st = EVENT_STATUS[status];
   const canWrite = can("event:write");
   const changes = await listEventChanges(db, user, id);
@@ -101,6 +102,16 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
         <Badge variant={st.tone === "success" ? "success" : st.tone === "warning" ? "warning" : st.tone === "danger" ? "danger" : "default"}>{st.label}</Badge>
         {event.moderationNote && <span className="text-sm text-destructive">Moderação: {event.moderationNote}</span>}
       </div>
+      {event.suspendedAt && (
+        <Alert variant="danger" className="mb-6">
+          <p className="font-semibold">Evento suspenso pela plataforma</p>
+          <p>Motivo: {event.suspensionReason}</p>
+          <p className="mt-1 text-sm">
+            O evento saiu da vitrine e as vendas estão pausadas. Os ingressos já vendidos continuam valendo, inclusive na portaria. A edição fica bloqueada até a reativação:
+            fale com o suporte.
+          </p>
+        </Alert>
+      )}
       {event.status === "PENDING_REVIEW" && <Alert variant="warning" className="mb-6">Aguardando moderação da plataforma.</Alert>}
       {event.status === "CANCELLED" && <Alert variant="danger" className="mb-6">Evento cancelado: {event.cancellationReason}</Alert>}
       {openWindows.length > 0 && (

@@ -19,6 +19,7 @@ import { getWizardProgress, isWizardComplete } from "./event-wizard-progress";
 import { recordRelevantChange } from "./event-changes";
 import { halfPriceSnapshot, loadHalfPriceStateTx } from "./half-price";
 import { notifyEventChangeInBackground } from "./notifications";
+import { enqueueEventSuspensionEmailsTx } from "../email/events";
 import { ticketsHeldByAccount } from "./orders";
 
 /** Transições permitidas do ciclo de vida do evento. */
@@ -37,6 +38,11 @@ export function assertEventTransition(from: EventStatus, to: EventStatus) {
 }
 
 const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
+
+/** Evento suspenso pela plataforma: o organizador não edita nem publica até a reativação. */
+export function assertNotSuspended(event: { suspendedAt: Date | null; suspensionReason: string | null }) {
+  if (event.suspendedAt) throw invalidState(`Evento suspenso pela plataforma (${event.suspensionReason ?? "sem motivo"}). Fale com o suporte para reativá-lo.`);
+}
 
 export async function uniqueEventSlug(client: Db | Tx, title: string, cityName?: string | null): Promise<string> {
   const base = slugify([title, cityName].filter(Boolean).join(" ")) || "evento";
@@ -174,6 +180,8 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
     // não podem ser atropelados por outra edição simultânea.
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const current = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
+    // Antes de validar os campos: suspenso, nenhuma edição vale (o motivo é o que importa).
+    assertNotSuspended(current);
     const input = eventInputSchema.parse({
       ...raw,
       transferDeadlineHours: raw.transferDeadlineHours === undefined ? current.transferDeadlineHours : raw.transferDeadlineHours,
@@ -290,6 +298,7 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
     if (!EDITABLE.includes(effectiveEventStatus(event))) throw invalidState("Este evento não pode mais ser editado.");
+    assertNotSuspended(event);
     const tz = event.timezone;
     const data = {
       name: input.name,
@@ -365,6 +374,7 @@ export async function deleteTicketType(db: Db, actor: Actor, ticketTypeId: strin
   await db.$transaction(async (tx) => {
     // Sob a trava do evento: pedido e checagem da cota não correm junto com a exclusão.
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${tt.eventId} FOR UPDATE`;
+    assertNotSuspended(await tx.event.findUniqueOrThrow({ where: { id: tt.eventId }, select: { suspendedAt: true, suspensionReason: true } }));
     const used = await tx.orderItem.count({ where: { ticketTypeId } });
     if (used > 0) throw new AppError("VALIDATION", "Este ingresso já possui pedidos; oculte-o em vez de excluir.");
     const now = new Date();
@@ -393,6 +403,7 @@ export async function submitEventForPublication(db: Db, actor: Actor, eventId: s
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, include: { organization: true, ticketTypes: true } });
     if (event.organization.status !== "APPROVED") throw new AppError("FORBIDDEN", "A organização precisa ser aprovada antes de publicar eventos.");
+    assertNotSuspended(event);
     if (!event.ticketTypes.length) throw new AppError("VALIDATION", "Cadastre ao menos um tipo de ingresso.");
     if (event.endsAt < new Date()) throw new AppError("VALIDATION", "O evento já terminou.");
     // Rascunho do assistente com etapa pendente ainda tem valores provisórios.
@@ -442,13 +453,48 @@ export async function moderateEvent(db: Db, admin: Actor, eventId: string, decis
   });
 }
 
+/**
+ * Suspende (ou reativa) um evento publicado sem cancelar: sai da vitrine e das vendas,
+ * os ingressos já vendidos continuam valendo (portaria normal) e o organizador não
+ * edita nem publica até a reativação. Só o organizador (OWNER e FINANCE) é avisado.
+ */
+export async function setEventSuspended(db: Db, admin: Actor, eventId: string, suspended: boolean, reason?: string, now = new Date()) {
+  assertAdminPermission(admin, "events:moderate");
+  const text = reason?.trim().slice(0, 1000) ?? "";
+  if (suspended && !text) throw new AppError("VALIDATION", "Informe o motivo da suspensão (vai para o organizador).");
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
+    const event = await tx.event.findUnique({ where: { id: eventId } });
+    if (!event) throw notFound("Evento não encontrado.");
+    if (suspended === !!event.suspendedAt) return event;
+    if (suspended && effectiveEventStatus(event, now) !== "PUBLISHED") throw invalidState("Só eventos publicados e ainda não encerrados podem ser suspensos.");
+    const updated = await tx.event.update({
+      where: { id: eventId },
+      data: suspended
+        ? { suspendedAt: now, suspensionReason: text, suspendedById: admin.id, isFeatured: false }
+        : { suspendedAt: null, suspensionReason: null, suspendedById: null },
+    });
+    await audit(tx, {
+      actorUserId: admin.id,
+      organizationId: event.organizationId,
+      action: suspended ? "event.suspended" : "event.reinstated",
+      entityType: "Event",
+      entityId: eventId,
+      metadata: suspended ? { reason: text, wasFeatured: event.isFeatured } : { previousReason: event.suspensionReason, note: text || null },
+    });
+    await enqueueEventSuspensionEmailsTx(tx, eventId, suspended, suspended ? text : null);
+    return updated;
+  });
+}
+
 /** Destaque na vitrine. Alteração e auditoria (com o valor anterior) juntas, sob trava do evento. */
 export async function setEventFeatured(db: Db, admin: Actor, eventId: string, featured: boolean) {
   assertAdminPermission(admin, "events:moderate");
   await db.$transaction(async (tx) => {
-    const [row] = await tx.$queryRaw<{ isFeatured: boolean; organizationId: string }[]>`SELECT "isFeatured", "organizationId" FROM "Event" WHERE id = ${eventId} FOR NO KEY UPDATE`;
+    const [row] = await tx.$queryRaw<{ isFeatured: boolean; organizationId: string; suspendedAt: Date | null }[]>`SELECT "isFeatured", "organizationId", "suspendedAt" FROM "Event" WHERE id = ${eventId} FOR NO KEY UPDATE`;
     if (!row) throw notFound("Evento não encontrado.");
     if (row.isFeatured === featured) return;
+    if (featured && row.suspendedAt) throw invalidState("Evento suspenso não pode ser destacado.");
     await tx.event.update({ where: { id: eventId }, data: { isFeatured: featured } });
     await audit(tx, {
       actorUserId: admin.id,
@@ -492,6 +538,7 @@ export async function unpublishEvent(db: Db, actor: Actor, eventId: string, now 
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
+    assertNotSuspended(event);
     const status = effectiveEventStatus(event, now);
     if (status !== "PUBLISHED" && status !== "PENDING_REVIEW") throw invalidState("Só eventos publicados ou em moderação voltam a rascunho.");
     if (status === "PUBLISHED") {

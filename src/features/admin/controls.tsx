@@ -5,6 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import type { ActionResult } from "@/server/errors";
 import { saveCommissionRuleAction } from "./actions";
+import { commissionPreview } from "./commission-preview";
+import { formatBRL, parseBRLToCents } from "@/lib/money";
+import type { FeeBearer } from "@/features/fees/policy";
 
 /** Papéis de um admin (T6): só aparece para super admin, nunca na própria conta. */
 export function AdminRolesEditor({
@@ -276,6 +279,16 @@ export function AdminActionButton({
 export function CommissionRuleForm({ orgs, events }: { orgs: { id: string; name: string }[]; events: { id: string; title: string }[] }) {
   const [state, action, pending] = useActionState(saveCommissionRuleAction, undefined);
   const [scope, setScope] = useState("PLATFORM");
+  const [percent, setPercent] = useState("7");
+  const [fixed, setFixed] = useState("0");
+  const [bearer, setBearer] = useState<FeeBearer>("ORGANIZER");
+  const [examplePrice, setExamplePrice] = useState("100,00");
+  const preview = commissionPreview({
+    percent: Number(percent.replace(",", ".")),
+    fixedCents: Number(fixed),
+    bearer,
+    priceCents: parseBRLToCents(examplePrice) ?? 0,
+  });
   return (
     <form action={action} className="grid gap-3 sm:grid-cols-3">
       <div>
@@ -312,15 +325,15 @@ export function CommissionRuleForm({ orgs, events }: { orgs: { id: string; name:
       )}
       <div>
         <Label htmlFor="percent">Comissão (%)</Label>
-        <Input id="percent" name="percent" type="number" step="0.01" min={0} max={100} defaultValue="7" className="mt-1.5" />
+        <Input id="percent" name="percent" type="number" step="0.01" min={0} max={100} value={percent} onChange={(e) => setPercent(e.target.value)} className="mt-1.5" />
       </div>
       <div>
         <Label htmlFor="fixedCentsPerTicket">Valor fixo por ingresso (centavos)</Label>
-        <Input id="fixedCentsPerTicket" name="fixedCentsPerTicket" type="number" min={0} defaultValue="0" className="mt-1.5" />
+        <Input id="fixedCentsPerTicket" name="fixedCentsPerTicket" type="number" min={0} value={fixed} onChange={(e) => setFixed(e.target.value)} className="mt-1.5" />
       </div>
       <div>
         <Label htmlFor="bearer">Quem paga a comissão</Label>
-        <Select id="bearer" name="bearer" className="mt-1.5">
+        <Select id="bearer" name="bearer" value={bearer} onChange={(e) => setBearer(e.target.value as FeeBearer)} className="mt-1.5">
           <option value="ORGANIZER">Organizador (descontada do repasse)</option>
           <option value="BUYER">Comprador (taxa de serviço destacada)</option>
         </Select>
@@ -335,6 +348,49 @@ export function CommissionRuleForm({ orgs, events }: { orgs: { id: string; name:
       <label className="flex items-center gap-2 text-sm sm:col-span-2">
         <input type="checkbox" name="refundCommissionOnRefund" defaultChecked /> Devolver a comissão em reembolsos
       </label>
+      <section aria-labelledby="commission-preview-title" className="rounded-2xl border border-border bg-muted/40 p-4 sm:col-span-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h3 id="commission-preview-title" className="text-sm font-bold">
+            Prévia por ingresso
+          </h3>
+          <div className="w-40">
+            <Label htmlFor="example-price">Preço de exemplo (R$)</Label>
+            <Input id="example-price" inputMode="decimal" value={examplePrice} onChange={(e) => setExamplePrice(e.target.value)} className="mt-1.5" />
+          </div>
+        </div>
+        {preview ? (
+          <table className="mt-3 w-full text-sm" data-testid="commission-preview">
+            <thead className="text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="py-1">Ingresso</th>
+                <th className="py-1 text-right">Preço</th>
+                <th className="py-1 text-right">Comissão</th>
+                <th className="py-1 text-right">Comprador paga</th>
+                <th className="py-1 text-right">Organizador recebe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.map((r) => (
+                <tr key={r.label} className="border-t border-border">
+                  <td className="py-1.5">{r.label}</td>
+                  <td className="py-1.5 text-right tabular-nums">{formatBRL(r.priceCents)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{formatBRL(r.commissionCents)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{formatBRL(r.buyerPaysCents)}</td>
+                  <td className={`py-1.5 text-right tabular-nums ${r.negativePayout ? "font-bold text-destructive" : ""}`}>{formatBRL(r.organizerGetsCents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">Informe percentual, valor fixo e um preço de exemplo válidos para ver a prévia.</p>
+        )}
+        {preview?.some((r) => r.negativePayout) && (
+          <p className="mt-2 text-sm text-destructive">Com estes valores a comissão passa do preço: ingressos assim não poderão ser vendidos com o organizador pagando a comissão.</p>
+        )}
+        <p className="mt-2 text-xs text-muted-foreground">
+          Mesma conta usada nos pedidos. Não inclui o custo de processamento do meio de pagamento. Pedidos já feitos mantêm a regra da época.
+        </p>
+      </section>
       {state && !state.ok && <Alert variant="danger" className="sm:col-span-3">{state.error}</Alert>}
       {state?.ok && <Alert variant="success" className="sm:col-span-3">Nova versão da regra criada. Pedidos anteriores mantêm a versão original.</Alert>}
       <div className="sm:col-span-3">

@@ -285,3 +285,35 @@ export async function enqueueRefundApprovalRejectedEmailTx(tx: Tx, refundId: str
     ),
   });
 }
+
+// Evento suspenso (ou reativado) pela plataforma: avisa o responsável e o financeiro
+// da organização. Compradores não são avisados: os ingressos continuam valendo.
+export async function enqueueEventSuspensionEmailsTx(tx: Tx, eventId: string, suspended: boolean, reason: string | null) {
+  const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, select: { id: true, title: true, organizationId: true, suspendedAt: true } });
+  const members = await tx.organizationMember.findMany({
+    where: { organizationId: event.organizationId, role: { in: ["OWNER", "FINANCE"] }, user: { status: "ACTIVE" } },
+    select: { user: { select: { email: true } } },
+  });
+  // Uma suspensão por instante: suspender de novo depois de reativar gera outro aviso.
+  const stamp = suspended ? (event.suspendedAt?.getTime() ?? Date.now()) : Date.now();
+  for (const email of new Set(members.map((m) => m.user.email))) {
+    await enqueueEmail(tx, {
+      dedupeKey: `event-${suspended ? "suspended" : "reinstated"}:${event.id}:${stamp}:${email}`,
+      template: suspended ? "EVENT_SUSPENDED" : "EVENT_REINSTATED",
+      recipient: email,
+      message: transactionalEmail(
+        "event",
+        suspended ? "Evento suspenso pela plataforma" : "Evento reativado",
+        suspended
+          ? [
+              event.title,
+              "Motivo: " + (reason ?? "—"),
+              "O evento saiu das buscas e da página pública e as vendas foram pausadas. Os ingressos já vendidos continuam valendo, inclusive na portaria.",
+              "Enquanto estiver suspenso, o evento não pode ser editado. Fale com o suporte para resolver.",
+            ]
+          : [event.title, "O evento voltou para a vitrine e as vendas foram retomadas (dentro do período de vendas configurado)."],
+        env().APP_URL + "/organizador/eventos/" + event.id + "/editar",
+      ),
+    });
+  }
+}

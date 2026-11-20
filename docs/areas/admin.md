@@ -113,16 +113,27 @@ novas; admin aprova o protocolo do seed com motivo e duplo clique).
    tela de auditoria precisar filtrar por elas.
 4. ~~Sub-papéis de admin e permissões~~ — feito (T6), ver "Papéis de administrador" abaixo.
 5. Páginas de detalhe com histórico; casos de moderação/denúncias.
-6. Suspensão de evento distinta do cancelamento (sem reembolso) — com
-   `pagamentos-financeiro`.
-7. Pré-visualização de comissão via `computeFees`/`resolveCommissionRule`.
-8. Exibir `PROVIDER_LINK_MISSING` e `checkFinancialInvariants` em
-   `/admin/pagamentos` (`OVER_REFUND_BLOCKED` já aparece na seção de
-   reembolsos com falha, com decisão do admin).
-9. Fase 4: atribuição de pedidos de cancelamento a um admin
-   (`assignedToId` existe no schema, sem serviço); exportação CSV das filas;
-   limiares do relatório de transferências configuráveis; `/admin/pagamentos`
-   ainda lista pedidos/reembolsos/webhooks sem paginação (take fixo).
+6. ~~Suspensão de evento distinta do cancelamento~~ — feita (`setEventSuspended`,
+   migração `20261121120000_event_suspension`; regras de 2026-11-20): admin com
+   `events:moderate` suspende evento publicado com motivo; sai da vitrine, da página
+   pública e das vendas (`publicEventWhere`, `createOrder`), perde o destaque; os
+   ingressos vendidos continuam valendo na portaria; o organizador não edita, não
+   publica nem altera a galeria até a reativação (`assertNotSuspended`); só OWNER e
+   FINANCE recebem e-mail. Sem reembolso e sem aviso a compradores.
+7. ~~Pré-visualização de comissão~~ — feita: o formulário de regra mostra, para um
+   preço de exemplo, comissão, quanto o comprador paga e quanto o organizador recebe
+   (inteira e meia), pela mesma conta do pedido (`commission-preview.ts` →
+   `computeFees`), e avisa repasse negativo.
+8. ~~`PROVIDER_LINK_MISSING` e `checkFinancialInvariants` em `/admin/pagamentos`~~ —
+   feito (seções "Verificações financeiras" e "Pagamentos em análise").
+9. Fase 4: ~~atribuição de pedidos de cancelamento~~ — feita
+   (`assignCancellationRequest`: assumir, atribuir a admin com
+   `cancellations:decide`, liberar; filtros "Atribuídos a mim"/"Sem responsável";
+   auditado); ~~exportação CSV das filas~~ — feita (cancelamentos com os filtros,
+   transferências com a busca, alterações com janela aberta; até
+   `QUEUE_EXPORT_LIMIT` linhas, auditado como `admin.queue_exported`);
+   ~~paginação de `/admin/pagamentos`~~ — feita. Falta: limiares do relatório de
+   transferências configuráveis.
 
 ## Papéis de administrador (T6)
 

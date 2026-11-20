@@ -357,6 +357,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       });
       if (!event || event.status !== "PUBLISHED") throw notFound("Evento indisponível.");
       if (event.organization.status !== "APPROVED") throw new AppError("SALES_CLOSED", "Vendas indisponíveis para este organizador.");
+      if (event.suspendedAt) throw new AppError("SALES_CLOSED", "As vendas deste evento estão pausadas pela plataforma.");
       if (now < event.salesStartAt) throw new AppError("SALES_CLOSED", "As vendas ainda não começaram.");
       if (now >= event.salesEndAt || now >= event.endsAt) throw new AppError("SALES_CLOSED", "As vendas deste evento foram encerradas.");
 
