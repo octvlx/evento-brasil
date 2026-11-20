@@ -3,7 +3,7 @@
 // (que SEMPRE revalida). As mensagens reaproveitam os campos de `eventInputSchema`.
 import { z } from "zod";
 import { isValidLocalDateTime } from "@/lib/datetime";
-import { requireVenueCity, transferPolicyFields, validateTransferPolicySettings, eventInputSchema, venueInputSchema } from "@/features/schemas";
+import { requireVenueCity, transferPolicyFields, validateTransferPolicySettings, eventInputSchema, venueInputSchema, type EventInput } from "@/features/schemas";
 
 export const WIZARD_STEPS = [
   {
@@ -242,6 +242,82 @@ export interface WizardValues {
   refundMinHoursBeforeEvent: string;
 }
 
+/** Valores iniciais de um evento novo. */
+export const BLANK_WIZARD_VALUES: WizardValues = {
+  title: "",
+  categoryId: "",
+  summary: "",
+  timezone: "America/Sao_Paulo",
+  startsAtLocal: "",
+  endsAtLocal: "",
+  locationType: "VENUE",
+  venueMode: "existing",
+  venueId: "",
+  newVenue: { name: "", street: "", number: "", complement: "", district: "", postalCode: "", cityUf: "", cityIbgeCode: "", cityName: "" },
+  onlineUrl: "",
+  capacity: "",
+  halfPriceQuotaPercent: "",
+  maxTicketsPerAccount: "",
+  salesStartLocal: "",
+  salesEndLocal: "",
+  description: "",
+  coverImageUrl: "",
+  ageRestriction: "0",
+  accessibilityInfo: "",
+  transferDeadlineHours: "24",
+  transferMaxTransfers: "1",
+  transferAllowReturn: false,
+  refundPolicy: DEFAULT_REFUND_POLICY,
+  refundWindowDays: "7",
+  refundMinHoursBeforeEvent: "48",
+};
+
+/**
+ * Edição pelo assistente: todos os valores viram a entrada completa de `updateEvent`,
+ * o serviço autoritativo da edição (alteração relevante, limites com vendas, meia).
+ */
+export function wizardToEventInput(v: WizardValues, changeReason?: string): EventInput {
+  const venue = v.locationType === "VENUE";
+  return {
+    title: v.title,
+    summary: v.summary,
+    description: v.description,
+    categoryId: v.categoryId,
+    locationType: v.locationType,
+    venueId: venue && v.venueMode === "existing" ? v.venueId || undefined : undefined,
+    newVenue:
+      venue && v.venueMode === "new"
+        ? {
+            name: v.newVenue.name,
+            addressLine: composeAddressLine(v.newVenue),
+            district: v.newVenue.district,
+            postalCode: v.newVenue.postalCode,
+            cityIbgeCode: v.newVenue.cityIbgeCode,
+            cityUf: v.newVenue.cityUf,
+          }
+        : undefined,
+    onlineUrl: v.locationType === "ONLINE" ? v.onlineUrl : undefined,
+    timezone: v.timezone as EventInput["timezone"],
+    startsAtLocal: v.startsAtLocal,
+    endsAtLocal: v.endsAtLocal,
+    salesStartLocal: v.salesStartLocal,
+    salesEndLocal: v.salesEndLocal,
+    ageRestriction: v.ageRestriction,
+    capacity: v.capacity,
+    halfPriceQuotaPercent: v.halfPriceQuotaPercent,
+    maxTicketsPerAccount: v.maxTicketsPerAccount,
+    coverImageUrl: v.coverImageUrl,
+    accessibilityInfo: v.accessibilityInfo,
+    refundPolicy: v.refundPolicy,
+    refundWindowDays: v.refundWindowDays,
+    refundMinHoursBeforeEvent: v.refundMinHoursBeforeEvent,
+    transferDeadlineHours: v.transferDeadlineHours,
+    transferMaxTransfers: v.transferMaxTransfers,
+    transferAllowReturn: v.transferAllowReturn,
+    changeReason: changeReason?.trim() || undefined,
+  };
+}
+
 /** Recorta os valores de uma etapa no formato que a ação do servidor espera. */
 export function stepPayload(step: DataStep, v: WizardValues): Record<string, unknown> {
   switch (step) {
@@ -249,7 +325,7 @@ export function stepPayload(step: DataStep, v: WizardValues): Record<string, unk
       return { title: v.title, categoryId: v.categoryId, summary: v.summary };
     case 2:
       return {
-        timezone: v.timezone,
+        timezone: v.timezone as EventInput["timezone"],
         startsAtLocal: v.startsAtLocal,
         endsAtLocal: v.endsAtLocal,
         locationType: v.locationType,

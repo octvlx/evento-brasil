@@ -11,6 +11,7 @@ import { parseQrPayload } from "@/lib/qr-payload";
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { CheckinResponse, OfflinePackage, OfflineSyncItem } from "@/server/services/checkin";
 import { checkInAction, offlinePackageAction, syncOfflineAction } from "./actions";
+import { CAMERA_MESSAGES, cameraPrecheck, cameraProblemOf } from "./camera-errors";
 import { forgetOfflineEvent, offlineStore, prepareOfflineShell, queuedBy, tokenHash, withQueueLock, type QueuedEntry } from "./offline-store";
 
 const RESULT_STYLE: Record<string, string> = {
@@ -376,6 +377,12 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
       setTorchOn(false);
     };
     (async () => {
+      const blocked = cameraPrecheck({ isSecureContext: window.isSecureContext, hasGetUserMedia: !!navigator.mediaDevices?.getUserMedia });
+      if (blocked) {
+        setCameraError(CAMERA_MESSAGES[blocked]);
+        setCameraOn(false);
+        return;
+      }
       try {
         const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         stream = s;
@@ -387,6 +394,12 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
         // Lanterna: só quando a câmera informa suporte (Chrome no Android; não existe no iPhone).
         const track = s.getVideoTracks()[0] ?? null;
         trackRef.current = track;
+        // A câmera pode cair no meio do evento (tela bloqueada, outro app, cabo): avisa.
+        track?.addEventListener("ended", () => {
+          if (cancelled) return;
+          setCameraError(CAMERA_MESSAGES.ENDED);
+          setCameraOn(false);
+        });
         const caps = (track?.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { torch?: boolean };
         setTorchSupported(caps.torch === true);
         const tick = (t: number) => {
@@ -405,9 +418,9 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
           if (code?.data) submit(code.data);
         };
         raf = requestAnimationFrame(tick);
-      } catch {
+      } catch (err) {
         if (cancelled) return stop();
-        setCameraError("Não foi possível acessar a câmera. Verifique a permissão do navegador ou use a digitação manual.");
+        setCameraError(CAMERA_MESSAGES[cameraProblemOf(err)]);
         setCameraOn(false);
       }
     })();
@@ -466,6 +479,9 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
           </div>
         )}
         {cameraOn && <div className="pointer-events-none absolute inset-[18%] rounded-3xl border-4 border-white/70" aria-hidden />}
+        {cameraOn && !result && (
+          <p className="pointer-events-none absolute inset-x-0 bottom-3 text-center text-sm font-semibold text-white drop-shadow">Centralize o QR code no quadro</p>
+        )}
         {cameraOn && torchSupported && !result && (
           <button
             type="button"
@@ -523,7 +539,15 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
       </div>
 
       <div className={cn("grid gap-2", cameraOn && torchSupported ? "grid-cols-[1fr_auto_auto]" : "grid-cols-[1fr_auto]")}>
-        <Button size="lg" variant={cameraOn ? "outline" : "secondary"} className="w-full" onClick={() => setCameraOn((v) => !v)}>
+        <Button
+          size="lg"
+          variant={cameraOn ? "outline" : "secondary"}
+          className="w-full"
+          onClick={() => {
+            setCameraError(null);
+            setCameraOn((v) => !v);
+          }}
+        >
           {cameraOn ? <CameraOff aria-hidden /> : <Camera aria-hidden />} {cameraOn ? "Desativar câmera" : "Ativar câmera"}
         </Button>
         <Button size="lg" variant="outline" aria-pressed={sound} onClick={toggleSound} aria-label={sound ? "Desligar som" : "Ligar som"} title={sound ? "Som ligado" : "Som desligado"}>
@@ -536,7 +560,12 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
         )}
       </div>
       {cameraOn && !torchSupported && <p className="text-xs text-muted-foreground">Este aparelho ou navegador não permite acender a lanterna pela página.</p>}
-      {cameraError && <p className="text-sm text-destructive">{cameraError}</p>}
+      {cameraError && (
+        <p role="alert" data-testid="camera-error" className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <CameraOff className="mt-0.5 size-4 shrink-0" aria-hidden />
+          {cameraError}
+        </p>
+      )}
 
       <form
         className="flex gap-2"
