@@ -19,6 +19,35 @@ const cfg = {
   password: decodeURIComponent(url.password),
   database: url.pathname.slice(1),
 };
+
+// Já existe um banco respondendo na porta do .env (PostgreSQL instalado como serviço,
+// Docker ou outro terminal): não sobe o embutido por cima (docs/database.md).
+const existing = await probeDatabase();
+if (existing.ok) {
+  console.log(`Banco já respondendo em localhost:${cfg.port}/${cfg.database} (${existing.server}) — nada a fazer.`);
+  process.exit(0);
+}
+if (existing.portInUse) {
+  console.error(`Já há um servidor em localhost:${cfg.port}, mas a DATABASE_URL não conectou: ${existing.message}`);
+  console.error("Se for o PostgreSQL instalado como serviço, rode `npm run db:setup-service`. Se não, troque a porta da DATABASE_URL.");
+  process.exit(1);
+}
+
+async function probeDatabase() {
+  const { default: pg } = await import("pg");
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 3000 });
+  try {
+    await client.connect();
+    const { rows } = await client.query("SELECT split_part(version(), ',', 1) AS v");
+    return { ok: true, server: rows[0].v };
+  } catch (e) {
+    // Recusa de conexão = porta livre (sobe o embutido); qualquer outra resposta = alguém escuta lá.
+    const refused = e?.code === "ECONNREFUSED" || e?.errors?.every?.((x) => x.code === "ECONNREFUSED");
+    return { ok: false, portInUse: !refused, message: e?.message ?? String(e) };
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
 // Diretório curto fora do projeto (limite de 260 caracteres do Windows) e fora
 // de os.tmpdir(), que o Windows limpa sozinho.
 const legacyDir = path.join(os.tmpdir(), "evento-brasil-pgdata", String(cfg.port));

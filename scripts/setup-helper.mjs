@@ -1,4 +1,5 @@
 // Auxiliar do INICIAR-EVENTO-BRASIL.bat (sem dependências além de `pg` e `dotenv`).
+//   node scripts/setup-helper.mjs db-up           → exit 0 se o banco já responde agora
 //   node scripts/setup-helper.mjs wait-db         → aguarda o PostgreSQL (até 90 s)
 //   node scripts/setup-helper.mjs needs-seed      → exit 0 se o banco ainda não tem dados
 //   node scripts/setup-helper.mjs wait-http URL   → aguarda a URL responder (até 4 min)
@@ -19,6 +20,15 @@ async function withClient(fn) {
 }
 
 switch (cmd) {
+  case "db-up": {
+    try {
+      await withClient((c) => c.query("SELECT 1"));
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+    break;
+  }
   case "wait-db": {
     for (let i = 0; i < 90; i++) {
       try {
