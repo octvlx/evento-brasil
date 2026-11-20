@@ -210,8 +210,19 @@ e `organizer-team.spec.ts` (convites e papéis).
 
 ## O que falta (por prioridade)
 
-1. **Convites (complementos):** transferir a propriedade com confirmação por
-   e-mail; limitar convites pendentes por organização.
+1. ~~**Convites (complementos):** transferir a propriedade com confirmação por
+   e-mail; limitar convites pendentes por organização~~ — feitos:
+   - **Transferência de responsável** (`requestOwnershipTransfer` e afins,
+     `OrganizationOwnershipTransfer`): o OWNER escolhe um membro na tela da equipe e
+     confirma com a senha (conta só Google dispensa); o membro recebe e-mail e aceita
+     logado em `/organizador/propriedade/[token]`. No aceite, numa transação com a trava
+     da equipe, ele vira OWNER e quem pediu vira ADMIN; atribuições de portaria do novo
+     dono são apagadas. Um pedido pendente por organização (novo pedido cancela o
+     anterior), validade de 7 dias, recusa e cancelamento auditados; se a equipe mudou
+     depois do pedido, o aceite falha sem mudar nada.
+   - **Limite de convites:** um convite ativo por e-mail (`CONFLICT`) e no máximo 30
+     ativos por organização (`LIMIT_EXCEEDED`); vencidos e revogados não contam. A tela
+     mostra "N de 30 convites ativos".
 2. ~~Convites: revogar, reenviar, recusar, pendentes~~ e ~~Equipe: alterar papel~~ — feitos.
    ~~**Cupons da organização inteira**~~ — feito: `/organizador/cupons` (menu
    "Cupons", permissão `event:write`) cria e edita cupons sem evento
@@ -256,9 +267,11 @@ e `organizer-team.spec.ts` (convites e papéis).
    armazenamento; auditoria `organization.logo_updated/_removed` e `cover_…`). Falta:
    links sociais adicionais.
 
-8. **Assistente de evento (complementos):** preencher endereço pelo CEP quando
-   houver integração; galeria também no assistente (hoje só na gestão); usar o assistente
-   também na edição; campos da proposta ao `banco-de-dados` abaixo.
+8. **Assistente de evento (complementos):** ~~preencher endereço pelo CEP~~ — feito
+   (ViaCEP pelo servidor, `lookupVenuePostalCodeAction`): no assistente já existia; o
+   formulário de edição ganhou a mesma busca (preenche rua, bairro e cidade; o número
+   fica com o organizador). Falta: galeria também no assistente (hoje só na gestão);
+   usar o assistente também na edição; campos da proposta ao `banco-de-dados` abaixo.
 
 ## Dependências de outros agentes
 

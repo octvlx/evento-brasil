@@ -27,7 +27,11 @@ import { lookupPostalAddress } from "@/server/services/postal-address";
 import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
 import {
   acceptInvitation,
+  acceptOwnershipTransfer,
   assignStaffToEvent,
+  cancelOwnershipTransfer,
+  declineOwnershipTransfer,
+  requestOwnershipTransfer,
   changeMemberRole,
   connectPaymentAccount,
   declineInvitation,
@@ -442,4 +446,45 @@ export async function setTrackingLinkArchivedAction(linkId: string, archived: bo
   });
   if (res.ok) refresh();
   return res;
+}
+
+// ───────────────────────────── Transferência de responsável ─────────────────────────────
+
+/** Dono atual pede a transferência para um membro, confirmando com a senha. */
+export async function requestOwnershipTransferAction(toUserId: string, password: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/equipe");
+  const res = await toActionResult(async () => {
+    await rateLimit(`ownership-transfer:${user.id}`, 10, 60 * 60_000);
+    await requestOwnershipTransfer(db, user, await activeOrgId(user.id), toUserId, password || undefined);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function cancelOwnershipTransferAction(): Promise<ActionResult> {
+  const user = await requireUser("/organizador/equipe");
+  const res = await toActionResult(async () => {
+    await cancelOwnershipTransfer(db, user, await activeOrgId(user.id));
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function acceptOwnershipTransferAction(token: string): Promise<ActionResult> {
+  const user = await requireUser(`/organizador/propriedade/${token}`);
+  return toActionResult(async () => {
+    const { organizationId } = await acceptOwnershipTransfer(db, user, token);
+    await setActiveOrg(organizationId);
+    return undefined;
+  });
+}
+
+export async function declineOwnershipTransferAction(token: string): Promise<ActionResult> {
+  const user = await requireUser(`/organizador/propriedade/${token}`);
+  return toActionResult(async () => {
+    await declineOwnershipTransfer(db, user, token);
+    return undefined;
+  });
 }

@@ -12,7 +12,8 @@ import {
 } from "@/features/organizer/settings-forms";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
-import { assignableRoles, listPendingInvitations } from "@/server/services/organizers";
+import { assignableRoles, listPendingInvitations, MAX_PENDING_INVITATIONS, pendingOwnershipTransfer } from "@/server/services/organizers";
+import { OwnershipTransferPanel } from "@/features/organizer/ownership-transfer";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { ORG_ROLE } from "@/lib/labels";
 
@@ -42,6 +43,11 @@ async function Content() {
       orderBy: { startsAt: "asc" },
     }),
   ]);
+  const isOwner = membership.role === "OWNER";
+  const [transfer, me] = isOwner
+    ? await Promise.all([pendingOwnershipTransfer(db, user, org.id), db.user.findUniqueOrThrow({ where: { id: user.id }, select: { googleSubject: true } })])
+    : [null, null];
+  const activeInvitations = invitations.filter((i) => !i.expired).length;
   const roles = assignableRoles(membership.role);
   const staff = members.filter((m) => m.role === "CHECKIN_STAFF");
 
@@ -88,6 +94,9 @@ async function Content() {
             </ul>
           )}
         </div>
+        <p className="text-xs text-muted-foreground" data-testid="invitation-limit">
+          {activeInvitations} de {MAX_PENDING_INVITATIONS} convites ativos. Convites vencidos não contam.
+        </p>
         <InviteForm events={events.map((e) => ({ id: e.id, title: e.title }))} roles={roles} />
 
         {staff.length > 0 && events.length > 0 && (
@@ -119,6 +128,15 @@ async function Content() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+        {isOwner && (
+          <div className="border-t border-border pt-5">
+            <OwnershipTransferPanel
+              members={members.filter((m) => m.role !== "OWNER" && m.user.id !== user.id).map((m) => ({ userId: m.user.id, name: m.user.name, email: m.user.email }))}
+              pending={transfer && { toName: transfer.toName, toEmail: transfer.toEmail, expiresAt: transfer.expiresAt }}
+              needsPassword={!me?.googleSubject}
+            />
           </div>
         )}
       </Card>

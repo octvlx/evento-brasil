@@ -10,6 +10,7 @@ import type { Db, Tx } from "../db";
 import { audit } from "../audit";
 import { assertActive, assertOrgPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { encryptPII, hashToken, randomToken } from "../crypto";
+import { verifyPassword } from "../auth/password";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { imageDimensions, MAX_IMAGE_BYTES, storeEventImage } from "../storage";
 
@@ -289,6 +290,8 @@ export async function setOrganizationImage(db: Db, actor: Actor, organizationId:
 // ── Equipe ──
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Convites ainda utilizáveis (não aceitos, não revogados, não vencidos) por organização. */
+export const MAX_PENDING_INVITATIONS = 30;
 
 /** Hierarquia de papéis para impedir escalada de privilégio (EVENT_MANAGER e FINANCE no mesmo nível). */
 const ROLE_RANK: Record<OrgRole, number> = { OWNER: 4, ADMIN: 3, EVENT_MANAGER: 2, FINANCE: 2, CHECKIN_STAFF: 1 };
@@ -332,6 +335,13 @@ export async function inviteMember(db: Db, actor: Actor, organizationId: string,
       const ev = await tx.event.findFirst({ where: { id: input.eventId, organizationId }, select: { id: true } });
       if (!ev) throw notFound("Evento não encontrado nesta organização.");
     }
+    // Limites contra abuso e engano: um convite ativo por e-mail e no máximo
+    // MAX_PENDING_INVITATIONS ativos (vencidos não contam). A trava serializa convites simultâneos.
+    await lockOrganizationTeam(tx, organizationId);
+    if (await tx.organizationInvitation.findFirst({ where: { organizationId, email: input.email, ...usableInvitation() }, select: { id: true } }))
+      throw new AppError("CONFLICT", "Já existe um convite pendente para este e-mail. Reenvie ou revogue o convite atual.");
+    if ((await tx.organizationInvitation.count({ where: { organizationId, ...usableInvitation() } })) >= MAX_PENDING_INVITATIONS)
+      throw new AppError("LIMIT_EXCEEDED", `A organização já tem ${MAX_PENDING_INVITATIONS} convites pendentes. Revogue convites antigos antes de enviar novos.`);
     const invitation = await tx.organizationInvitation.create({
       data: {
         organizationId,
@@ -581,5 +591,170 @@ export async function removeMember(db: Db, actor: Actor, organizationId: string,
     await tx.eventStaffAssignment.deleteMany({ where: { userId, event: { organizationId } } });
     await tx.organizationMember.delete({ where: { id: target.id } });
     await audit(tx, { actorUserId: actor.id, organizationId, action: "member.removed", entityType: "OrganizationMember", entityId: target.id, metadata: { userId } });
+  });
+}
+
+// ───────────────────────────── Transferência de responsável ─────────────────────────────
+
+export const OWNERSHIP_TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Pedido pendente e ainda no prazo. */
+const liveTransfer = (now = new Date()) => ({ status: "PENDING" as const, expiresAt: { gt: now } });
+
+async function assertOwner(tx: Tx, actor: Actor, organizationId: string) {
+  const { role } = await assertOrgPermission(tx, actor, organizationId, "members:manage");
+  if (role !== "OWNER") throw new AppError("FORBIDDEN", "Só o responsável (OWNER) pode transferir a organização.");
+}
+
+/** Confirma a senha de quem pede (conta só com login do Google não tem senha própria). */
+async function confirmPassword(db: Db | Tx, userId: string, password: string | undefined) {
+  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { passwordHash: true, googleSubject: true } });
+  if (user.googleSubject && !password) return;
+  if (!password || !(await verifyPassword(password, user.passwordHash))) throw new AppError("FORBIDDEN", "Senha incorreta.");
+}
+
+/**
+ * O dono atual pede a transferência para outro membro. Nada muda até o aceite; um novo
+ * pedido cancela o anterior. O destinatário recebe o link por e-mail.
+ */
+export async function requestOwnershipTransfer(db: Db, actor: Actor, organizationId: string, toUserId: string, password: string | undefined, now = new Date()) {
+  await confirmPassword(db, actor.id, password);
+  const token = randomToken(32);
+  return db.$transaction(async (tx) => {
+    await lockOrganizationTeam(tx, organizationId);
+    await assertOwner(tx, actor, organizationId);
+    if (toUserId === actor.id) throw new AppError("VALIDATION", "Escolha outro membro da equipe.");
+    const target = await tx.organizationMember.findUnique({
+      where: { organizationId_userId: { organizationId, userId: toUserId } },
+      include: { user: { select: { email: true, name: true, status: true } } },
+    });
+    if (!target) throw notFound("Membro não encontrado.");
+    if (target.role === "OWNER") throw new AppError("VALIDATION", "Este membro já é responsável pela organização.");
+    if (target.user.status !== "ACTIVE") throw new AppError("VALIDATION", "Esta conta está suspensa.");
+    await tx.organizationOwnershipTransfer.updateMany({ where: { organizationId, status: "PENDING" }, data: { status: "CANCELLED", decidedAt: now } });
+    const transfer = await tx.organizationOwnershipTransfer.create({
+      data: { organizationId, fromUserId: actor.id, toUserId, tokenHash: hashToken(token), expiresAt: new Date(now.getTime() + OWNERSHIP_TRANSFER_TTL_MS) },
+    });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "organization.ownership_transfer_requested",
+      entityType: "OrganizationOwnershipTransfer",
+      entityId: transfer.id,
+      metadata: { toUserId, fromRole: "OWNER", toRole: target.role },
+    });
+    const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } });
+    await enqueueEmail(tx, {
+      dedupeKey: "ownership:" + transfer.id,
+      template: "ORGANIZATION_OWNERSHIP_TRANSFER",
+      recipient: target.user.email,
+      expiresAt: transfer.expiresAt,
+      message: transactionalEmail(
+        "ownership",
+        "Transferência de responsável",
+        [`Você foi indicado para ser o novo responsável por ${org.name}.`, "Entre com esta conta e confirme pelo link. Até lá, nada muda.", "Não compartilhe este link."],
+        env().APP_URL + "/organizador/propriedade/" + token,
+      ),
+    });
+    return { transfer, token };
+  });
+}
+
+/** Pedido pendente da organização (tela da equipe). */
+export async function pendingOwnershipTransfer(db: Db, actor: Actor, organizationId: string, now = new Date()) {
+  await assertOrgPermission(db, actor, organizationId, "members:manage");
+  const t = await db.organizationOwnershipTransfer.findFirst({ where: { organizationId, ...liveTransfer(now) } });
+  if (!t) return null;
+  const to = await db.user.findUnique({ where: { id: t.toUserId }, select: { name: true, email: true } });
+  return { id: t.id, expiresAt: t.expiresAt, toName: to?.name ?? null, toEmail: to?.email ?? null };
+}
+
+/** Resumo para a página do link; null se o pedido não puder mais ser respondido. */
+export async function getOwnershipTransferForRecipient(db: Db, actor: Actor, token: string, now = new Date()) {
+  assertActive(actor);
+  const t = await db.organizationOwnershipTransfer.findFirst({
+    where: { tokenHash: hashToken(token), ...liveTransfer(now) },
+    include: { organization: { select: { name: true } } },
+  });
+  if (!t) return null;
+  if (t.toUserId !== actor.id) return { forMe: false as const };
+  const from = await db.user.findUnique({ where: { id: t.fromUserId }, select: { name: true } });
+  return { forMe: true as const, organizationName: t.organization.name, fromName: from?.name ?? null, expiresAt: t.expiresAt };
+}
+
+const transferGone = () => new AppError("NOT_FOUND", "Este pedido de transferência é inválido, expirou ou foi cancelado.");
+
+/** O destinatário aceita: vira OWNER e quem pediu passa a ADMIN, na mesma transação. */
+export async function acceptOwnershipTransfer(db: Db, actor: Actor, token: string, now = new Date()) {
+  assertActive(actor);
+  return db.$transaction(async (tx) => {
+    const t = await tx.organizationOwnershipTransfer.findFirst({ where: { tokenHash: hashToken(token), ...liveTransfer(now) } });
+    if (!t || t.toUserId !== actor.id) throw transferGone();
+    await lockOrganizationTeam(tx, t.organizationId);
+    // Reivindica o pedido: aceite duplo ou cancelamento concorrente perdem aqui.
+    const { count } = await tx.organizationOwnershipTransfer.updateMany({ where: { id: t.id, ...liveTransfer(now) }, data: { status: "ACCEPTED", decidedAt: now } });
+    if (count !== 1) throw transferGone();
+    const [from, to] = await Promise.all([
+      tx.organizationMember.findUnique({ where: { organizationId_userId: { organizationId: t.organizationId, userId: t.fromUserId } } }),
+      tx.organizationMember.findUnique({ where: { organizationId_userId: { organizationId: t.organizationId, userId: t.toUserId } } }),
+    ]);
+    // A equipe mudou depois do pedido (quem pediu não é mais dono, ou o destinatário saiu).
+    if (from?.role !== "OWNER" || !to) throw invalidState("A equipe mudou depois do pedido. Peça uma nova transferência.");
+    await tx.organizationMember.update({ where: { id: to.id }, data: { role: "OWNER" } });
+    if (to.role === "CHECKIN_STAFF") await tx.eventStaffAssignment.deleteMany({ where: { userId: to.userId, event: { organizationId: t.organizationId } } });
+    await tx.organizationMember.update({ where: { id: from.id }, data: { role: "ADMIN" } });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: t.organizationId,
+      action: "organization.ownership_transferred",
+      entityType: "OrganizationOwnershipTransfer",
+      entityId: t.id,
+      metadata: { fromUserId: t.fromUserId, toUserId: t.toUserId, previousRole: to.role },
+    });
+    const [org, users] = await Promise.all([
+      tx.organization.findUniqueOrThrow({ where: { id: t.organizationId }, select: { name: true } }),
+      tx.user.findMany({ where: { id: { in: [t.fromUserId, t.toUserId] } }, select: { id: true, email: true } }),
+    ]);
+    for (const u of users) {
+      await enqueueEmail(tx, {
+        dedupeKey: `ownership:${t.id}:accepted:${u.id}`,
+        template: "ORGANIZATION_OWNERSHIP_CHANGED",
+        recipient: u.email,
+        message: transactionalEmail(
+          "ownership",
+          "Novo responsável pela organização",
+          [
+            u.id === t.toUserId ? `Você agora é o responsável por ${org.name}.` : `A transferência de ${org.name} foi aceita. Você continua na equipe como administrador.`,
+            "Se você não reconhece esta mudança, fale com o suporte.",
+          ],
+          env().APP_URL + "/organizador/equipe",
+        ),
+      });
+    }
+    return { organizationId: t.organizationId };
+  });
+}
+
+/** O destinatário recusa. */
+export async function declineOwnershipTransfer(db: Db, actor: Actor, token: string, now = new Date()) {
+  assertActive(actor);
+  return db.$transaction(async (tx) => {
+    const t = await tx.organizationOwnershipTransfer.findFirst({ where: { tokenHash: hashToken(token), ...liveTransfer(now) } });
+    if (!t || t.toUserId !== actor.id) throw transferGone();
+    const { count } = await tx.organizationOwnershipTransfer.updateMany({ where: { id: t.id, ...liveTransfer(now) }, data: { status: "DECLINED", decidedAt: now } });
+    if (count !== 1) throw transferGone();
+    await audit(tx, { actorUserId: actor.id, organizationId: t.organizationId, action: "organization.ownership_transfer_declined", entityType: "OrganizationOwnershipTransfer", entityId: t.id });
+  });
+}
+
+/** Um responsável cancela o pedido pendente. */
+export async function cancelOwnershipTransfer(db: Db, actor: Actor, organizationId: string, now = new Date()) {
+  return db.$transaction(async (tx) => {
+    await lockOrganizationTeam(tx, organizationId);
+    await assertOwner(tx, actor, organizationId);
+    const t = await tx.organizationOwnershipTransfer.findFirst({ where: { organizationId, status: "PENDING" } });
+    if (!t) throw notFound("Não há transferência pendente.");
+    await tx.organizationOwnershipTransfer.update({ where: { id: t.id }, data: { status: "CANCELLED", decidedAt: now } });
+    await audit(tx, { actorUserId: actor.id, organizationId, action: "organization.ownership_transfer_cancelled", entityType: "OrganizationOwnershipTransfer", entityId: t.id });
   });
 }

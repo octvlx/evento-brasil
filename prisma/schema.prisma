@@ -224,6 +224,7 @@ model Organization {
   city               City?                    @relation(fields: [cityId], references: [id])
   members            OrganizationMember[]
   invitations        OrganizationInvitation[]
+  ownershipTransfers OrganizationOwnershipTransfer[]
   verifications      OrganizerVerification[]
   events             Event[]
   venues             Venue[]
@@ -278,6 +279,33 @@ model OrganizationMember {
 
   @@unique([organizationId, userId])
   @@index([userId])
+}
+
+enum OwnershipTransferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+// Transferência de responsável (OWNER) da organização: o dono atual escolhe um membro e
+// confirma com a senha; o membro aceita logado pelo link do e-mail. Só no aceite os papéis
+// mudam (novo OWNER, anterior vira ADMIN). Um pedido pendente por organização (índice
+// parcial na migração); vencido = expiresAt no passado.
+model OrganizationOwnershipTransfer {
+  id             String                  @id @default(cuid())
+  organizationId String
+  fromUserId     String
+  toUserId       String
+  tokenHash      String                  @unique
+  status         OwnershipTransferStatus @default(PENDING)
+  expiresAt      DateTime                @db.Timestamptz(3)
+  createdAt      DateTime                @default(now()) @db.Timestamptz(3)
+  decidedAt      DateTime?               @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
 }
 
 model OrganizationInvitation {
