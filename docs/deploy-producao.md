@@ -19,6 +19,11 @@ desenvolvimento por conta própria.
 - ☐ **PostgreSQL 15+ gerenciado**, com backup automático, PITR e conexão TLS
   (`?sslmode=require` na `DATABASE_URL`). Banco exclusivo: **nunca** rode `db:seed`,
   `db:reset` nem `prisma migrate reset` nele.
+  O app abre a sessão em UTC (`-c TimeZone=UTC` no parâmetro `options` da URL,
+  `src/server/db.ts`): o adaptador do Prisma grava e lê datas pressupondo UTC. Se
+  um pooler em modo transação recusar ou ignorar `options`, rode uma vez
+  `ALTER DATABASE <banco> SET timezone TO 'UTC'`. O `npm run deploy:check` bloqueia
+  se a sessão não estiver em UTC.
 - ☐ **Hospedagem Node 20.19+ com HTTPS** (Vercel, Render, Fly.io, Railway ou
   container próprio). O proxy deve sobrescrever `x-forwarded-for`/`x-real-ip`.
 - ☐ **Bucket compatível com S3** com URL pública HTTPS (CDN ou bucket público) para as

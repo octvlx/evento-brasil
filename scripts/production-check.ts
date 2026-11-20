@@ -34,6 +34,20 @@ async function startupCheck(): Promise<CheckItem> {
   }
 }
 
+/** Fuso padrão do servidor: conexão sem o `options` que o app acrescenta. */
+async function serverTimeZone(): Promise<string | null> {
+  const { default: pg } = await import("pg");
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000 });
+  try {
+    await client.connect();
+    return (await client.query<{ TimeZone: string }>("SHOW TimeZone")).rows[0]?.TimeZone ?? null;
+  } catch {
+    return null;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 async function dbCheck(): Promise<CheckItem[]> {
   const { createPrismaClient } = await import("../src/server/db");
   const db = createPrismaClient();
@@ -44,13 +58,25 @@ async function dbCheck(): Promise<CheckItem[]> {
     const local = readdirSync(path.join(import.meta.dirname, "../prisma/migrations"), { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
-    const [demoAccounts, activeAdmins, adminsWithoutMfa, cities] = await Promise.all([
+    const [demoAccounts, activeAdmins, adminsWithoutMfa, cities, orders, [session]] = await Promise.all([
       db.user.count({ where: { isDemoAccount: true, anonymizedAt: null } }),
       db.user.count({ where: { platformRole: "ADMIN", status: "ACTIVE", anonymizedAt: null } }),
       db.user.count({ where: { platformRole: "ADMIN", status: "ACTIVE", anonymizedAt: null, totpEnabledAt: null } }),
       db.city.count(),
+      db.order.count(),
+      db.$queryRaw<{ tz: string }[]>`SELECT current_setting('TimeZone') AS tz`,
     ]);
-    return checkProductionDb({ pendingMigrations: local.filter((m) => !done.has(m)), failedMigrations: failed, demoAccounts, activeAdmins, adminsWithoutMfa, cities });
+    return checkProductionDb({
+      pendingMigrations: local.filter((m) => !done.has(m)),
+      failedMigrations: failed,
+      demoAccounts,
+      activeAdmins,
+      adminsWithoutMfa,
+      cities,
+      orders,
+      sessionTimeZone: session?.tz ?? null,
+      serverTimeZone: await serverTimeZone(),
+    });
   } catch {
     return [{ level: "fail", title: "Banco de dados", detail: "não foi possível conectar ou consultar (confira DATABASE_URL e se as migrações já foram aplicadas)" }];
   } finally {

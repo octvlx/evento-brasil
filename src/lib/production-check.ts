@@ -133,7 +133,15 @@ export interface DbFacts {
   activeAdmins: number;
   adminsWithoutMfa: number;
   cities: number;
+  /** Fuso da sessão aberta pelo app (createPrismaClient força UTC); null = não lido. */
+  sessionTimeZone?: string | null;
+  /** Fuso padrão do servidor, numa conexão sem as opções do app; null = não lido. */
+  serverTimeZone?: string | null;
+  /** Pedidos já gravados (dados que um fuso errado teria deslocado). */
+  orders?: number;
 }
+
+const isUtc = (tz: string) => ["UTC", "ETC/UTC", "GMT", "ETC/GMT", "ZULU", "UCT"].includes(tz.toUpperCase());
 
 export function checkProductionDb(f: DbFacts): CheckItem[] {
   const items: CheckItem[] = [];
@@ -148,6 +156,14 @@ export function checkProductionDb(f: DbFacts): CheckItem[] {
   else add("ok", "Administrador", `${f.activeAdmins} ativo(s), todos com 2FA`);
   if (f.cities === 0) add("warn", "Cidades", "tabela vazia; rode npm run cities:import");
   else add("ok", "Cidades", `${f.cities} cadastradas`);
+  // O adaptador do Prisma pressupõe sessão em UTC (src/server/db.ts).
+  if (f.sessionTimeZone != null) {
+    if (!isUtc(f.sessionTimeZone))
+      add("fail", "Fuso da sessão", `${f.sessionTimeZone} em vez de UTC: o pooler ignorou o parâmetro options; rode ALTER DATABASE <banco> SET timezone TO 'UTC'`);
+    else if (f.serverTimeZone && !isUtc(f.serverTimeZone) && (f.orders ?? 0) > 0)
+      add("warn", "Fuso da sessão", `servidor em ${f.serverTimeZone} com ${f.orders} pedido(s): datas gravadas antes da sessão em UTC podem estar deslocadas; confira antes de abrir vendas`);
+    else add("ok", "Fuso da sessão", "UTC");
+  }
   return items;
 }
 

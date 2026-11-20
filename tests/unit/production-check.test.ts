@@ -98,4 +98,12 @@ describe("verificação de produção: banco", () => {
     expect(fails(checkProductionDb({ ...ok, failedMigrations: ["x"] }))).toEqual(["Migrações com falha"]);
     expect(warns(checkProductionDb({ ...ok, pendingMigrations: ["y"], adminsWithoutMfa: 1, cities: 0 })).sort()).toEqual(["Administrador", "Cidades", "Migrações pendentes"]);
   });
+
+  it("fuso: sessão fora de UTC bloqueia; servidor em outro fuso com pedidos avisa", () => {
+    expect(fails(checkProductionDb({ ...ok, sessionTimeZone: "America/Sao_Paulo" }))).toEqual(["Fuso da sessão"]);
+    expect(fails(checkProductionDb({ ...ok, sessionTimeZone: "UTC", serverTimeZone: "America/Sao_Paulo", orders: 0 }))).toEqual([]);
+    expect(warns(checkProductionDb({ ...ok, sessionTimeZone: "UTC", serverTimeZone: "America/Sao_Paulo", orders: 0 }))).toEqual([]);
+    expect(warns(checkProductionDb({ ...ok, sessionTimeZone: "UTC", serverTimeZone: "America/Sao_Paulo", orders: 5 }))).toEqual(["Fuso da sessão"]);
+    expect(warns(checkProductionDb({ ...ok, sessionTimeZone: "Etc/UTC", serverTimeZone: "GMT", orders: 5 }))).toEqual([]);
+  });
 });
