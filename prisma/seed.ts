@@ -263,6 +263,9 @@ async function main() {
         startsAt,
         endsAt: new Date(startsAt.getTime() + o.durationH * 3_600_000),
         timezone: tz,
+        // Demonstração: portaria aberta desde já (até 1 ano antes), para testar o leitor
+        // com os eventos futuros do seed. Eventos reais usam o padrão de 6 h.
+        checkinOpensMinutesBefore: 525_600,
         ageRestriction: o.age ?? 0,
         salesStartAt: new Date(Date.now() - 7 * 86_400_000),
         salesEndAt: new Date(startsAt.getTime() + 2 * 3_600_000),

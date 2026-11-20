@@ -2,7 +2,7 @@
 // do evento), status efetivo antes do job e janela operacional da portaria.
 import { describe, expect, it } from "vitest";
 import { zonedLocalToUtc } from "@/lib/datetime";
-import { CHECKIN_GRACE_MS, checkinWindowOpen, effectiveEventStatus, hasEventEnded } from "@/lib/event-lifecycle";
+import { CHECKIN_GRACE_MS, checkinNotYetOpen, checkinOpensAt, checkinWindowOpen, DEFAULT_CHECKIN_OPENS_MINUTES, effectiveEventStatus, hasEventEnded } from "@/lib/event-lifecycle";
 
 const HOUR = 3_600_000;
 const at = (iso: string) => new Date(iso);
@@ -65,17 +65,34 @@ describe("effectiveEventStatus", () => {
 
 describe("checkinWindowOpen — fechamento operacional separado do comercial", () => {
   const endsAt = at("2026-11-03T23:00:00.000Z");
+  const startsAt = at("2026-11-03T19:00:00.000Z");
+  const base = { startsAt, checkinOpensMinutesBefore: DEFAULT_CHECKIN_OPENS_MINUTES };
 
   it("aceita entrada até 12 h depois do término, com o status ainda PUBLISHED (job atrasado) ou já COMPLETED", () => {
     for (const status of ["PUBLISHED", "COMPLETED"] as const) {
-      expect(checkinWindowOpen({ status, endsAt }, new Date(endsAt.getTime() + HOUR))).toBe(true);
-      expect(checkinWindowOpen({ status, endsAt }, new Date(endsAt.getTime() + CHECKIN_GRACE_MS - 1))).toBe(true);
-      expect(checkinWindowOpen({ status, endsAt }, new Date(endsAt.getTime() + CHECKIN_GRACE_MS))).toBe(false);
+      expect(checkinWindowOpen({ ...base, status, endsAt }, new Date(endsAt.getTime() + HOUR))).toBe(true);
+      expect(checkinWindowOpen({ ...base, status, endsAt }, new Date(endsAt.getTime() + CHECKIN_GRACE_MS - 1))).toBe(true);
+      expect(checkinWindowOpen({ ...base, status, endsAt }, new Date(endsAt.getTime() + CHECKIN_GRACE_MS))).toBe(false);
     }
   });
 
   it("cancelado ou rascunho nunca abre", () => {
-    expect(checkinWindowOpen({ status: "CANCELLED", endsAt }, new Date(endsAt.getTime() - HOUR))).toBe(false);
-    expect(checkinWindowOpen({ status: "DRAFT", endsAt }, new Date(endsAt.getTime() - HOUR))).toBe(false);
+    expect(checkinWindowOpen({ ...base, status: "CANCELLED", endsAt }, new Date(endsAt.getTime() - HOUR))).toBe(false);
+    expect(checkinWindowOpen({ ...base, status: "DRAFT", endsAt }, new Date(endsAt.getTime() - HOUR))).toBe(false);
+    expect(checkinNotYetOpen({ ...base, status: "CANCELLED", endsAt }, new Date(startsAt.getTime() - 24 * HOUR))).toBe(false);
+  });
+
+  it("abre N minutos antes do início (padrão 6 h; configurável por evento, inclusive na hora)", () => {
+    const ev = { ...base, status: "PUBLISHED" as const, endsAt };
+    expect(checkinOpensAt(ev)).toEqual(new Date(startsAt.getTime() - 6 * HOUR));
+    expect(checkinWindowOpen(ev, new Date(startsAt.getTime() - 6 * HOUR - 1))).toBe(false);
+    expect(checkinNotYetOpen(ev, new Date(startsAt.getTime() - 6 * HOUR - 1))).toBe(true);
+    expect(checkinWindowOpen(ev, new Date(startsAt.getTime() - 6 * HOUR))).toBe(true);
+    expect(checkinNotYetOpen(ev, new Date(startsAt.getTime() - 6 * HOUR))).toBe(false);
+    const onTime = { ...ev, checkinOpensMinutesBefore: 0 };
+    expect(checkinWindowOpen(onTime, new Date(startsAt.getTime() - 1))).toBe(false);
+    expect(checkinWindowOpen(onTime, startsAt)).toBe(true);
+    const week = { ...ev, checkinOpensMinutesBefore: 7 * 24 * 60 };
+    expect(checkinWindowOpen(week, new Date(startsAt.getTime() - 6 * 24 * HOUR))).toBe(true);
   });
 });

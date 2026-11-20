@@ -1,10 +1,11 @@
 "use server";
 
+import { refresh } from "next/cache";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { toActionResult, type ActionResult } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
-import { checkInTicket, checkinOfflinePackage, syncOfflineCheckins, type CheckinResponse, type OfflineEntry, type OfflinePackage, type OfflineSyncItem } from "@/server/services/checkin";
+import { checkInTicket, checkinOfflinePackage, setCheckinOpening, syncOfflineCheckins, type CheckinResponse, type OfflineEntry, type OfflinePackage, type OfflineSyncItem } from "@/server/services/checkin";
 
 export async function checkInAction(eventId: string, payload: string): Promise<ActionResult<CheckinResponse>> {
   const user = await requireUser(`/check-in/${eventId}`);
@@ -31,4 +32,12 @@ export async function syncOfflineAction(eventId: string, entries: OfflineEntry[]
     await rateLimit(`checkin-offline-sync:${user.id}`, 120, 60 * 60_000);
     return syncOfflineCheckins(db, user, eventId, entries);
   });
+}
+
+/** Abertura da portaria: quantos minutos antes do início (quem edita o evento). */
+export async function setCheckinOpeningAction(eventId: string, minutes: number): Promise<ActionResult<{ minutes: number }>> {
+  const user = await requireUser(`/check-in/${eventId}`);
+  const res = await toActionResult(() => setCheckinOpening(db, user, eventId, Number(minutes)));
+  if (res.ok) refresh();
+  return res;
 }
