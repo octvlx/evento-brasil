@@ -14,6 +14,7 @@ import { requireOrganizer } from "@/server/auth/organizer-context";
 import { cityFormValue } from "@/server/services/cities";
 import { resolveCommissionRule } from "@/server/services/commission";
 import { getWizardProgress, isWizardComplete, wizardProgressByEvent } from "@/server/services/event-wizard-progress";
+import { EVENT_IMAGE_MIN_SIDE, listEventImages, MAX_EVENT_IMAGES } from "@/server/services/event-images";
 import { formatDateTimeShort, utcToZonedLocalInput } from "@/lib/datetime";
 
 export const metadata: Metadata = {
@@ -207,6 +208,8 @@ async function Content({ searchParams }: { searchParams: Search }) {
     }
   }
 
+  const images = await listEventImages(db, event.id);
+
   return (
     <>
       <PageTitle title={event.title} subtitle="Cadastro do evento em 6 etapas. Tudo é salvo automaticamente como rascunho." />
@@ -219,6 +222,7 @@ async function Content({ searchParams }: { searchParams: Search }) {
         completed={completed}
         initial={initial}
         estimates={estimates}
+        gallery={{ images: images.map((i) => ({ id: i.id, url: i.url, alt: i.alt })), max: MAX_EVENT_IMAGES, minSide: EVENT_IMAGE_MIN_SIDE }}
         ticketTypes={event.ticketTypes.map((t) => ({
           id: t.id,
           name: t.name,

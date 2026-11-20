@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { recordWizardVisitAction, saveEventWizardStepAction, startEventDraftAction, submitEventAction } from "./actions";
 import { ErrorSummary, fieldId, StepBasics, StepDateLocation, StepDescription, StepSettings, StepTicketsSettings, TicketTips, type Errors } from "./event-wizard-steps";
 import { TicketTypesManager, type ManagedTicketType, type TicketEstimate } from "./ticket-types-manager";
+import { EventGallery, type GalleryImage } from "./event-gallery";
 import { DATA_STEPS, firstIncompleteStep, isDataStep, STEP_FIELDS, stepPayload, validateStep, WIZARD_STEPS, type DataStep, type WizardStep, type WizardValues } from "./wizard-steps";
 
 export type WizardEstimate = TicketEstimate;
@@ -37,6 +38,8 @@ interface Props {
   canPublish: boolean;
   orgApproved: boolean;
   autoPublish: boolean;
+  /** Galeria de fotos (etapa 4): só existe depois que o rascunho foi criado. */
+  gallery?: { images: GalleryImage[]; max: number; minSide: number };
 }
 
 type SaveState = { kind: "idle" } | { kind: "saving" } | { kind: "saved"; at: Date } | { kind: "error"; message: string } | { kind: "invalid" } | { kind: "local" };
@@ -366,6 +369,18 @@ export function EventWizard(props: Props) {
           <Review {...props} values={form.getValues()} completed={completed} onEdit={(n) => leaveTo(n)} />
         )}
 
+        {step === 4 && eventId && props.gallery && (
+          <section aria-labelledby="ew-gallery-title" className="mt-8 space-y-4 border-t border-border pt-6">
+            <div>
+              <h3 id="ew-gallery-title" className="font-display text-base font-bold">
+                Galeria de fotos (opcional)
+              </h3>
+              <p className="text-sm text-muted-foreground">Cada foto é salva na hora; não depende do botão Continuar.</p>
+            </div>
+            <EventGallery eventId={eventId} images={props.gallery.images} max={props.gallery.max} minSide={props.gallery.minSide} />
+          </section>
+        )}
+
         {step === 3 && eventId && (
           <section id={fieldId("tickets")} data-field="tickets" tabIndex={-1} aria-labelledby="ew-tickets-title" className="mt-8 space-y-4 border-t border-border pt-6 outline-none">
             <h3 id="ew-tickets-title" className="font-display text-base font-bold">
@@ -662,6 +677,7 @@ function Review(
       </Section>
       <Section title="Imagens e descrição" n={4} onEdit={props.onEdit}>
         <Row k="Capa">{v.coverImageUrl ? "Enviada" : "Sem capa"}</Row>
+        <Row k="Galeria">{props.gallery?.images.length ? `${props.gallery.images.length} ${props.gallery.images.length === 1 ? "foto" : "fotos"}` : "Sem fotos"}</Row>
         <Row k="Descrição">{v.description ? `${v.description.trim().slice(0, 160)}${v.description.trim().length > 160 ? "…" : ""}` : ""}</Row>
         <Row k="Classificação">{v.ageRestriction === "0" ? "Livre" : `${v.ageRestriction} anos`}</Row>
         <Row k="Acessibilidade">{v.accessibilityInfo}</Row>

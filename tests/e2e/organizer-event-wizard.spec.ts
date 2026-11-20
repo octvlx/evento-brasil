@@ -1,5 +1,25 @@
+import { crc32, deflateSync } from "node:zlib";
 import { expect, test, type Page } from "@playwright/test";
 import { login, USERS } from "./helpers";
+
+/** PNG de cor sólida (a galeria exige pelo menos 600 px no lado menor). */
+function solidPng(size: number) {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr.set([8, 2, 0, 0, 0], 8); // 8 bits, RGB
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(size * 3, 0x80)]);
+  const raw = Buffer.concat(Array.from({ length: size }, () => row));
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
 
 // Assistente de criação de evento: validação por etapa, autosave, voltar sem
 // perder dados, recarregar a página, falha de rede ao salvar e publicação.
@@ -75,6 +95,12 @@ test("organizador cria um evento pelo assistente passo a passo", async ({ page }
   await page.unroute("**/organizador/eventos/novo**");
   await page.getByRole("button", { name: "Tentar novamente" }).click();
   await waitSaved(page);
+  // Galeria no assistente: a foto é salva na hora, com a descrição informada.
+  const gallery = page.getByRole("region", { name: "Galeria de fotos (opcional)" });
+  await gallery.getByLabel("Descrição da nova foto (opcional)").fill("Palco principal");
+  await gallery.getByLabel("Foto", { exact: true }).setInputFiles({ name: "palco.png", mimeType: "image/png", buffer: solidPng(640) });
+  await expect(gallery.getByTestId("gallery-image")).toHaveCount(1);
+  await expect(gallery.getByTestId("gallery-image").getByRole("img")).toHaveAttribute("alt", "Palco principal");
   await next.click();
 
   // Etapa 5 → revisão.
@@ -83,6 +109,7 @@ test("organizador cria um evento pelo assistente passo a passo", async ({ page }
   await expect(page.getByRole("heading", { name: "Revisão e publicação" })).toBeVisible();
   await expect(page.getByRole("progressbar", { name: "Progresso do cadastro" })).toHaveAttribute("aria-valuenow", "100");
   await expect(page.getByText(title).first()).toBeVisible();
+  await expect(page.getByText("1 foto", { exact: true })).toBeVisible();
 
   // "Editar" leva direto à etapa; o indicador volta para a revisão.
   await page.getByRole("button", { name: "Editar ingressos e preços" }).click();
