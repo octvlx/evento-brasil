@@ -6,16 +6,14 @@
 // Só usa o Node e o npm: não precisa de `npm install`.
 import { spawnSync } from "node:child_process";
 
-/** Exceções. Remova a entrada assim que houver versão corrigida (e atualize o lockfile). */
-const ALLOWLIST = [
-  {
-    id: "GHSA-fc5q-39xc-vjpf",
-    package: "picomatch",
-    reason:
-      "ReDoS em picomatch <= 4.0.7, sem versão corrigida publicada. Só entra pelas ferramentas de desenvolvimento (ESLint, Vitest, Vite), que recebem padrões do próprio repositório; nunca pelo app em produção.",
-    until: "2027-01-31",
-  },
-];
+/**
+ * Exceções: { id: "GHSA-…", package, reason, until: "AAAA-MM-DD" }. Só para alerta sem
+ * versão corrigida e fora do app em produção; remova a entrada assim que houver correção
+ * (e atualize o lockfile). Vazia hoje: a do picomatch (GHSA-fc5q-39xc-vjpf) saiu quando o
+ * alerta foi retirado pelo GitHub em 2026-11-18.
+ * @type {{ id: string; package: string; reason: string; until: string }[]}
+ */
+const ALLOWLIST = [];
 
 const BLOCKING = new Set(["high", "critical"]);
 const today = new Date().toISOString().slice(0, 10);
