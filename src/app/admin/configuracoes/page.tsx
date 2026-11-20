@@ -4,6 +4,7 @@ import { Card, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
 import { CommissionRuleForm } from "@/features/admin/controls";
 import { db } from "@/server/db";
+import { getPaymentAdapter } from "@/server/payments";
 import { requireAdmin } from "@/server/auth/current";
 import { formatDateTimeShort } from "@/lib/datetime";
 
@@ -29,7 +30,7 @@ async function Content() {
       <PageTitle title="Comissões" subtitle="Regras versionadas: alterar cria uma nova versão; pedidos já feitos mantêm a política original." />
       <Card className="mb-6 p-6">
         <h2 className="mb-4 font-display text-lg font-bold">Nova versão de regra</h2>
-        <CommissionRuleForm orgs={orgs} events={events} />
+        <CommissionRuleForm orgs={orgs} events={events} commissionRetentionAvailable={getPaymentAdapter().isSimulated} />
       </Card>
       <div className="overflow-x-auto rounded-2xl border border-border">
         <table className="w-full min-w-[760px] text-sm">

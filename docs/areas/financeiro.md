@@ -469,7 +469,13 @@ reconciliação concorrente não duplica estornos.
      desconto do cupom) mais a taxa de serviço proporcional
      (`serviceFeePerUnitCents`).
    - **Comissão:** segue `refundCommissionOnRefund` da regra do pedido, aplicada
-     só à comissão dos ingressos devolvidos (`commissionPerUnitCents`).
+     só à comissão dos ingressos devolvidos (`commissionPerUnitCents`). **Só vale
+     com o provedor simulado:** no split do Mercado Pago o estorno devolve a
+     comissão da conta da plataforma, proporcionalmente, e o site não tem como
+     cobrá-la do organizador depois. Por isso, com pagamento real o razão sempre
+     lança a devolução da comissão (`commissionReturnedOnRefund`), o admin vê a
+     opção desabilitada e a página pública não promete retenção. Reter de verdade
+     exigiria um "a receber do organizador" e cobrança (fora do escopo, 2026-11-21).
    - **Estoque e meia-entrada:** como no reembolso integral, o ingresso devolvido
      não volta ao estoque nem libera vaga na cota de meia (`quantitySold` não
      desce; só `quantityRefunded` sobe). Devolver estoque seria uma mudança à parte,

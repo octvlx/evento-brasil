@@ -276,7 +276,16 @@ export function AdminActionButton({
   );
 }
 
-export function CommissionRuleForm({ orgs, events }: { orgs: { id: string; name: string }[]; events: { id: string; title: string }[] }) {
+export function CommissionRuleForm({
+  orgs,
+  events,
+  commissionRetentionAvailable,
+}: {
+  orgs: { id: string; name: string }[];
+  events: { id: string; title: string }[];
+  /** Só o provedor simulado consegue reter a comissão num reembolso (ver `commissionReturnedOnRefund`). */
+  commissionRetentionAvailable: boolean;
+}) {
   const [state, action, pending] = useActionState(saveCommissionRuleAction, undefined);
   const [scope, setScope] = useState("PLATFORM");
   const [percent, setPercent] = useState("7");
@@ -345,9 +354,24 @@ export function CommissionRuleForm({ orgs, events }: { orgs: { id: string; name:
           <option value="PLATFORM">Plataforma</option>
         </Select>
       </div>
-      <label className="flex items-center gap-2 text-sm sm:col-span-2">
-        <input type="checkbox" name="refundCommissionOnRefund" defaultChecked /> Devolver a comissão em reembolsos
-      </label>
+      {/* Campo desabilitado não vai no formulário: o servidor grava "devolver" nesse caso. */}
+      <div className="text-sm sm:col-span-2">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            name="refundCommissionOnRefund"
+            defaultChecked
+            disabled={!commissionRetentionAvailable}
+            aria-describedby={commissionRetentionAvailable ? undefined : "refund-commission-note"}
+          />{" "}
+          Devolver a comissão em reembolsos
+        </label>
+        {!commissionRetentionAvailable && (
+          <p id="refund-commission-note" className="mt-1 text-xs text-muted-foreground">
+            Com o Mercado Pago, o estorno sempre devolve a comissão da conta da plataforma, proporcionalmente. Por isso a comissão não pode ser retida.
+          </p>
+        )}
+      </div>
       <section aria-labelledby="commission-preview-title" className="rounded-2xl border border-border bg-muted/40 p-4 sm:col-span-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h3 id="commission-preview-title" className="text-sm font-bold">

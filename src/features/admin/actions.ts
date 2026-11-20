@@ -88,7 +88,8 @@ export async function saveCommissionRuleAction(_prev: ActionResult | undefined, 
     fixedCentsPerTicket: formData.get("fixedCentsPerTicket") || 0,
     bearer: formData.get("bearer"),
     processingFeeBearer: formData.get("processingFeeBearer"),
-    refundCommissionOnRefund: formData.get("refundCommissionOnRefund") === "on",
+    // Só o provedor simulado retém a comissão; com o Mercado Pago o estorno sempre a devolve.
+    refundCommissionOnRefund: !getPaymentAdapter().isSimulated || formData.get("refundCommissionOnRefund") === "on",
   });
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   const v = parsed.data;
