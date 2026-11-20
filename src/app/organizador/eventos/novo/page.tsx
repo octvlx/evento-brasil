@@ -4,17 +4,14 @@ import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Card, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
-import { EventWizard, type WizardEstimate } from "@/features/organizer/event-wizard";
+import { EventWizard } from "@/features/organizer/event-wizard";
 import { eventFormOptions } from "@/features/organizer/form-data";
-import { clampStep, DATA_STEPS, DEFAULT_REFUND_POLICY, firstIncompleteStep, splitAddressLine, WIZARD_STEPS, type WizardValues } from "@/features/organizer/wizard-steps";
-import { computeFees } from "@/features/fees/policy";
-import { limitPercentForForm } from "@/features/half-price/policy";
+import { BLANK_WIZARD_VALUES, clampStep, DATA_STEPS, firstIncompleteStep, WIZARD_STEPS } from "@/features/organizer/wizard-steps";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
-import { cityFormValue } from "@/server/services/cities";
-import { resolveCommissionRule } from "@/server/services/commission";
 import { getWizardProgress, isWizardComplete, wizardProgressByEvent } from "@/server/services/event-wizard-progress";
-import { formatDateTimeShort, utcToZonedLocalInput } from "@/lib/datetime";
+import { WIZARD_EVENT_INCLUDE, wizardPageData } from "@/server/services/event-wizard-page";
+import { formatDateTimeShort } from "@/lib/datetime";
 
 export const metadata: Metadata = {
   title: "Novo evento",
@@ -31,44 +28,7 @@ export default function NewEventPage({ searchParams }: PageProps<"/organizador/e
   );
 }
 
-const BLANK: WizardValues = {
-  title: "",
-  categoryId: "",
-  summary: "",
-  timezone: "America/Sao_Paulo",
-  startsAtLocal: "",
-  endsAtLocal: "",
-  locationType: "VENUE",
-  venueMode: "existing",
-  venueId: "",
-  newVenue: {
-    name: "",
-    street: "",
-    number: "",
-    complement: "",
-    district: "",
-    postalCode: "",
-    cityUf: "",
-    cityIbgeCode: "",
-    cityName: "",
-  },
-  onlineUrl: "",
-  capacity: "",
-  halfPriceQuotaPercent: "",
-  maxTicketsPerAccount: "",
-  salesStartLocal: "",
-  salesEndLocal: "",
-  description: "",
-  coverImageUrl: "",
-  ageRestriction: "0",
-  accessibilityInfo: "",
-  transferDeadlineHours: "24",
-  transferMaxTransfers: "1",
-  transferAllowReturn: false,
-  refundPolicy: DEFAULT_REFUND_POLICY,
-  refundWindowDays: "7",
-  refundMinHoursBeforeEvent: "48",
-};
+const BLANK = BLANK_WIZARD_VALUES;
 
 async function Content({ searchParams }: { searchParams: Search }) {
   const sp = await searchParams;
@@ -133,79 +93,14 @@ async function Content({ searchParams }: { searchParams: Search }) {
     );
   }
 
-  const event = await db.event.findFirst({
-    where: { id: sp.evento, organizationId: org.id },
-    include: {
-      ticketTypes: { orderBy: { sortOrder: "asc" } },
-      venue: { include: { city: true, _count: { select: { events: true } } } },
-    },
-  });
+  const event = await db.event.findFirst({ where: { id: sp.evento, organizationId: org.id }, include: WIZARD_EVENT_INCLUDE });
   if (!event) notFound();
   if (event.status !== "DRAFT") redirect(`/organizador/eventos/${event.id}/editar`);
   const progress = await getWizardProgress(db, event.id);
   // Rascunho criado fora do assistente: todos os dados já são reais.
   const completed = progress.tracked ? progress.completed : [...DATA_STEPS];
   const step = clampStep(Number(sp.etapa) || undefined, completed);
-  const tz = event.timezone;
-  const local = (d: Date) => utcToZonedLocalInput(d, tz);
-  const has = (s: number) => completed.includes(s as never);
-
-  // Local criado para este evento (só ele usa): editável como "novo local".
-  const ownVenue = event.venue && event.venue.organizationId === org.id && event.venue._count.events === 1 ? event.venue : null;
-  const initial: WizardValues = {
-    ...BLANK,
-    title: event.title,
-    categoryId: event.categoryId,
-    summary: event.summary ?? "",
-    // Etapas pendentes guardam valores provisórios no banco: não exibir.
-    timezone: has(2) ? tz : BLANK.timezone,
-    startsAtLocal: has(2) ? local(event.startsAt) : "",
-    endsAtLocal: has(2) ? local(event.endsAt) : "",
-    locationType: has(2) ? event.locationType : "VENUE",
-    venueMode: ownVenue || (!has(2) && !options.venues.length) ? "new" : "existing",
-    venueId: has(2) && event.venueId && !ownVenue ? event.venueId : "",
-    newVenue: ownVenue
-      ? {
-          ...splitAddressLine(ownVenue.addressLine ?? ""),
-          name: ownVenue.name,
-          district: ownVenue.district ?? "",
-          postalCode: ownVenue.postalCode ? ownVenue.postalCode.replace(/^(\d{5})(\d{3})$/, "$1-$2") : "",
-          ...cityFormValue(ownVenue.city),
-        }
-      : BLANK.newVenue,
-    onlineUrl: has(2) ? (event.onlineUrl ?? "") : "",
-    capacity: has(3) ? String(event.capacity) : "",
-    halfPriceQuotaPercent: has(3) && event.halfPriceQuotaBps !== null ? String(limitPercentForForm(event.halfPriceQuotaBps)) : "",
-    maxTicketsPerAccount: has(3) && event.maxTicketsPerAccount !== null ? String(event.maxTicketsPerAccount) : "",
-    // Sem a etapa 3, o período provisório (agora → início do evento) vira sugestão.
-    salesStartLocal: has(2) ? local(event.salesStartAt) : "",
-    salesEndLocal: has(2) ? local(event.salesEndAt) : "",
-    description: event.description,
-    coverImageUrl: event.coverImageUrl ?? "",
-    ageRestriction: String(event.ageRestriction),
-    accessibilityInfo: event.accessibilityInfo ?? "",
-    refundPolicy: event.refundPolicy,
-    transferDeadlineHours: String(event.transferDeadlineHours),
-    transferMaxTransfers: String(event.transferMaxTransfers),
-    transferAllowReturn: event.transferAllowReturn,
-    refundWindowDays: String(event.refundWindowDays),
-    refundMinHoursBeforeEvent: String(event.refundMinHoursBeforeEvent),
-  };
-
-  // Estimativa por ingresso com a regra de comissão vigente (mesmo cálculo do pedido).
-  const rule = await resolveCommissionRule(db, org.id, event.id).catch(() => null);
-  const estimates: Record<string, WizardEstimate> = {};
-  if (rule) {
-    for (const t of event.ticketTypes) {
-      if (t.priceCents === 0) continue;
-      const f = computeFees([{ ticketTypeId: t.id, unitPriceCents: t.priceCents, quantity: 1, halfPrice: t.kind === "HALF_PRICE" }], rule);
-      estimates[t.id] = {
-        buyerPaysCents: f.totalCents,
-        organizerGetsCents: f.organizerShareCents,
-        bearer: rule.bearer,
-      };
-    }
-  }
+  const data = await wizardPageData(db, org.id, event, completed, options.venues.length > 0);
 
   return (
     <>
@@ -217,25 +112,10 @@ async function Content({ searchParams }: { searchParams: Search }) {
         eventId={event.id}
         step={step}
         completed={completed}
-        initial={initial}
-        estimates={estimates}
-        ticketTypes={event.ticketTypes.map((t) => ({
-          id: t.id,
-          name: t.name,
-          description: t.description,
-          kind: t.kind,
-          priceCents: t.priceCents,
-          quantityTotal: t.quantityTotal,
-          quantitySold: t.quantitySold,
-          quantityReserved: t.quantityReserved,
-          quantityRefunded: t.quantityRefunded,
-          minPerOrder: t.minPerOrder,
-          maxPerOrder: t.maxPerOrder,
-          salesStartLocal: t.salesStartAt ? local(t.salesStartAt) : "",
-          salesEndLocal: t.salesEndAt ? local(t.salesEndAt) : "",
-          requiresAttendeeInfo: t.requiresAttendeeInfo,
-          isHidden: t.isHidden,
-        }))}
+        initial={data.initial}
+        estimates={data.estimates}
+        gallery={data.gallery}
+        ticketTypes={data.ticketTypes}
       />
     </>
   );

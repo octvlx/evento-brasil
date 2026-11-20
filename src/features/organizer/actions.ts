@@ -24,7 +24,8 @@ import { addEventImage, moveEventImage, removeEventImage, updateEventImageAlt } 
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
 import { lookupPostalAddress } from "@/server/services/postal-address";
-import { isDataStep, type DataStep, type WizardStep } from "./wizard-steps";
+import { isDataStep, wizardToEventInput, type DataStep, type WizardStep, type WizardValues } from "./wizard-steps";
+import { ZodError } from "zod";
 import {
   acceptInvitation,
   acceptOwnershipTransfer,
@@ -100,6 +101,26 @@ export async function saveEventAction(eventId: string | null, input: EventInput)
     const event = eventId ? await updateEvent(db, user, eventId, input) : await createEvent(db, user, await activeOrgId(user.id), input);
     return { id: event.id };
   });
+}
+
+/**
+ * Edição pelo assistente (evento já enviado/publicado): o formulário inteiro vai para
+ * `updateEvent`, com as mesmas regras da edição comum (alteração relevante exige
+ * motivo, limites com vendas). Erro de validação volta com a mensagem do campo.
+ */
+export async function saveEventFromWizardAction(eventId: string, values: WizardValues, changeReason?: string): Promise<ActionResult> {
+  const user = await requireUser(`/organizador/eventos/${eventId}/assistente`);
+  const res = await toActionResult(async () => {
+    try {
+      await updateEvent(db, user, String(eventId), wizardToEventInput(values, typeof changeReason === "string" ? changeReason : undefined));
+    } catch (err) {
+      if (err instanceof ZodError) throw new AppError("VALIDATION", err.issues[0]?.message ?? "Dados inválidos.");
+      throw err;
+    }
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
 }
 
 /** Prorroga a janela de reembolso de uma alteração relevante (prazo no horário local do evento). */
