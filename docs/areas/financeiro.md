@@ -450,7 +450,16 @@ reconciliação concorrente não duplica estornos.
 1. Integração real verificada (Mercado Pago), incluindo `findPaymentByReference`
    e cartão tokenizado no provedor — nenhuma transação com dinheiro real sem
    aprovação explícita.
-2. Outbox durável para notificações de pedido pago/reembolso.
+2. ~~Outbox durável para notificações de pedido pago/reembolso~~ — feito. Toda
+   notificação transacional entra no `EmailOutbox` na mesma transação da operação
+   (pedido pago e ingressos em `issueTicketsTx`, reembolso em `confirmRefundTx`,
+   evento cancelado/alterado, aprovação de reembolso, convites e transferência de
+   responsável); o cron (`dispatchEmailOutbox`) entrega com lease, retentativas e
+   janela de idempotência (`docs/EMAIL_SYSTEM.md`). O convite da equipe era o último
+   envio direto ao provedor (saía em dobro e uma falha virava erro para quem
+   convidou): agora só a fila envia. E-mail com link que deixou de valer (convite
+   reenviado/revogado, transferência substituída/cancelada/recusada) é cancelado na
+   fila (`cancelQueuedEmails`).
 3. ~~Reembolso parcial~~ — feito. ~~Etapa de aprovação~~ — feita (ver
    "Aprovação antes do reembolso"). Regras do parcial decididas pelo responsável
    do produto em 2026-11-14:
@@ -487,5 +496,5 @@ reconciliação concorrente não duplica estornos.
    `(status, nextRetryAt)` para não depender da contagem na auditoria.
 5. Logs: correlation id por pedido feito nos caminhos de erro financeiro
    (`financeLog`); faltam métricas e o mesmo padrão nos caminhos de sucesso.
-6. Notificar o comprador por e-mail quando o reembolso falhar/for restaurado
-   (depende do outbox, item 2).
+6. ~~Notificar o comprador por e-mail quando o reembolso falhar/for restaurado~~ —
+   feito (`enqueueRefundDelayedEmailTx`, `enqueueRefundRestoredEmailTx`).

@@ -92,6 +92,20 @@ export async function enqueueEmail(
     update: {},
   });
 }
+/**
+ * Cancela e-mails ainda na fila cujo link deixou de valer (convite reenviado ou
+ * revogado, transferência de responsável cancelada/recusada/substituída). Só QUEUED:
+ * um PROCESSING pode já ter saído e segue o fluxo normal. Apaga o conteúdo cifrado.
+ */
+export async function cancelQueuedEmails(client: Db | Tx, keys: { prefix: string } | string[], reason: string) {
+  if (Array.isArray(keys) && !keys.length) return 0;
+  const { count } = await client.emailOutbox.updateMany({
+    where: { status: "QUEUED", dedupeKey: Array.isArray(keys) ? { in: keys } : { startsWith: keys.prefix } },
+    data: { status: "CANCELLED", messageEncrypted: null, payloadEncrypted: null, errorCode: reason, leaseToken: null, lockedUntil: null },
+  });
+  return count;
+}
+
 export async function dispatchEmailOutbox(
   db: Db,
   opts: { limit?: number; ids?: string[]; adapter?: EmailAdapter } = {},

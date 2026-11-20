@@ -1,5 +1,5 @@
 import "server-only";
-import { enqueueEmail } from "../email/outbox";
+import { cancelQueuedEmails, enqueueEmail } from "../email/outbox";
 import { transactionalEmail } from "../email/templates";
 import { env } from "../env";
 import { inviteSchema, organizerApplicationSchema, type OrganizerApplicationInput } from "@/features/schemas";
@@ -424,6 +424,8 @@ export async function revokeInvitation(db: Db, actor: Actor, organizationId: str
       data: { revokedAt: new Date() },
     });
     if (count === 0) throw invalidState("Este convite já foi aceito ou revogado.");
+    // O e-mail ainda na fila levaria um link que não vale mais.
+    await cancelQueuedEmails(tx, { prefix: "invitation:" + inv.id }, "INVITATION_REVOKED");
     await audit(tx, {
       actorUserId: actor.id,
       organizationId,
@@ -454,7 +456,8 @@ export async function resendInvitation(db: Db, actor: Actor, organizationId: str
       entityId: inv.id,
       metadata: { email: inv.email, role: inv.role },
     });
-    await tx.emailOutbox.updateMany({ where: { recipient: inv.email, template: "ORGANIZER_INVITATION", status: "QUEUED", dedupeKey: { startsWith: "invitation:" + inv.id } }, data: { status: "CANCELLED", messageEncrypted: null } });
+    // O link anterior parou de valer: não envia o e-mail dele se ainda estiver na fila.
+    await cancelQueuedEmails(tx, { prefix: "invitation:" + inv.id }, "INVITATION_SUPERSEDED");
     await enqueueEmail(tx, { dedupeKey: "invitation:" + inv.id + ":" + hashToken(token), template: "ORGANIZER_INVITATION", recipient: inv.email, expiresAt, message: transactionalEmail("invitation", "Convite para a equipe", ["Um novo convite foi emitido. O link anterior não pode mais ser utilizado."], env().APP_URL + "/convite/" + token) });
     return { invitation: { ...inv, expiresAt }, token };
   });
@@ -643,7 +646,9 @@ export async function requestOwnershipTransfer(db: Db, actor: Actor, organizatio
     if (!target) throw notFound("Membro não encontrado.");
     if (target.role === "OWNER") throw new AppError("VALIDATION", "Este membro já é responsável pela organização.");
     if (target.user.status !== "ACTIVE") throw new AppError("VALIDATION", "Esta conta está suspensa.");
+    const replaced = await tx.organizationOwnershipTransfer.findMany({ where: { organizationId, status: "PENDING" }, select: { id: true } });
     await tx.organizationOwnershipTransfer.updateMany({ where: { organizationId, status: "PENDING" }, data: { status: "CANCELLED", decidedAt: now } });
+    await cancelQueuedEmails(tx, replaced.map((r) => "ownership:" + r.id), "OWNERSHIP_TRANSFER_SUPERSEDED");
     const transfer = await tx.organizationOwnershipTransfer.create({
       data: { organizationId, fromUserId: actor.id, toUserId, tokenHash: hashToken(token), expiresAt: new Date(now.getTime() + OWNERSHIP_TRANSFER_TTL_MS) },
     });
@@ -755,6 +760,7 @@ export async function declineOwnershipTransfer(db: Db, actor: Actor, token: stri
     if (!t || t.toUserId !== actor.id) throw transferGone();
     const { count } = await tx.organizationOwnershipTransfer.updateMany({ where: { id: t.id, ...liveTransfer(now) }, data: { status: "DECLINED", decidedAt: now } });
     if (count !== 1) throw transferGone();
+    await cancelQueuedEmails(tx, ["ownership:" + t.id], "OWNERSHIP_TRANSFER_DECLINED");
     await audit(tx, { actorUserId: actor.id, organizationId: t.organizationId, action: "organization.ownership_transfer_declined", entityType: "OrganizationOwnershipTransfer", entityId: t.id });
   });
 }
@@ -767,6 +773,7 @@ export async function cancelOwnershipTransfer(db: Db, actor: Actor, organization
     const t = await tx.organizationOwnershipTransfer.findFirst({ where: { organizationId, status: "PENDING" } });
     if (!t) throw notFound("Não há transferência pendente.");
     await tx.organizationOwnershipTransfer.update({ where: { id: t.id }, data: { status: "CANCELLED", decidedAt: now } });
+    await cancelQueuedEmails(tx, ["ownership:" + t.id], "OWNERSHIP_TRANSFER_CANCELLED");
     await audit(tx, { actorUserId: actor.id, organizationId, action: "organization.ownership_transfer_cancelled", entityType: "OrganizationOwnershipTransfer", entityId: t.id });
   });
 }
