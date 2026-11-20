@@ -12,7 +12,7 @@ import { ACTIVE_ORG_COOKIE, getActiveMembership, requireUser } from "@/server/au
 import { assertOrgPermission } from "@/server/auth/permissions";
 import { rateLimit } from "@/server/rate-limit";
 import { getPaymentAdapter } from "@/server/payments";
-import { getEmailAdapter, escapeHtml } from "@/server/email";
+import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
 import { createCoupon, createOrganizationCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
@@ -292,28 +292,27 @@ export async function updateOrgProfileAction(_prev: ActionResult | undefined, fo
   });
 }
 
-async function sendInvitationEmail(orgId: string, email: string, token: string) {
-  const link = `${env().APP_URL}/convite/${token}`;
-  const org = await db.organization.findUniqueOrThrow({ where: { id: orgId }, select: { name: true } });
-  await getEmailAdapter().send({
-    to: email,
-    subject: `Convite para a equipe de ${org.name}`,
-    html: `<p>Você foi convidado(a) para a equipe de <strong>${escapeHtml(org.name)}</strong> na QQPega.</p><p><a href="${link}">Aceitar convite</a> (válido por 7 dias)</p>`,
-    text: `Aceite o convite: ${link}`,
-  });
-  return link;
+/**
+ * O e-mail do convite já entrou na fila (EmailOutbox) na mesma transação do convite
+ * (inviteMember/resendInvitation): aqui só adianta o envio. Uma falha no provedor fica
+ * para as retentativas do cron e não vira erro para quem convidou; o link volta para a
+ * tela de qualquer jeito.
+ */
+function invitationLink(token: string) {
+  if (process.env.NODE_ENV !== "test") void dispatchEmailOutbox(db, { limit: 5 }).catch(() => {});
+  return `${env().APP_URL}/convite/${token}`;
 }
 
 export async function inviteMemberAction(_prev: ActionResult<{ link: string }> | undefined, formData: FormData): Promise<ActionResult<{ link: string }>> {
   const user = await requireUser("/organizador/equipe");
   const res = await toActionResult(async () => {
     const orgId = await activeOrgId(user.id);
-    const { invitation, token } = await inviteMember(db, user, orgId, {
+    const { token } = await inviteMember(db, user, orgId, {
       email: formData.get("email"),
       role: formData.get("role"),
       eventId: formData.get("eventId") || undefined,
     });
-    return { link: await sendInvitationEmail(orgId, invitation.email, token) };
+    return { link: invitationLink(token) };
   });
   if (res.ok) refresh();
   return res;
@@ -325,8 +324,8 @@ export async function resendInvitationAction(invitationId: string): Promise<Acti
   const res = await toActionResult(async () => {
     await rateLimit(`invite-resend:${user.id}`, 20, 60 * 60_000);
     const orgId = await activeOrgId(user.id);
-    const { invitation, token } = await resendInvitation(db, user, orgId, invitationId);
-    return { link: await sendInvitationEmail(orgId, invitation.email, token) };
+    const { token } = await resendInvitation(db, user, orgId, invitationId);
+    return { link: invitationLink(token) };
   });
   if (res.ok) refresh();
   return res;
