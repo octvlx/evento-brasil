@@ -73,6 +73,43 @@ test("compra com PIX simulado → ingresso com QR → check-in → leitura dupli
   await expect(buyer.getByText("Ingresso já utilizado")).toBeVisible();
 });
 
+test("ingresso reembolsado: a portaria recusa como CANCELADO/REEMBOLSADO e registra a leitura", async ({ browser }) => {
+  const buyer = await (await browser.newContext()).newPage();
+  await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
+  await buyer.locator("li").filter({ hasText: "Lote promocional" }).getByRole("button", { name: "Aumentar" }).click();
+  await buyer.getByRole("button", { name: "Continuar para revisão" }).click();
+  await proceedThroughReview(buyer);
+  await buyer.getByRole("button", { name: "Gerar PIX" }).click();
+  await buyer.getByRole("button", { name: "Aprovar PIX" }).click();
+  await buyer.waitForURL(/\/pedido\//);
+  const code = (await buyer.locator('a[href^="/ingressos/"]').first().getAttribute("href"))!.split("/").pop()!;
+  const { payload, eventId } = await qrPayloadFor(code);
+
+  // O comprador pede o reembolso (dentro da política do evento): o ingresso é cancelado.
+  await buyer.getByRole("button", { name: "Solicitar reembolso" }).click();
+  await buyer.getByRole("button", { name: "Sim, reembolsar" }).click();
+  await expect(buyer.getByText("Reembolso concluído.")).toBeVisible();
+
+  // A portaria lê o QR antigo: recusado, sem liberar a entrada.
+  const staff = await (await browser.newContext()).newPage();
+  await openScanner(staff, USERS.producer, eventId);
+  const input = staff.getByPlaceholder(/Colar conteúdo do QR/);
+  const result = (text: string) => staff.getByRole("alert").filter({ hasText: text });
+  await input.fill(payload);
+  await staff.getByRole("button", { name: "Validar" }).click();
+  await expect(result("Ingresso CANCELADO/REEMBOLSADO")).toBeVisible();
+  await expect(staff.getByRole("alert").filter({ hasText: "Entrada liberada" })).toHaveCount(0);
+  // A leitura recusada fica no histórico da portaria.
+  const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+  const { rows } = await db.query(
+    `SELECT c.result FROM "TicketCheckin" c JOIN "IssuedTicket" t ON t.id = c."ticketId" WHERE t.code = $1 ORDER BY c."scannedAt" DESC LIMIT 1`,
+    [code],
+  );
+  await db.end();
+  expect(rows[0]?.result).toBe("REVOKED");
+});
+
 test("meia-entrada: a portaria vê o aviso para exigir o documento, também no duplicado", async ({ browser }) => {
   const buyer = await (await browser.newContext()).newPage();
   await login(buyer, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
