@@ -107,14 +107,26 @@ export async function listMyOrganizations(db: Db, actor: Actor) {
   return memberships.map((m) => ({ role: m.role, joinedAt: m.createdAt, ...m.organization }));
 }
 
-/** Reenvio após rejeição (ou complemento de cadastro em rascunho). */
+/**
+ * Reenvio após rejeição (ou complemento de cadastro em rascunho). Travas na ordem
+ * User → Organization (a mesma da exclusão de conta): os OWNERs (limite de cadastros
+ * em análise) e depois a organização, que serializa o reenvio com as decisões do
+ * admin (`lockOrganization`) e com as mudanças de equipe (`lockOrganizationTeam`).
+ * Permissão, status e OWNERs são conferidos de novo sob a trava.
+ */
 export async function resubmitOrganizerApplication(db: Db, actor: Actor, organizationId: string, raw: OrganizerApplicationInput) {
   await assertOrgPermission(db, actor, organizationId, "org:manage");
   const input = organizerApplicationSchema.parse(raw);
   return db.$transaction(async (tx) => {
-    const owners = await tx.organizationMember.findMany({ where: { organizationId, role: "OWNER" }, select: { userId: true } });
-    await assertPendingCapacity(tx, owners.map(owner => owner.userId));
-    const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId } });
+    const ownerIds = async () =>
+      (await tx.organizationMember.findMany({ where: { organizationId, role: "OWNER" }, select: { userId: true } })).map((o) => o.userId).sort();
+    const owners = await ownerIds();
+    await assertPendingCapacity(tx, owners);
+    const org = await lockOrganization(tx, organizationId);
+    if (!org) throw notFound();
+    await assertOrgPermission(tx, actor, organizationId, "org:manage");
+    // A equipe mudou entre a leitura e a trava: um OWNER novo não teve o limite conferido.
+    if ((await ownerIds()).join() !== owners.join()) throw new AppError("CONFLICT", "A equipe da organização mudou agora há pouco. Tente enviar de novo.");
     if (org.status !== "REJECTED" && org.status !== "DRAFT") throw invalidState("Esta organização não está aguardando reenvio.");
     const updated = await tx.organization.update({
       where: { id: organizationId },

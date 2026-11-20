@@ -3,10 +3,11 @@
 // passam pelos serviços de domínio (cancellation-requests, refunds), que
 // continuam sendo a fonte da verdade.
 import "server-only";
-import type { CancellationRequestStatus, Prisma, TicketTransferStatus } from "@/generated/prisma/client";
+import type { CancellationRequestStatus, OrderStatus, Prisma, TicketTransferStatus } from "@/generated/prisma/client";
 import type { Db } from "../db";
 import { assertPlatformAdmin, type Actor, assertAdminPermission } from "../auth/permissions";
 import { notFound } from "../errors";
+import { checkFinancialInvariants } from "./reconciliation";
 import { AWAITING_REFUND_WHERE, openChangeRefundWindow, refundEligibility } from "./refunds";
 import { audit } from "../audit";
 import { formatDateTimeShort } from "@/lib/datetime";
@@ -403,4 +404,124 @@ export function auditLogsToCsv(items: Awaited<ReturnType<typeof exportAuditLogs>
   }
   if (truncated) rows.push([`Exportação limitada a ${AUDIT_EXPORT_LIMIT} registros; estreite os filtros para ver o restante.`]);
   return toCsv(rows);
+}
+
+// ───────────────────────────── Pedidos e pagamentos ─────────────────────────────
+
+/**
+ * Pagamentos que exigem alguém olhar: nenhum se resolve sozinho. Valor divergente e
+ * duplicidade esperam reembolso manual enquanto seguem pagos; sem vínculo com o
+ * provedor é a cobrança que ficou sem id (a reconciliação não consegue consultar).
+ */
+export const PAYMENT_REVIEW_REASONS = {
+  AMOUNT_MISMATCH: "Valor pago diferente do pedido: reembolsar a diferença ou o pagamento",
+  DUPLICATE_PAYMENT_REQUIRES_REFUND: "Pagamento em duplicidade: reembolsar manualmente no provedor",
+  PROVIDER_LINK_MISSING: "Cobrança sem id do provedor: conferir no painel do provedor pela referência",
+} as const;
+
+export const PAYMENT_REVIEW_WHERE: Prisma.PaymentWhereInput = {
+  OR: [
+    { failureReason: { in: ["AMOUNT_MISMATCH", "DUPLICATE_PAYMENT_REQUIRES_REFUND"] }, status: "PAID" },
+    { failureReason: "PROVIDER_LINK_MISSING", status: "PENDING" },
+  ],
+};
+
+export async function listPaymentsForReview(db: Db, admin: Actor) {
+  assertAdminPermission(admin, "finance:refunds");
+  return db.payment.findMany({
+    where: PAYMENT_REVIEW_WHERE,
+    select: {
+      id: true,
+      provider: true,
+      providerPaymentId: true,
+      idempotencyKey: true,
+      method: true,
+      status: true,
+      amountCents: true,
+      failureReason: true,
+      createdAt: true,
+      order: { select: { publicCode: true } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: 200,
+  });
+}
+
+/** Invariantes financeiros (os mesmos do cron), lidos na hora para a tela do admin. */
+export async function adminFinancialChecks(db: Db, admin: Actor) {
+  assertAdminPermission(admin, "finance:refunds");
+  return checkFinancialInvariants(db);
+}
+
+const ORDER_STATUSES: readonly OrderStatus[] = ["PENDING_PAYMENT", "PAID", "PAYMENT_FAILED", "EXPIRED", "CANCELLED", "REFUND_PENDING", "REFUNDED", "DISPUTED"];
+
+export function parseOrderStatus(raw: unknown): OrderStatus | undefined {
+  return ORDER_STATUSES.find((s) => s === raw);
+}
+
+/** Pedidos (mais recentes primeiro), por código, e-mail do comprador ou título do evento. */
+export async function listAdminOrders(db: Db, admin: Actor, opts: { q?: string; status?: OrderStatus; page?: number } = {}) {
+  assertAdminPermission(admin, "finance:refunds");
+  const q = opts.q?.trim().slice(0, 200) ?? "";
+  const where: Prisma.OrderWhereInput = {
+    ...(opts.status ? { status: opts.status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { publicCode: q.toUpperCase() },
+            { buyerEmail: { contains: q, mode: "insensitive" } },
+            { event: { title: { contains: q, mode: "insensitive" } } },
+          ],
+        }
+      : {}),
+  };
+  const total = await db.order.count({ where });
+  const p = paging(opts.page ?? 1, total);
+  const items = await db.order.findMany({
+    where,
+    include: {
+      event: { select: { title: true } },
+      organization: { select: { name: true } },
+      payments: { orderBy: { createdAt: "desc" } },
+      // Ingressos que ainda podem entrar num reembolso parcial.
+      tickets: {
+        where: { status: "VALID", refundId: null },
+        select: { id: true, holderName: true, ticketType: { select: { name: true } }, orderItem: { select: { unitPriceCents: true, serviceFeePerUnitCents: true } } },
+        orderBy: [{ orderItemId: "asc" }, { sequence: "asc" }],
+      },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    skip: p.skip,
+    take: p.take,
+  });
+  return { items, total, page: p.page, pageCount: p.pageCount, q, status: opts.status };
+}
+
+export async function listAdminRefunds(db: Db, admin: Actor, opts: { page?: number } = {}) {
+  assertAdminPermission(admin, "finance:refunds");
+  const total = await db.refund.count();
+  const p = paging(opts.page ?? 1, total);
+  const items = await db.refund.findMany({
+    include: { order: { select: { publicCode: true } } },
+    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    skip: p.skip,
+    take: p.take,
+  });
+  return { items, total, page: p.page, pageCount: p.pageCount };
+}
+
+/** Webhooks recebidos; `pendingOnly` mostra só os que ainda não foram processados. */
+export async function listWebhookEvents(db: Db, admin: Actor, opts: { page?: number; pendingOnly?: boolean } = {}) {
+  assertAdminPermission(admin, "finance:refunds");
+  const where: Prisma.PaymentWebhookEventWhereInput = opts.pendingOnly ? { processedAt: null } : {};
+  const total = await db.paymentWebhookEvent.count({ where });
+  const p = paging(opts.page ?? 1, total);
+  const items = await db.paymentWebhookEvent.findMany({
+    where,
+    select: { id: true, provider: true, eventType: true, receivedAt: true, processedAt: true, processingResult: true, error: true, attempts: true },
+    orderBy: [{ receivedAt: "desc" }, { id: "asc" }],
+    skip: p.skip,
+    take: p.take,
+  });
+  return { items, total, page: p.page, pageCount: p.pageCount, pendingOnly: !!opts.pendingOnly };
 }

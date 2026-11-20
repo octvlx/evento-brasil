@@ -41,7 +41,7 @@ const minutesAgo = (now: Date, m: number) => new Date(now.getTime() - m * 60_000
 /** Problemas abertos agora. Lista vazia = tudo certo. `invariantViolations` vem do cron. */
 export async function operationalHealth(db: Db, now = new Date(), invariantViolations: { code: string; ids: string[] }[] = []): Promise<HealthCheck[]> {
   const T = HEALTH_THRESHOLDS;
-  const [webhooks, failedRefunds, processing, flagged, emails] = await Promise.all([
+  const [webhooks, failedRefunds, processing, flagged, unlinked, emails] = await Promise.all([
     db.paymentWebhookEvent.aggregate({
       where: { processedAt: null, receivedAt: { lte: minutesAgo(now, T.webhookStuckMinutes) } },
       _count: { _all: true },
@@ -61,6 +61,12 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
       _count: { _all: true },
       _min: { updatedAt: true },
     }),
+    // A reconciliação marca a cobrança sem id do provedor quando não consegue consultá-la.
+    db.payment.aggregate({
+      where: { failureReason: "PROVIDER_LINK_MISSING", status: "PENDING" },
+      _count: { _all: true },
+      _min: { createdAt: true },
+    }),
     db.emailOutbox.aggregate({
       where: { status: { in: ["FAILED", "UNKNOWN"] }, updatedAt: { gte: minutesAgo(now, T.emailFailureWindowHours * 60) } },
       _count: { _all: true },
@@ -78,7 +84,7 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
     title: "Invariantes financeiros violados (razão, estoque ou reembolso inconsistentes)",
     count: invariantViolations.reduce((s, v) => s + v.ids.length, 0),
     oldestAt: null,
-    href: "/admin/pagamentos",
+    href: "/admin/pagamentos#verificacoes",
   });
   add({
     code: "REFUND_AWAITING_ADMIN",
@@ -103,6 +109,14 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
     count: flagged._count._all,
     oldestAt: flagged._min.updatedAt,
     href: "/admin/pagamentos",
+  });
+  add({
+    code: "PAYMENT_PROVIDER_LINK_MISSING",
+    severity: "warning",
+    title: "Cobranças sem vínculo com o provedor (conferir no painel do provedor)",
+    count: unlinked._count._all,
+    oldestAt: unlinked._min.createdAt,
+    href: "/admin/pagamentos#pagamentos-em-analise",
   });
   add({
     code: "REFUND_STUCK_PROCESSING",
