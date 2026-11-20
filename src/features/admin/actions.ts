@@ -5,6 +5,7 @@ import { commissionRuleInputSchema } from "@/features/schemas";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
+import { assertAdminPermission } from "@/server/auth/permissions";
 import { getPaymentAdapter } from "@/server/payments";
 import { cancelEvent } from "@/server/services/cancellation";
 import { setCommissionRule } from "@/server/services/commission";
@@ -67,7 +68,11 @@ export const deleteUserAccountAction = async (id: string, confirmEmail: string, 
 export const adminRefundAction =async (orderId: string, note?: string) => run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, note ?? ""));
 export const adminPartialRefundAction = async (orderId: string, ticketIds: string[], note: string) =>
   run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, String(note ?? ""), Array.isArray(ticketIds) ? ticketIds.map(String).slice(0, 200) : []));
-export const retryRefundAction = async (refundId: string) => run(() => processRefund(db, getPaymentAdapter(), refundId));
+export const retryRefundAction = async (refundId: string) =>
+  run((a) => {
+    assertAdminPermission(a, "finance:refunds");
+    return processRefund(db, getPaymentAdapter(), refundId);
+  });
 
 export async function saveCommissionRuleAction(_prev: ActionResult | undefined, formData: FormData): Promise<ActionResult> {
   const parsed = commissionRuleInputSchema.safeParse({

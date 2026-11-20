@@ -219,7 +219,7 @@ export async function adminAccountDeletionCheck(client: Db | Tx, userId: string,
       client.event.count({ where: { organizationId: org.id, status: { in: ["PUBLISHED", "PENDING_REVIEW"] }, endsAt: { gt: now } } }),
       client.issuedTicket.count({ where: { status: "VALID", event: { organizationId: org.id, endsAt: { gt: now } } } }),
       client.order.count({ where: { organizationId: org.id, status: { in: [...OPEN_ORDER_STATUSES] } } }),
-      client.refund.count({ where: { order: { organizationId: org.id }, status: { in: ["REQUESTED", "PROCESSING", "FAILED"] } } }),
+      client.refund.count({ where: { order: { organizationId: org.id }, status: { in: ["AWAITING_APPROVAL", "REQUESTED", "PROCESSING", "FAILED"] } } }),
       client.organizerSettlement.count({ where: { organizationId: org.id, status: { in: ["PENDING", "IN_TRANSIT", "FAILED"] } } }),
       client.cancellationRequest.count({ where: { organizationId: org.id, status: "OPEN" } }),
     ]);

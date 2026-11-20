@@ -5,11 +5,18 @@
 // preço pago (com desconto) + taxa de serviço; a comissão segue a regra do pedido.
 // Regras em docs/areas/financeiro.md (Pendências, item 3).
 import "server-only";
-import { enqueueRefundDelayedEmailTx, enqueueRefundEmailTx, enqueueRefundRestoredEmailTx } from "../email/events";
+import {
+  enqueueRefundApprovalRejectedEmailTx,
+  enqueueRefundApprovalRequestedEmailsTx,
+  enqueueRefundDelayedEmailTx,
+  enqueueRefundEmailTx,
+  enqueueRefundRestoredEmailTx,
+} from "../email/events";
 import type { Prisma, RefundReason, RefundStatus } from "@/generated/prisma/client";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { audit } from "../audit";
-import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
+import { adminHas } from "../auth/admin-roles";
+import { assertActive, assertOrgPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { financeLog } from "./finance-log";
@@ -122,7 +129,15 @@ async function committedRefundCents(client: Db | Tx, orderId: string, statuses: 
 export class OverRefundError extends Error {}
 
 /** Reembolsos ainda não terminados: enquanto existir um, o pedido não aceita outro. */
-const OPEN_REFUND_STATUSES: RefundStatus[] = ["REQUESTED", "PROCESSING", "FAILED"];
+export const OPEN_REFUND_STATUSES: RefundStatus[] = ["AWAITING_APPROVAL", "REQUESTED", "PROCESSING", "FAILED"];
+
+/**
+ * Reembolso manual do admin ACIMA deste valor (centavos) espera aprovação antes do
+ * estorno: do organizador (OWNER ou FINANCE) ou de outro admin financeiro, nunca de
+ * quem pediu. Os ingressos ficam bloqueados enquanto isso. O pedido do comprador
+ * dentro da política, alteração e cancelamento de evento seguem automáticos.
+ */
+export const REFUND_APPROVAL_THRESHOLD_CENTS = 50_000;
 
 /**
  * Reembolsos FAILED que aguardam reprocessamento ou decisão do admin: integrais
@@ -189,6 +204,8 @@ export interface RefundRequestLinks {
   note?: string;
   eventChangeId?: string;
   cancellationRequestId?: string;
+  /** Acima deste valor o reembolso nasce em AWAITING_APPROVAL (não vai ao provedor). */
+  approvalAboveCents?: number;
 }
 
 /**
@@ -241,6 +258,7 @@ export async function createRefundRequestTx(
     const rejected = await tx.refund.count({ where: { orderId, reason, status: "REJECTED", partial: false } });
     key = `refund:${orderId}:${reason.toLowerCase()}${rejected ? `:${rejected + 1}` : ""}`;
   }
+  const awaitingApproval = links.approvalAboveCents !== undefined && amountCents > links.approvalAboveCents;
   const refund = await tx.refund.upsert({
     where: { idempotencyKey: key },
     create: {
@@ -248,6 +266,7 @@ export async function createRefundRequestTx(
       paymentId: order.payments[0]?.id ?? null,
       amountCents,
       partial,
+      ...(awaitingApproval ? { status: "AWAITING_APPROVAL" as const, approvalRequired: true } : {}),
       reason,
       requestedById,
       note: links.note,
@@ -279,12 +298,15 @@ export async function createRefundRequestTx(
     entityId: refund.id,
     metadata: {
       reason,
+      ...(refund.status === "AWAITING_APPROVAL" ? { awaitingApproval: true, amountCents } : {}),
       ...(partial ? { partial: true, tickets: selected.length } : {}),
       ...(transfersClosed ? { transfersClosed } : {}),
       ...(links.eventChangeId ? { eventChangeId: links.eventChangeId } : {}),
       ...(links.cancellationRequestId ? { cancellationRequestId: links.cancellationRequestId } : {}),
     },
   });
+  // Ingressos já bloqueados: avisa quem aprova e o comprador (que ainda não recebeu nada).
+  if (refund.status === "AWAITING_APPROVAL") await enqueueRefundApprovalRequestedEmailsTx(tx, refund.id);
   return refund;
 }
 
@@ -321,13 +343,167 @@ export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdap
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
 }
 
-/** Reembolso pelo admin: o pedido inteiro ou, com `ticketIds`, só esses ingressos (não usados). */
+/**
+ * Reembolso pelo admin: o pedido inteiro ou, com `ticketIds`, só esses ingressos (não usados).
+ * Acima de `REFUND_APPROVAL_THRESHOLD_CENTS` fica aguardando aprovação (`decideRefundApproval`):
+ * os ingressos são bloqueados já, mas nada vai ao provedor até a aprovação.
+ */
 export async function adminRefundOrder(db: Db, adapter: PaymentProviderAdapter, admin: Actor, orderId: string, note: string, ticketIds?: string[]) {
   assertAdminPermission(admin, "finance:refunds");
   if (!note.trim()) throw new AppError("VALIDATION", "Informe o motivo do reembolso.");
-  const refund = await createRefundRequest(db, orderId, "ADMIN", admin.id, { note }, ticketIds);
+  const refund = await createRefundRequest(db, orderId, "ADMIN", admin.id, { note, approvalAboveCents: REFUND_APPROVAL_THRESHOLD_CENTS }, ticketIds);
+  if (refund.status === "AWAITING_APPROVAL") return refund;
   await processRefund(db, adapter, refund.id);
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
+}
+
+// ───────────────────────────── Aprovação antes do reembolso ─────────────────────────────
+
+/**
+ * Quem pode decidir um reembolso aguardando aprovação: OWNER ou FINANCE da
+ * organização do pedido, ou admin com `finance:refunds`. Nunca quem pediu o
+ * reembolso, nem por outro caminho (admin que também é dono da organização).
+ */
+async function assertCanDecideApproval(client: Db | Tx, actor: Actor, refund: { requestedById: string | null; order: { organizationId: string } }) {
+  assertActive(actor);
+  if (refund.requestedById === actor.id) throw forbidden("Quem pediu o reembolso não pode aprová-lo nem recusá-lo.");
+  if (actor.platformRole === "ADMIN" && adminHas(actor.adminRoles, "finance:refunds")) return assertAdminPermission(actor, "finance:refunds");
+  await assertOrgPermission(client, actor, refund.order.organizationId, "refunds:approve");
+}
+
+export type ApprovalDecision = "APPROVE" | "REJECT";
+
+/**
+ * Aprova ou recusa um reembolso em AWAITING_APPROVAL. Sob as travas do evento e do
+ * pedido, com transição condicional: duas decisões simultâneas não passam juntas.
+ * Aprovar: vira REQUESTED e vai ao provedor (fluxo normal, com retentativas).
+ * Recusar: vira REJECTED, os ingressos bloqueados voltam a valer e o pedido volta a
+ * PAID; o comprador recebe e-mail. Contadores e razão não mudam (só a confirmação os grava).
+ */
+export async function decideRefundApproval(
+  db: Db,
+  adapter: PaymentProviderAdapter,
+  actor: Actor,
+  refundId: string,
+  decision: ApprovalDecision,
+  note: string,
+  now = new Date(),
+) {
+  const text = note.trim().slice(0, 500);
+  if (decision === "REJECT" && !text) throw new AppError("VALIDATION", "Informe o motivo da recusa.");
+  const found = await db.refund.findUnique({ where: { id: refundId }, select: { requestedById: true, order: { select: { organizationId: true } } } });
+  if (!found) throw notFound("Reembolso não encontrado.");
+  await assertCanDecideApproval(db, actor, found);
+
+  const restoredTickets = await db.$transaction(async (tx) => {
+    const ref = await tx.refund.findUniqueOrThrow({ where: { id: refundId }, select: { orderId: true, order: { select: { eventId: true } } } });
+    await lockEvent(tx, ref.order.eventId);
+    await lockOrder(tx, ref.orderId);
+    const refund = await tx.refund.findUniqueOrThrow({ where: { id: refundId }, include: { order: { select: { status: true, organizationId: true } } } });
+    // Sob a trava: a equipe ou o papel podem ter mudado desde a primeira conferência.
+    await assertCanDecideApproval(tx, actor, refund);
+    const decided = { approvalDecidedById: actor.id, approvalDecidedAt: now, approvalNote: text || null };
+    const claimed = await tx.refund.updateMany({
+      where: { id: refundId, status: "AWAITING_APPROVAL" },
+      data: decision === "APPROVE" ? { status: "REQUESTED", ...decided } : { status: "REJECTED", processedAt: now, ...decided },
+    });
+    if (!claimed.count) throw invalidState("Este reembolso já foi decidido; atualize a página.");
+    const base = { actorUserId: actor.id, organizationId: refund.order.organizationId, entityType: "Refund", entityId: refundId };
+    if (decision === "APPROVE") {
+      await audit(tx, { ...base, action: "refund.approved", metadata: { orderId: refund.orderId, amountCents: refund.amountCents, note: text || null } });
+      return 0;
+    }
+    // Só os ingressos deste reembolso: os de reembolsos já concluídos continuam cancelados.
+    const tickets = await tx.issuedTicket.updateMany({
+      where: { refundId, status: "REVOKED", revocationReason: "REFUNDED" },
+      data: { status: "VALID", revokedAt: null, revocationReason: null },
+    });
+    await tx.issuedTicket.updateMany({ where: { refundId }, data: { refundId: null } });
+    if (refund.order.status === "REFUND_PENDING") await tx.order.update({ where: { id: refund.orderId }, data: { status: "PAID" } });
+    await audit(tx, { ...base, action: "refund.approval_rejected", metadata: { orderId: refund.orderId, amountCents: refund.amountCents, note: text, restoredTickets: tickets.count } });
+    await enqueueRefundApprovalRejectedEmailTx(tx, refundId);
+    return tickets.count;
+  }, TX_OPTIONS);
+
+  financeLog("info", decision === "APPROVE" ? "refund.approved" : "refund.approval_rejected", { refundId }, { actorId: actor.id, restoredTickets });
+  if (decision === "APPROVE") await processRefund(db, adapter, refundId);
+  return db.refund.findUniqueOrThrow({ where: { id: refundId } });
+}
+
+export interface PendingApprovalView {
+  refundId: string;
+  orderId: string;
+  orderPublicCode: string;
+  buyerEmail: string;
+  eventTitle: string;
+  organizationName: string;
+  amountCents: number;
+  partial: boolean;
+  tickets: number;
+  note: string | null;
+  requestedByEmail: string | null;
+  requestedById: string | null;
+  requestedAt: Date;
+}
+
+async function pendingApprovals(client: Db | Tx, where: Prisma.RefundWhereInput): Promise<PendingApprovalView[]> {
+  const rows = await client.refund.findMany({
+    where: { ...where, status: "AWAITING_APPROVAL" },
+    include: {
+      order: { select: { publicCode: true, buyerEmail: true, event: { select: { title: true } }, organization: { select: { name: true } } } },
+      _count: { select: { tickets: true } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: 200,
+  });
+  const requesters = await client.user.findMany({ where: { id: { in: rows.flatMap((r) => (r.requestedById ? [r.requestedById] : [])) } }, select: { id: true, email: true } });
+  const emailById = new Map(requesters.map((u) => [u.id, u.email]));
+  return rows.map((r) => ({
+    refundId: r.id,
+    orderId: r.orderId,
+    orderPublicCode: r.order.publicCode,
+    buyerEmail: r.order.buyerEmail,
+    eventTitle: r.order.event.title,
+    organizationName: r.order.organization.name,
+    amountCents: r.amountCents,
+    partial: r.partial,
+    tickets: r._count.tickets,
+    note: r.note,
+    requestedByEmail: r.requestedById ? (emailById.get(r.requestedById) ?? null) : null,
+    requestedById: r.requestedById,
+    requestedAt: r.createdAt,
+  }));
+}
+
+/** Fila da organização (OWNER/FINANCE): reembolsos do admin aguardando a decisão dela. */
+export async function listOrgPendingApprovals(db: Db, actor: Actor, organizationId: string) {
+  await assertOrgPermission(db, actor, organizationId, "refunds:approve");
+  return pendingApprovals(db, { order: { organizationId } });
+}
+
+/** Fila do admin financeiro: todas as aprovações pendentes da plataforma. */
+export async function listAdminPendingApprovals(db: Db, admin: Actor) {
+  assertAdminPermission(admin, "finance:refunds");
+  return pendingApprovals(db, {});
+}
+
+/**
+ * Cancelamento do evento: o comprador tem direito ao reembolso, então os que
+ * aguardavam aprovação são aprovados automaticamente e entram no lote do cancelamento.
+ * Pré-condição: trava do evento. Devolve os ids para processar.
+ */
+export async function autoApproveForCancelledEventTx(tx: Tx, eventId: string, actorId: string, now = new Date()) {
+  const awaiting = await tx.refund.findMany({ where: { status: "AWAITING_APPROVAL", order: { eventId } }, select: { id: true, orderId: true, order: { select: { organizationId: true } } } });
+  for (const r of awaiting) {
+    await lockOrder(tx, r.orderId);
+    const claimed = await tx.refund.updateMany({
+      where: { id: r.id, status: "AWAITING_APPROVAL" },
+      data: { status: "REQUESTED", approvalDecidedById: actorId, approvalDecidedAt: now, approvalNote: "Aprovado automaticamente: evento cancelado." },
+    });
+    if (!claimed.count) continue;
+    await audit(tx, { actorUserId: actorId, organizationId: r.order.organizationId, action: "refund.approved", entityType: "Refund", entityId: r.id, metadata: { orderId: r.orderId, automatic: "EVENT_CANCELLED" } });
+  }
+  return awaiting.map((r) => r.id);
 }
 
 /** Solicita o estorno ao provedor. Confirma imediatamente se o provedor responder sucesso. */

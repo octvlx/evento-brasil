@@ -71,6 +71,7 @@ export const PAYMENT_ACCOUNT_STATUS: Record<string, string> = {
 };
 
 export const REFUND_STATUS: Record<string, string> = {
+  AWAITING_APPROVAL: "Aguardando aprovação",
   REQUESTED: "Solicitado",
   PROCESSING: "Processando",
   SUCCEEDED: "Concluído",
