@@ -1040,6 +1040,8 @@ model TicketCheckin {
 // ───────────────────────────── Reembolsos ─────────────────────────────
 
 enum RefundStatus {
+  // Reembolso manual do admin acima do limite: espera o organizador (ou outro admin).
+  AWAITING_APPROVAL
   REQUESTED
   PROCESSING
   SUCCEEDED
@@ -1069,6 +1071,11 @@ model Refund {
   idempotencyKey   String       @unique
   // Cobre só parte dos ingressos do pedido (o pedido continua PAID).
   partial          Boolean      @default(false)
+  // Passou (ou passa) pela aprovação antes do estorno; quem decidiu, quando e por quê.
+  approvalRequired    Boolean   @default(false)
+  approvalDecidedById String?
+  approvalDecidedAt   DateTime? @db.Timestamptz(3)
+  approvalNote        String?
   processedAt      DateTime?    @db.Timestamptz(3)
   createdAt        DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime     @updatedAt @db.Timestamptz(3)

@@ -62,7 +62,7 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
       return { id: t.id, label: t.ticketType.name, holder: t.holderName, amountCents: (item?.unitPriceCents ?? 0) + (item?.serviceFeePerUnitCents ?? 0) };
     });
   // Um reembolso por vez: com outro em aberto (ex.: parcial em reprocessamento), não oferece novo.
-  const openRefund = order.refunds.some((r) => r.status === "REQUESTED" || r.status === "PROCESSING" || r.status === "FAILED");
+  const openRefund = order.refunds.some((r) => ["AWAITING_APPROVAL", "REQUESTED", "PROCESSING", "FAILED"].includes(r.status));
   const eligibility: RefundEligibility = openRefund
     ? { eligible: false, reason: "Há um reembolso em andamento neste pedido." }
     : refundable.length

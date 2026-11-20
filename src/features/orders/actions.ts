@@ -15,7 +15,14 @@ import { cancelPendingOrder } from "@/server/services/orders";
 import { confirmReturnedPayment, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { reconcileOrderPayments, type OrderPaymentCheck } from "@/server/services/reconciliation";
 import { rateLimit } from "@/server/rate-limit";
-import { adminRestoreAfterFailedRefund, adminRetryRefund, requestCustomerRefund, type RestoreOutcome } from "@/server/services/refunds";
+import {
+  adminRestoreAfterFailedRefund,
+  adminRetryRefund,
+  decideRefundApproval,
+  requestCustomerRefund,
+  type ApprovalDecision,
+  type RestoreOutcome,
+} from "@/server/services/refunds";
 import type { SimulatedAction } from "@/server/payments/simulated";
 import { ATTR_COOKIE, attributionCookieOptions, decodeAttribution, encodeAttribution, utmsFromParams } from "./attribution";
 import { assertCanCreateOrder, assertCanStartPayment } from "./limits";
@@ -149,6 +156,19 @@ export async function adminRetryFailedRefundAction(refundId: string, note: strin
   const admin = await requireAdmin();
   const result = await toActionResult(async () => ({ status: (await adminRetryRefund(db, getPaymentAdapter(), admin, refundId, note)).status }));
   if (result.ok) refresh();
+  return result;
+}
+
+// Aprovação antes do reembolso: organizador (OWNER/FINANCE) ou outro admin financeiro.
+// A autorização é do serviço (decideRefundApproval), para os dois caminhos.
+export async function decideRefundApprovalAction(refundId: string, decision: ApprovalDecision, note: string): Promise<ActionResult<{ status: string }>> {
+  const user = await requireUser("/organizador/reembolsos");
+  const d: ApprovalDecision = decision === "APPROVE" ? "APPROVE" : "REJECT";
+  const result = await toActionResult(async () => ({ status: (await decideRefundApproval(db, getPaymentAdapter(), user, String(refundId), d, String(note ?? ""))).status }));
+  if (result.ok) {
+    if (process.env.NODE_ENV !== "test") void dispatchEmailOutbox(db, { limit: 5 }).catch(() => {});
+    refresh();
+  }
   return result;
 }
 

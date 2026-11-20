@@ -32,6 +32,8 @@ export const HEALTH_THRESHOLDS = {
   webhookStuckMinutes: 15,
   refundProcessingStuckMinutes: 60,
   emailFailureWindowHours: 24,
+  /** Reembolso aguardando aprovação (ingressos bloqueados) sem decisão há mais que isto. */
+  refundApprovalStuckHours: 48,
 } as const;
 
 export const ALERT_REPEAT_HOURS = 6;
@@ -41,7 +43,7 @@ const minutesAgo = (now: Date, m: number) => new Date(now.getTime() - m * 60_000
 /** Problemas abertos agora. Lista vazia = tudo certo. `invariantViolations` vem do cron. */
 export async function operationalHealth(db: Db, now = new Date(), invariantViolations: { code: string; ids: string[] }[] = []): Promise<HealthCheck[]> {
   const T = HEALTH_THRESHOLDS;
-  const [webhooks, failedRefunds, processing, flagged, unlinked, emails] = await Promise.all([
+  const [webhooks, failedRefunds, processing, flagged, unlinked, emails, approvals] = await Promise.all([
     db.paymentWebhookEvent.aggregate({
       where: { processedAt: null, receivedAt: { lte: minutesAgo(now, T.webhookStuckMinutes) } },
       _count: { _all: true },
@@ -71,6 +73,11 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
       where: { status: { in: ["FAILED", "UNKNOWN"] }, updatedAt: { gte: minutesAgo(now, T.emailFailureWindowHours * 60) } },
       _count: { _all: true },
       _min: { updatedAt: true },
+    }),
+    db.refund.aggregate({
+      where: { status: "AWAITING_APPROVAL", createdAt: { lte: minutesAgo(now, T.refundApprovalStuckHours * 60) } },
+      _count: { _all: true },
+      _min: { createdAt: true },
     }),
   ]);
   const states = await refundRetryStates(db, failedRefunds);
@@ -117,6 +124,14 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
     count: unlinked._count._all,
     oldestAt: unlinked._min.createdAt,
     href: "/admin/pagamentos#pagamentos-em-analise",
+  });
+  add({
+    code: "REFUND_APPROVAL_STUCK",
+    severity: "warning",
+    title: `Reembolsos aguardando aprovação há mais de ${T.refundApprovalStuckHours} h (ingressos bloqueados)`,
+    count: approvals._count._all,
+    oldestAt: approvals._min.createdAt,
+    href: "/admin/pagamentos#aguardando-aprovacao",
   });
   add({
     code: "REFUND_STUCK_PROCESSING",

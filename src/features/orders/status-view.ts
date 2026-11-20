@@ -27,6 +27,15 @@ export interface RefundView {
  */
 export function refundView(orderStatus: string, refunds: { status: string; partial?: boolean }[]): RefundView | null {
   const latest = refunds[0];
+  if (latest?.status === "AWAITING_APPROVAL") {
+    return {
+      tone: "warning",
+      title: "Reembolso em análise",
+      detail: latest.partial
+        ? "O reembolso aguarda a aprovação do organizador. Enquanto isso, os ingressos escolhidos ficam bloqueados e os demais continuam válidos. Avisaremos por e-mail."
+        : "O reembolso aguarda a aprovação do organizador. Enquanto isso, os ingressos deste pedido ficam bloqueados. Avisaremos por e-mail.",
+    };
+  }
   // Reembolso parcial com o pedido ainda pago: só os ingressos escolhidos foram cancelados.
   if (latest?.partial && orderStatus === "PAID") {
     if (latest.status === "SUCCEEDED")

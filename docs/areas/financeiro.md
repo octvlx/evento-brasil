@@ -108,6 +108,35 @@ após restaurar, provedor que estornou de fato, evento cancelado, detecção de
 invariante, restauração × check-in, reprocessar × restaurar, retentativa ×
 check-in), todos terminando com `checkFinancialInvariants() == []`.
 
+## Aprovação antes do reembolso
+
+Regras decididas pelo responsável do produto em 2026-11-20:
+
+- **O que espera aprovação:** só o reembolso manual do admin (`adminRefundOrder`,
+  integral ou parcial) **acima de R$ 500** (`REFUND_APPROVAL_THRESHOLD_CENTS`). O
+  pedido do comprador dentro da política, a alteração relevante e o cancelamento de
+  evento continuam automáticos (são direito do comprador).
+- **Quem aprova:** OWNER ou FINANCE da organização do pedido (permissão
+  `refunds:approve`, tela `/organizador/reembolsos`) ou outro admin com
+  `finance:refunds` (`/admin/pagamentos#aguardando-aprovacao`). Quem pediu nunca
+  decide, por nenhum dos caminhos. Organização suspensa: só o admin.
+- **Ingressos:** bloqueados desde o pedido (mesma revogação do reembolso comum), então
+  ninguém entra enquanto o reembolso é analisado. Nada vai ao provedor até a
+  aprovação; `processRefund` ignora `AWAITING_APPROVAL`.
+- **Aprovar:** `REQUESTED` e segue o fluxo normal (retentativas e falhas inclusas).
+  **Recusar** (motivo obrigatório): `REJECTED`, ingressos voltam a valer, pedido volta
+  a `PAID`, comprador recebe e-mail. Contadores e razão não mudam.
+- **Casos de borda:** cancelamento do evento aprova automaticamente e inclui no lote;
+  estorno feito direto no provedor conclui o reembolso que aguardava; com um
+  aguardando, o pedido não aceita outro reembolso. Aprovação parada há mais de 48 h
+  gera alerta (`REFUND_APPROVAL_STUCK`).
+- E-mails: OWNER e FINANCE recebem o pedido de aprovação; o comprador é avisado do
+  bloqueio e, na recusa, de que os ingressos voltaram a valer.
+
+Implementação: `decideRefundApproval` em `refunds.ts` (travas do evento e do pedido,
+transição condicional), migração `20261120180000_refund_approval`, testes em
+`tests/integration/zz-refund-approval.test.ts`.
+
 ## Cupons e atribuição (ADR 0002, passo 2)
 
 Preço:
@@ -422,8 +451,9 @@ reconciliação concorrente não duplica estornos.
    e cartão tokenizado no provedor — nenhuma transação com dinheiro real sem
    aprovação explícita.
 2. Outbox durável para notificações de pedido pago/reembolso.
-3. ~~Reembolso parcial~~ — feito. Falta: etapa opcional de aprovação. Regras
-   decididas pelo responsável do produto em 2026-11-14:
+3. ~~Reembolso parcial~~ — feito. ~~Etapa de aprovação~~ — feita (ver
+   "Aprovação antes do reembolso"). Regras do parcial decididas pelo responsável
+   do produto em 2026-11-14:
    - **Por ingresso:** escolhe quais ingressos do pedido são devolvidos; só esses
      são revogados, os demais seguem válidos. Sem valor livre.
    - **Valor:** o preço efetivamente pago por ingresso (`unitPriceCents`, já com o

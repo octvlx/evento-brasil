@@ -25,13 +25,15 @@ export type OrgPermission =
   | "attendees:read"
   | "finance:read"
   | "checkin:scan"
-  | "checkin:history";
+  | "checkin:history"
+  // Aprovar/recusar reembolso manual do admin acima do limite (refunds.ts).
+  | "refunds:approve";
 
 const ROLE_PERMISSIONS: Record<OrgRole, readonly OrgPermission[]> = {
-  OWNER: ["org:read", "org:manage", "members:manage", "event:write", "event:publish", "event:cancel", "attendees:read", "finance:read", "checkin:scan", "checkin:history"],
+  OWNER: ["org:read", "org:manage", "members:manage", "event:write", "event:publish", "event:cancel", "attendees:read", "finance:read", "checkin:scan", "checkin:history", "refunds:approve"],
   ADMIN: ["org:read", "org:manage", "members:manage", "event:write", "event:publish", "event:cancel", "attendees:read", "finance:read", "checkin:scan", "checkin:history"],
   EVENT_MANAGER: ["org:read", "event:write", "event:publish", "attendees:read", "checkin:scan", "checkin:history"],
-  FINANCE: ["org:read", "finance:read", "attendees:read"],
+  FINANCE: ["org:read", "finance:read", "attendees:read", "refunds:approve"],
   // Equipe de check-in só atua em eventos atribuídos (EventStaffAssignment).
   CHECKIN_STAFF: ["checkin:scan"],
 };

@@ -14,7 +14,7 @@ import { financeLog } from "./finance-log";
 import { postProcessingFee, postReversal, postSale } from "./ledger";
 import { acquireLateInventoryTx, finalizePaidOrderTx, lockEvent, lockOrder, releaseOrderTx } from "./orders";
 import { notifyOrderPaid } from "./notifications";
-import { closePendingTransfersTx, confirmRefundTx, partialRefundCents, processRefund } from "./refunds";
+import { closePendingTransfersTx, confirmRefundTx, OPEN_REFUND_STATUSES, partialRefundCents, processRefund } from "./refunds";
 
 export async function startPayment(
   db: Db,
@@ -408,7 +408,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         if (payment.status === "REFUNDED" || payment.status === "CHARGED_BACK") return "no_change";
         // Estorno total no provedor: conclui o reembolso em aberto (integral ou parcial)
         // e, se ainda sobrarem ingressos, um integral pelo restante.
-        const open = await tx.refund.findFirst({ where: { orderId: order.id, status: { in: ["REQUESTED", "PROCESSING", "FAILED"] } } });
+        const open = await tx.refund.findFirst({ where: { orderId: order.id, status: { in: OPEN_REFUND_STATUSES } } });
         if (open) await confirmRefundTx(tx, open.id, now);
         const after = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { status: true } });
         if (after.status !== "REFUNDED") {
