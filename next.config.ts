@@ -49,6 +49,11 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
+  // .data/ guarda dados locais de desenvolvimento (e-mails do provedor "console",
+  // uploads locais): nunca vai para o pacote do servidor. Sem isto o rastreamento lia a
+  // pasta inteira (e-mails com endereços reais de teste) e quebrava o build no Windows
+  // quando algum arquivo estava travado.
+  outputFileTracingExcludes: { "/*": [".data/**/*"] },
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

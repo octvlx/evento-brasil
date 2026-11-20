@@ -10,7 +10,8 @@ export interface StorageAdapter {
   put(key: string, body: Uint8Array, contentType: string): Promise<{ key: string; url: string }>;
 }
 
-const LOCAL_ROOT = path.resolve(".data/uploads");
+// turbopackIgnore: pasta de dados locais, não um recurso do app (o build não a rastreia).
+const LOCAL_ROOT = path.join(/* turbopackIgnore: true */ process.cwd(), ".data", "uploads");
 
 /** Desenvolvimento: grava em .data/uploads e serve por /uploads/[...key]. */
 class LocalStorage implements StorageAdapter {

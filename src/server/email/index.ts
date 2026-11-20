@@ -35,7 +35,8 @@ export class ConsoleEmailAdapter implements EmailAdapter {
   async send(msg: EmailMessage, options?: { idempotencyKey?: string }) {
     if (env().NODE_ENV === "production")
       throw new EmailDeliveryError("CONSOLE_FORBIDDEN", false);
-    const dir = path.resolve(".data/outbox");
+    // turbopackIgnore: pasta de dados locais, não um recurso do app (o build não a rastreia).
+    const dir = path.join(/* turbopackIgnore: true */ process.cwd(), ".data", "outbox");
     await mkdir(dir, { recursive: true });
     const key = (options?.idempotencyKey ?? randomUUID()).replace(
       /[^a-zA-Z0-9_-]/g,
