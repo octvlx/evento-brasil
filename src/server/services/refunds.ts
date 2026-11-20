@@ -19,6 +19,7 @@ import { adminHas } from "../auth/admin-roles";
 import { assertActive, assertOrgPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
+import { commissionReturnedOnRefund } from "./commission";
 import { financeLog } from "./finance-log";
 import { postReversal } from "./ledger";
 import { lockEvent, lockOrder } from "./orders";
@@ -936,7 +937,7 @@ export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()
   await postReversal(tx, "REFUND", { ...order, ...amounts }, {
     refundId,
     paymentId: refund.paymentId ?? undefined,
-    returnCommission: order.commissionRule?.refundCommissionOnRefund ?? true,
+    returnCommission: commissionReturnedOnRefund(order.commissionRule, order.isSimulated),
   });
   await audit(tx, {
     organizationId: order.organizationId,

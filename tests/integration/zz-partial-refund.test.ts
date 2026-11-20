@@ -173,6 +173,24 @@ describe("reembolso parcial", () => {
     expect(await checkFinancialInvariants(db)).toEqual([]);
   });
 
+  it("com pagamento real a comissão volta mesmo com a regra de reter: o split do Mercado Pago a devolve", async () => {
+    const { order, tickets, price } = await setup({ refundCommissionOnRefund: false });
+    // Pedido como os do Mercado Pago real; o adaptador simulado só faz o estorno.
+    await db.order.update({ where: { id: order.id }, data: { isSimulated: false } });
+    const admin = await makeUser({ admin: true });
+    const refund = await adminRefundOrder(db, adapter, admin, order.id, "Ingresso duplicado", [tickets[0].id]);
+    expect(refund).toMatchObject({ status: "SUCCEEDED", partial: true, amountCents: price(tickets[0]) });
+    const entries = await db.financialLedgerEntry.findMany({ where: { refundId: refund.id } });
+    const commission = tickets[0].orderItem.commissionPerUnitCents;
+    expect(commission).toBeGreaterThan(0);
+    // O organizador devolve só a parte dele; a comissão (aqui, taxa de serviço) sai da plataforma.
+    expect(entries.find((e) => e.account === "ORGANIZER_PAYABLE")).toMatchObject({ direction: "DEBIT", amountCents: price(tickets[0]) - commission });
+    const platform = entries.filter((e) => e.account === "PLATFORM_COMMISSION" || e.account === "PLATFORM_SERVICE_FEE");
+    expect(platform.every((e) => e.direction === "DEBIT")).toBe(true);
+    expect(platform.reduce((sum, e) => sum + e.amountCents, 0)).toBe(commission);
+    expect(entries.find((e) => e.account === "CUSTOMER_FUNDS")).toMatchObject({ direction: "CREDIT", amountCents: price(tickets[0]) });
+  });
+
   it("cancelar o evento depois de um parcial reembolsa só o restante", async () => {
     const { owner, buyer, order, tickets, price, event } = await setup();
     await requestCustomerRefund(db, adapter, buyer, order.id, new Date(), [tickets[0].id]);

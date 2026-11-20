@@ -23,7 +23,8 @@ import { BRAND } from "@/lib/brand";
 import { START_PUBLISHING_HREF } from "@/lib/help-links";
 import { formatBRL } from "@/lib/money";
 import { db } from "@/server/db";
-import { currentPlatformCommissionRule } from "@/server/services/commission";
+import { getPaymentAdapter } from "@/server/payments";
+import { commissionReturnedOnRefund, currentPlatformCommissionRule } from "@/server/services/commission";
 
 export const metadata: Metadata = {
   title: "Publique seu evento",
@@ -299,7 +300,9 @@ async function Fees() {
           </li>
           <li className="flex gap-2">
             <Check />
-            {rule.refundCommissionOnRefund ? "Em reembolso, a comissão daquele ingresso também é devolvida." : "Em reembolso, a comissão daquele ingresso não é devolvida."}
+            {commissionReturnedOnRefund(rule, getPaymentAdapter().isSimulated)
+              ? "Em reembolso, a comissão daquele ingresso também é devolvida."
+              : "Em reembolso, a comissão daquele ingresso não é devolvida."}
           </li>
         </ul>
         <p className="mt-4 text-xs text-muted-foreground">

@@ -72,6 +72,16 @@ export function buyerPricePreview(
   return { priceCents, serviceFeeCents: line.serviceFeePerUnitCents, totalCents: priceCents + line.serviceFeePerUnitCents };
 }
 
+/**
+ * A comissão volta para o comprador no reembolso? No split do Mercado Pago, sim, sempre: o
+ * estorno devolve a comissão da conta da plataforma, proporcionalmente, e o site não tem como
+ * cobrá-la do organizador depois. Só o provedor simulado consegue reter a comissão, então só
+ * nele `refundCommissionOnRefund = false` vale; com pagamento real o razão segue o provedor.
+ */
+export function commissionReturnedOnRefund(rule: { refundCommissionOnRefund: boolean } | null | undefined, isSimulated: boolean) {
+  return isSimulated ? (rule?.refundCommissionOnRefund ?? true) : true;
+}
+
 export interface NewRuleInput {
   scope: CommissionScope;
   organizationId?: string;
