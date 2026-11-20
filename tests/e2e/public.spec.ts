@@ -30,7 +30,8 @@ async function withBuyerFee(slug: string, percentBps: number, fixedCents: number
 test("visitante descobre eventos publicados sem login", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toContainText("rolê");
-  await expect(page.getByRole("heading", { name: "Em destaque" })).toBeVisible();
+  // Âncora no início: "Organizadores em destaque" (outra seção da home) também contém o texto.
+  await expect(page.getByRole("heading", { name: /^Em destaque/ })).toBeVisible();
   const cards = page.locator('a[href^="/eventos/"]').filter({ has: page.locator("h3") });
   await expect(cards.first()).toBeVisible();
   // Cada card mostra data, título, local e preço.

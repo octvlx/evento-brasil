@@ -15,6 +15,7 @@ export function SiteFooter() {
           title="Para você"
           links={[
             ["/eventos", "Explorar eventos"],
+            ["/cidades", "Cidades"],
             ["/meus-ingressos", "Meus ingressos"],
             [CANCEL_HELP_HREF, "Cancelar compra / arrependimento"],
             ["/ajuda", "Central de ajuda"],

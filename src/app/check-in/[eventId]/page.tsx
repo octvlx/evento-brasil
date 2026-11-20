@@ -8,11 +8,13 @@ import { Skeleton } from "@/components/ui/primitives";
 import { Scanner } from "@/features/checkin/scanner";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
-import { resolveCheckinAccess } from "@/server/auth/permissions";
+import { assertEventPermission, resolveCheckinAccess } from "@/server/auth/permissions";
+import { CheckinOpeningForm } from "@/features/checkin/opening-form";
+import { checkinNotYetOpen, checkinOpensAt } from "@/lib/event-lifecycle";
 import { AppError } from "@/server/errors";
 import { MFA_SETUP_PATH } from "@/server/auth/mfa-policy";
 import { checkinHistory } from "@/server/services/checkin";
-import { formatTime } from "@/lib/datetime";
+import { formatDateTimeShort, formatTime } from "@/lib/datetime";
 import { CHECKIN_RESULT } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Leitor de check-in", robots: { index: false } };
@@ -43,6 +45,12 @@ async function Content({ params }: { params: Promise<{ eventId: string }> }) {
     throw err;
   }
   const event = await db.event.findUniqueOrThrow({ where: { id: eventId } });
+  // Quem edita o evento ajusta a abertura da portaria aqui mesmo.
+  const canConfigure = await assertEventPermission(db, user, eventId, "event:write").then(
+    () => true,
+    () => false,
+  );
+  const opensAt = checkinOpensAt(event);
   const [admitted, total, history, divergences] = await Promise.all([
     db.issuedTicket.count({ where: { eventId, status: "CHECKED_IN" } }),
     db.issuedTicket.count({ where: { eventId, status: { in: ["VALID", "CHECKED_IN"] } } }),
@@ -52,7 +60,15 @@ async function Content({ params }: { params: Promise<{ eventId: string }> }) {
   return (
     <>
       <h1 className="font-display text-2xl font-extrabold leading-tight">{event.title}</h1>
-      <p className="mb-4 text-sm text-muted-foreground">Validação online — cada QR só é aceito uma vez. Sem internet, o leitor usa a lista baixada e confirma tudo ao reconectar.</p>
+      <p className="mb-2 text-sm text-muted-foreground">Validação online — cada QR só é aceito uma vez. Sem internet, o leitor usa a lista baixada e confirma tudo ao reconectar.</p>
+      <p className="mb-4 text-sm" data-testid="checkin-opens-at">
+        Portaria {checkinNotYetOpen(event) ? "abre" : "aberta desde"} <strong>{formatDateTimeShort(opensAt, event.timezone)}</strong> · fecha 12 h depois do término.
+      </p>
+      {canConfigure && (
+        <div className="mb-4 rounded-2xl border border-border bg-card p-3">
+          <CheckinOpeningForm eventId={eventId} minutes={event.checkinOpensMinutesBefore} />
+        </div>
+      )}
       <Scanner eventId={eventId} userId={user.id} initialCounters={{ admitted, total }} />
       {divergences > 0 && (
         <p className="mt-4 rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm">
@@ -63,7 +79,14 @@ async function Content({ params }: { params: Promise<{ eventId: string }> }) {
         </p>
       )}
       <section className="mt-8">
-        <h2 className="mb-2 text-sm font-bold">Últimas leituras</h2>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-bold">Últimas leituras</h2>
+          {canSeeAllHistory && (
+            <Link href={`/check-in/${eventId}/historico`} className="text-sm font-semibold text-secondary hover:underline">
+              Histórico completo
+            </Link>
+          )}
+        </div>
         <ul className="divide-y divide-border rounded-2xl border border-border text-sm">
           {history.length === 0 && <li className="p-3 text-muted-foreground">Nenhuma leitura ainda.</li>}
           {history.map((h) => (

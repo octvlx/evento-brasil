@@ -12,7 +12,7 @@ import { db } from "@/server/db";
 import { BackButton } from "@/components/site/back-button";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { cityLabel } from "@/lib/search-query";
-import { listCategories, listCities, searchEvents, type DateFilter, type PriceFilter } from "@/server/services/catalog";
+import { listCategories, listCities, searchEvents, type DateFilter, type PriceFilter, type SortOrder } from "@/server/services/catalog";
 import { planSearch, type SearchPlan } from "@/server/services/search";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { UFS } from "@/lib/br";
@@ -46,7 +46,14 @@ const PRICE_OPTIONS: [PriceFilter, string][] = [
   ["150-mais", "Acima de R$ 150"],
 ];
 
-type Search = { q?: string; cidade?: string; categoria?: string; data?: string; preco?: string; pagina?: string; externos?: string };
+const SORT_OPTIONS: [SortOrder, string][] = [
+  ["relevancia", "Mais relevantes"],
+  ["data", "Data mais próxima"],
+  ["preco-menor", "Menor preço"],
+  ["preco-maior", "Maior preço"],
+];
+
+type Search = { q?: string; cidade?: string; categoria?: string; data?: string; preco?: string; ordem?: string; pagina?: string; externos?: string };
 
 export default function EventsPage({ searchParams }: PageProps<"/eventos">) {
   return (
@@ -78,7 +85,7 @@ async function Filters({ searchParams }: { searchParams: Promise<Search> }) {
   const [cities, categories, plan] = await Promise.all([listCities(db), listCategories(db), planSearch(db, sp.q, sp.cidade || undefined)]);
   return (
     // O texto da busca vem do campo inteligente; aqui ele só acompanha os filtros.
-    <form aria-label="Filtros" className="mt-6 grid gap-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[1.3fr_1.2fr_1.1fr_1.1fr_auto]">
+    <form aria-label="Filtros" className="mt-6 grid gap-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[1.3fr_1.2fr_1.1fr_1.1fr_1.1fr_auto]">
       {sp.q && <input type="hidden" name="q" value={sp.q} />}
       <Select name="cidade" defaultValue={plan.city?.slug ?? sp.cidade ?? ""} aria-label="Cidade">
         <option value="">Todas as cidades</option>
@@ -119,6 +126,13 @@ async function Filters({ searchParams }: { searchParams: Promise<Search> }) {
           </option>
         ))}
       </Select>
+      <Select name="ordem" defaultValue={pick(sp.ordem, SORT_OPTIONS) ?? (sp.q ? "relevancia" : "data")} aria-label="Ordenar por">
+        {SORT_OPTIONS.filter(([k]) => k !== "relevancia" || sp.q).map(([k, l]) => (
+          <option key={k} value={k}>
+            {l}
+          </option>
+        ))}
+      </Select>
       <button className={buttonVariants({ variant: "secondary" })}>
         <SlidersHorizontal aria-hidden /> Filtrar
       </button>
@@ -139,6 +153,7 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
     categorySlug: sp.categoria || undefined,
     date: pick(sp.data, DATE_OPTIONS),
     price: pick(sp.preco, PRICE_OPTIONS),
+    sort: pick(sp.ordem, SORT_OPTIONS),
     page,
   });
   // Cada lista tem a sua página: "pagina" (vendidos aqui) e "externos" (outros sites).

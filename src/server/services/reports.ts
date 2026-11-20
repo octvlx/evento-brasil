@@ -367,6 +367,46 @@ export function toCsv(rows: unknown[][], sep = ","): string {
   return "﻿" + rows.map((r) => r.map(csvCell).join(sep)).join("\r\n");
 }
 
+const CHECKIN_RESULT_LABEL: Record<string, string> = {
+  ADMITTED: "Entrada liberada",
+  DUPLICATE: "Já utilizado",
+  WRONG_EVENT: "Outro evento",
+  REVOKED: "Cancelado/reembolsado",
+  INVALID: "QR inválido",
+  EVENT_NOT_ACTIVE: "Portaria fechada",
+};
+
+/** CSV do histórico do check-in: uma linha por leitura, horário no fuso do evento. */
+export function checkinHistoryToCsv(
+  items: {
+    scannedAt: Date;
+    result: string;
+    offline: boolean;
+    offlineLocalResult: string | null;
+    divergence: string | null;
+    ticket: { code: string; holderName: string | null } | null;
+    scannedBy: { name: string };
+  }[],
+  timezone: string,
+  truncated: boolean,
+): string {
+  const rows: unknown[][] = [["Quando", "Resultado", "Código do ingresso", "Titular", "Leitor (equipe)", "Origem", "Resultado no aparelho", "Divergência"]];
+  for (const i of items) {
+    rows.push([
+      formatDateTimeShort(i.scannedAt, timezone),
+      CHECKIN_RESULT_LABEL[i.result] ?? i.result,
+      i.ticket?.code ?? "",
+      i.ticket?.holderName ?? "",
+      i.scannedBy.name,
+      i.offline ? "Offline" : "Online",
+      i.offlineLocalResult ? (CHECKIN_RESULT_LABEL[i.offlineLocalResult] ?? i.offlineLocalResult) : "",
+      i.divergence ?? "",
+    ]);
+  }
+  if (truncated) rows.push(["Exportação limitada; filtre por resultado ou origem para ver o restante."]);
+  return toCsv(rows);
+}
+
 export function attendeesToCsv(rows: Awaited<ReturnType<typeof listAttendees>>): string {
   const header = ["codigo", "titular", "email_titular", "conta_titular", "transferido", "transferencia_pendente", "tipo", "status", "check_in", "pedido"];
   return toCsv([

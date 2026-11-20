@@ -5,7 +5,7 @@ import { connection } from "next/server";
 import { AtSign, BadgeCheck, Globe } from "lucide-react";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { db } from "@/server/db";
-import { getPublicOrganizer } from "@/server/services/catalog";
+import { getPublicOrganizer, pastOrganizerEvents } from "@/server/services/catalog";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 
 export async function generateMetadata({ params }: PageProps<"/organizadores/[slug]">): Promise<Metadata> {
@@ -36,6 +36,7 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
   const data = await getPublicOrganizer(db, slug);
   if (!data) notFound();
   const { org, events } = data;
+  const past = await pastOrganizerEvents(db, org.id);
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       {org.coverUrl && (
@@ -77,6 +78,14 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
       </div>
       <h2 className="mb-5 mt-10 font-display text-2xl font-extrabold">Próximos eventos</h2>
       <EventGrid events={events} emptyText="Nenhum evento publicado no momento." />
+      {past.length > 0 && (
+        <section aria-labelledby="eventos-anteriores" className="mt-12">
+          <h2 id="eventos-anteriores" className="mb-5 font-display text-2xl font-extrabold">
+            Eventos anteriores
+          </h2>
+          <EventGrid events={past} emptyText="" />
+        </section>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 // Consultas públicas: apenas eventos PUBLICADOS, não encerrados, de
 // organizações aprovadas.
 import "server-only";
-import type { CommissionRule, Prisma } from "@/generated/prisma/client";
+import { Prisma, type CommissionRule } from "@/generated/prisma/client";
 import { computeFees } from "@/features/fees/policy";
 import {
   computeHalfPriceState,
@@ -173,6 +173,11 @@ function toCard(e: CardRow, rule: CommissionRule, now: Date): EventCard {
 }
 
 export type DateFilter = "hoje" | "amanha" | "fim-de-semana" | "7-dias" | "30-dias";
+/** Ordem dos resultados. Padrão: relevância com texto; data sem texto. */
+export type SortOrder = "relevancia" | "data" | "preco-menor" | "preco-maior";
+export const SORT_ORDERS: readonly SortOrder[] = ["relevancia", "data", "preco-menor", "preco-maior"];
+/** Teto de resultados reordenados por data/preço numa busca com texto (o ranking corta antes). */
+export const SORT_RANKED_MAX = 1000;
 export type PriceFilter = "gratis" | "ate-50" | "50-150" | "150-mais";
 
 export interface SearchParams {
@@ -184,7 +189,27 @@ export interface SearchParams {
   categorySlug?: string;
   date?: DateFilter;
   price?: PriceFilter;
+  sort?: SortOrder;
   page?: number;
+}
+
+/**
+ * Uma página de ids na ordem pedida: data (início, id) ou menor preço visível (sem
+ * ingresso visível vai para o fim; empate por data).
+ */
+async function orderedIdPage(db: Db, ids: string[], sort: "data" | "preco-menor" | "preco-maior", offset: number, take: number): Promise<string[]> {
+  if (!ids.length) return [];
+  if (sort === "data") {
+    const rows = await db.event.findMany({ where: { id: { in: ids } }, select: { id: true }, orderBy: [{ startsAt: "asc" }, { id: "asc" }], skip: offset, take });
+    return rows.map((r) => r.id);
+  }
+  const rows = await db.$queryRaw<{ id: string }[]>`
+    SELECT e.id FROM "Event" e
+    LEFT JOIN LATERAL (SELECT min(t."priceCents") AS p FROM "TicketType" t WHERE t."eventId" = e.id AND NOT t."isHidden") m ON true
+    WHERE e.id = ANY(${ids})
+    ORDER BY ${sort === "preco-menor" ? Prisma.sql`m.p ASC NULLS LAST` : Prisma.sql`m.p DESC NULLS LAST`}, e."startsAt" ASC, e.id ASC
+    OFFSET ${offset} LIMIT ${take}`;
+  return rows.map((r) => r.id);
 }
 
 export const PAGE_SIZE = 12;
@@ -223,6 +248,24 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
   const where = { AND: and };
   const requestedPage = params.page ?? 1;
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 && (requestedPage - 1) * PAGE_SIZE <= 2_147_483_647 ? requestedPage : 1;
+  const sort = params.sort && params.sort !== "relevancia" ? params.sort : null;
+  const byIds = async (ids: string[]) => {
+    const order = new Map(ids.map((id, i) => [id, i]));
+    return (await db.event.findMany({ where: { id: { in: ids } }, select: cardSelect })).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+  };
+  if ((q || params.matchCategoryId) && sort) {
+    // Texto com outra ordem: os resultados do ranking (até SORT_RANKED_MAX) reordenados.
+    const ranked = await rankPublicEventPage(db, q, rankFilters, 0, SORT_RANKED_MAX);
+    const matching = (await db.event.findMany({ where: { AND: [where, { id: { in: ranked.ids } }] }, select: { id: true } })).map((r) => r.id);
+    const total = Math.min(ranked.total, matching.length);
+    const ids = await orderedIdPage(db, matching, sort, (page - 1) * PAGE_SIZE, PAGE_SIZE);
+    return { total, page, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), events: await toCards(db, await byIds(ids), now) };
+  }
+  if (!(q || params.matchCategoryId) && (sort === "preco-menor" || sort === "preco-maior")) {
+    const matching = (await db.event.findMany({ where, select: { id: true } })).map((r) => r.id);
+    const ids = await orderedIdPage(db, matching, sort, (page - 1) * PAGE_SIZE, PAGE_SIZE);
+    return { total: matching.length, page, pageCount: Math.max(1, Math.ceil(matching.length / PAGE_SIZE)), events: await toCards(db, await byIds(ids), now) };
+  }
   if (q || params.matchCategoryId) {
     // Todos os filtros são aplicados antes do ranking; contagem e paginação no banco.
     const ranked = await rankPublicEventPage(db, q, rankFilters, (page - 1) * PAGE_SIZE, PAGE_SIZE);
@@ -414,6 +457,106 @@ export async function organizerIdentification(db: Db, organizationId: string): P
   });
   if (!v) return null;
   return { legalType: v.legalType, legalName: v.legalName, cnpjLast4: v.documentType === "CNPJ" ? v.documentLast4 : null };
+}
+
+// ───────────────────────────── Descoberta ─────────────────────────────
+
+/**
+ * Eventos relacionados na página do evento: futuros e públicos, primeiro da mesma
+ * categoria na mesma cidade, depois da mesma categoria e por fim da mesma cidade.
+ */
+export async function relatedEvents(db: Db, event: { id: string; categoryId: string; cityId: string | null }, limit = 4, now = new Date()) {
+  const base: Prisma.EventWhereInput = { ...publicEventWhere(now), id: { not: event.id } };
+  const sameCity: Prisma.EventWhereInput | null = event.cityId ? { OR: [{ cityId: event.cityId }, { venue: { cityId: event.cityId } }] } : null;
+  const tiers: Prisma.EventWhereInput[] = [
+    ...(sameCity ? [{ AND: [base, { categoryId: event.categoryId }, sameCity] }] : []),
+    { AND: [base, { categoryId: event.categoryId }] },
+    ...(sameCity ? [{ AND: [base, sameCity] }] : []),
+  ];
+  const picked: CardRow[] = [];
+  for (const where of tiers) {
+    if (picked.length >= limit) break;
+    const rows = await db.event.findMany({
+      where: { AND: [where, { id: { notIn: picked.map((p) => p.id) } }] },
+      select: cardSelect,
+      orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+      take: limit - picked.length,
+    });
+    picked.push(...rows);
+  }
+  return toCards(db, picked, now);
+}
+
+/** Eventos já realizados de um organizador (perfil público), mais recentes primeiro. */
+export async function pastOrganizerEvents(db: Db, organizationId: string, limit = 12, now = new Date()) {
+  const rows = await db.event.findMany({
+    where: { organizationId, status: { in: ["PUBLISHED", "COMPLETED"] }, endsAt: { lte: now }, organization: { status: "APPROVED" } },
+    select: cardSelect,
+    orderBy: [{ startsAt: "desc" }, { id: "desc" }],
+    take: limit,
+  });
+  return toCards(db, rows, now);
+}
+
+/** Organizadores em destaque na home: aprovados com mais eventos futuros no ar. */
+export async function featuredOrganizers(db: Db, limit = 6, now = new Date()) {
+  const rows = await db.organization.findMany({
+    where: { status: "APPROVED", events: { some: publicEventWhere(now) } },
+    select: { id: true, name: true, slug: true, logoUrl: true, city: true, _count: { select: { events: { where: publicEventWhere(now) } } } },
+    take: 50,
+  });
+  return rows
+    .map(({ _count, ...o }) => ({ ...o, upcoming: _count.events }))
+    .sort((a, b) => b.upcoming - a.upcoming || a.name.localeCompare(b.name, "pt-BR"))
+    .slice(0, limit);
+}
+
+/**
+ * Recomendações para quem já comprou: eventos futuros das categorias (e, depois, das
+ * cidades) dos pedidos pagos, sem os eventos que a pessoa já tem. Sem histórico: vazio.
+ */
+export async function recommendedEvents(db: Db, userId: string, limit = 4, now = new Date()) {
+  const past = await db.order.findMany({
+    where: { userId, status: { in: ["PAID", "REFUNDED"] } },
+    select: { eventId: true, event: { select: { categoryId: true, cityId: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  if (!past.length) return [];
+  const seen = [...new Set(past.map((o) => o.eventId))];
+  const categories = [...new Set(past.map((o) => o.event.categoryId))];
+  const cities = [...new Set(past.map((o) => o.event.cityId).filter((c): c is string => !!c))];
+  const base: Prisma.EventWhereInput = { ...publicEventWhere(now), id: { notIn: seen } };
+  const picked: CardRow[] = [];
+  for (const where of [
+    { AND: [base, { categoryId: { in: categories } }] },
+    ...(cities.length ? [{ AND: [base, { OR: [{ cityId: { in: cities } }, { venue: { cityId: { in: cities } } }] }] }] : []),
+  ] satisfies Prisma.EventWhereInput[]) {
+    if (picked.length >= limit) break;
+    picked.push(
+      ...(await db.event.findMany({
+        where: { AND: [where, { id: { notIn: picked.map((p) => p.id) } }] },
+        select: cardSelect,
+        orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+        take: limit - picked.length,
+      })),
+    );
+  }
+  return toCards(db, picked, now);
+}
+
+/** Panorama de /cidades: cidades com evento no ar e quantos eventos nativos futuros há em cada uma. */
+export async function cityOverview(db: Db, now = new Date()) {
+  const [cities, events] = await Promise.all([
+    listCities(db, { now }),
+    db.event.findMany({ where: publicEventWhere(now), select: { cityId: true, venue: { select: { cityId: true } } } }),
+  ]);
+  const counts = new Map<string, number>();
+  for (const e of events) {
+    const id = e.venue?.cityId ?? e.cityId;
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return cities.map((c) => ({ id: c.id, slug: c.slug, name: c.name, state: c.state, isFeatured: c.isFeatured, events: counts.get(c.id) ?? 0 }));
 }
 
 export async function getPublicOrganizer(db: Db, slug: string, now = new Date()) {

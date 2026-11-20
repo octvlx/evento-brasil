@@ -6,9 +6,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/primitives";
 import { db } from "@/server/db";
 import { getActiveMembership, requireUser } from "@/server/auth/current";
-import { roleHas } from "@/server/auth/permissions";
+import { listCheckinEvents } from "@/server/services/checkin";
 import { formatEventDateTime } from "@/lib/datetime";
-import { CHECKIN_GRACE_MS } from "@/lib/event-lifecycle";
 
 export const metadata: Metadata = { title: "Check-in", robots: { index: false } };
 
@@ -22,24 +21,9 @@ export default function CheckinListPage() {
   );
 }
 
-/** Eventos em que o usuário pode fazer check-in (até 12h após o término). */
-async function checkinEvents(userId: string) {
-  const memberships = await db.organizationMember.findMany({ where: { userId } });
-  const fullAccessOrgs = memberships.filter((m) => roleHas(m.role, "checkin:history")).map((m) => m.organizationId);
-  return db.event.findMany({
-    where: {
-      status: { in: ["PUBLISHED", "COMPLETED"] },
-      endsAt: { gt: new Date(Date.now() - CHECKIN_GRACE_MS) },
-      OR: [{ organizationId: { in: fullAccessOrgs } }, { staffAssignments: { some: { userId } } }],
-    },
-    orderBy: { startsAt: "asc" },
-    include: { organization: { select: { name: true } } },
-  });
-}
-
 async function Content() {
   const user = await requireUser("/check-in");
-  const [{ memberships }, events] = await Promise.all([getActiveMembership(user.id), checkinEvents(user.id)]);
+  const [{ memberships }, events] = await Promise.all([getActiveMembership(user.id), listCheckinEvents(db, user.id)]);
   const isOrganizer = memberships.some((m) => m.role !== "CHECKIN_STAFF");
   return (
     <>

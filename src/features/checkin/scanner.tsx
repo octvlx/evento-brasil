@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import jsQR from "jsqr";
-import { ArrowLeftRight, Camera, CameraOff, CloudDownload, CloudUpload, Flashlight, FlashlightOff, IdCard, Keyboard, WifiOff } from "lucide-react";
+import { ArrowLeftRight, Camera, CameraOff, CloudDownload, CloudUpload, FlaskConical, Flashlight, FlashlightOff, IdCard, Keyboard, Volume2, VolumeX, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -49,6 +49,56 @@ const subscribeOnline = (cb: () => void) => {
 };
 const isExpired = (p: OfflinePackage | null) => (p ? new Date(p.validUntil).getTime() < Date.now() : false);
 
+// Som do resultado (portaria barulhenta): agudo curto para entrada liberada, grave
+// repetido para recusa. Preferência guardada no aparelho; sem Web Audio, só vibra.
+const SOUND_KEY = "qqpega-checkin-som";
+let audioCtx: AudioContext | null = null;
+function beep(ok: boolean) {
+  try {
+    audioCtx ??= new AudioContext();
+    const ctx = audioCtx;
+    const tones = ok ? [{ f: 1320, t: 0, d: 0.12 }] : [{ f: 220, t: 0, d: 0.16 }, { f: 220, t: 0.22, d: 0.16 }, { f: 180, t: 0.44, d: 0.3 }];
+    for (const { f, t, d } of tones) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = ok ? "sine" : "square";
+      osc.frequency.value = f;
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + t);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + d);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + t);
+      osc.stop(ctx.currentTime + t + d);
+    }
+  } catch {
+    // sem áudio neste navegador
+  }
+}
+// Preferência lida como armazenamento externo (sem setState em efeito); sem
+// localStorage (modo privado), vale só na memória desta página.
+let soundMemory = true;
+const soundListeners = new Set<() => void>();
+const subscribeSound = (cb: () => void) => {
+  soundListeners.add(cb);
+  return () => soundListeners.delete(cb);
+};
+const readSound = () => {
+  try {
+    const v = localStorage.getItem(SOUND_KEY);
+    return v === null ? soundMemory : v !== "0";
+  } catch {
+    return soundMemory;
+  }
+};
+function writeSound(on: boolean) {
+  soundMemory = on;
+  try {
+    localStorage.setItem(SOUND_KEY, on ? "1" : "0");
+  } catch {
+    // sem armazenamento: só na memória
+  }
+  soundListeners.forEach((cb) => cb());
+}
+
 /** Falha de rede (sem resposta do servidor), diferente de uma recusa do servidor. */
 const isNetworkError = (e: unknown) => e instanceof TypeError || (typeof navigator !== "undefined" && !navigator.onLine);
 
@@ -67,6 +117,13 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
   const [error, setError] = useState<string | null>(null);
   const [counters, setCounters] = useState(initialCounters);
   const [manual, setManual] = useState("");
+  const sound = useSyncExternalStore(subscribeSound, readSound, () => true);
+  const toggleSound = () => {
+    const next = !readSound();
+    writeSound(next);
+    // O toque no botão libera o áudio no navegador (política de autoplay).
+    if (next) beep(true);
+  };
 
   // Check-in offline
   const browserOnline = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
@@ -214,10 +271,17 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
         result: r,
         message: OFFLINE_MESSAGES[r],
         offline: true,
-        ticket: t && { code: t.code, holderName: t.holderName, ticketTypeName: t.ticketTypeName, ticketKind: t.ticketKind, checkedInAt, transferred: false },
+        ticket: t && { code: t.code, holderName: t.holderName, ticketTypeName: t.ticketTypeName, ticketKind: t.ticketKind, checkedInAt, transferred: false, simulated: t.sim === true },
         counters,
       });
       if (!current || new Date(current.validUntil).getTime() < Date.now()) return show("EVENT_NOT_ACTIVE");
+      // Portaria ainda fechada (lista baixada antes da abertura): recusa sem gastar o ingresso.
+      if (current.opensAt && Date.now() < new Date(current.opensAt).getTime()) {
+        return {
+          ...show("EVENT_NOT_ACTIVE"),
+          message: `Check-in ainda não abriu: abre ${new Date(current.opensAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`,
+        };
+      }
       const parsed = parseQrPayload(payload);
       const hash = parsed ? await tokenHash(parsed.token) : null;
       const t = hash ? current.tickets.find((x) => x.h === hash && x.code === parsed!.code) : undefined;
@@ -251,6 +315,7 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
         setError(null);
         if (needsHalfPriceDocument(r)) holdMs = 2200;
         navigator.vibrate?.(r.result === "ADMITTED" ? 80 : [60, 60, 60, 60, 200]);
+        if (readSound()) beep(r.result === "ADMITTED");
       };
       try {
         if (!navigator.onLine && pkg) {
@@ -281,6 +346,7 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
         } else {
           setError("Não foi possível validar o ingresso. Verifique a conexão e leia o QR novamente.");
           navigator.vibrate?.([60, 60, 60, 60, 200]);
+          if (readSound()) beep(false);
         }
       } finally {
         setTimeout(() => {
@@ -418,6 +484,11 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
           <div className={cn("absolute inset-0 flex flex-col items-center justify-center p-6 text-center text-white", RESULT_STYLE[result.result])} role="alert" aria-live="assertive">
             <p className="font-display text-3xl font-extrabold">{result.message}</p>
             {result.offline && <p className="mt-1 rounded-full bg-black/25 px-3 py-0.5 text-xs font-bold uppercase">Sem internet · será confirmado ao sincronizar</p>}
+            {result.ticket?.simulated && (
+              <p className="mt-2 flex items-center gap-2 rounded-full border-2 border-white bg-black/40 px-3 py-1 text-sm font-extrabold uppercase" data-testid="checkin-simulated">
+                <FlaskConical className="size-4" aria-hidden /> Teste · pagamento simulado, sem valor
+              </p>
+            )}
             {result.ticket && (
               <>
                 {result.ticket.transferred ? (
@@ -451,9 +522,12 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
         )}
       </div>
 
-      <div className={cn("grid gap-2", cameraOn && torchSupported ? "grid-cols-[1fr_auto]" : "grid-cols-1")}>
+      <div className={cn("grid gap-2", cameraOn && torchSupported ? "grid-cols-[1fr_auto_auto]" : "grid-cols-[1fr_auto]")}>
         <Button size="lg" variant={cameraOn ? "outline" : "secondary"} className="w-full" onClick={() => setCameraOn((v) => !v)}>
           {cameraOn ? <CameraOff aria-hidden /> : <Camera aria-hidden />} {cameraOn ? "Desativar câmera" : "Ativar câmera"}
+        </Button>
+        <Button size="lg" variant="outline" aria-pressed={sound} onClick={toggleSound} aria-label={sound ? "Desligar som" : "Ligar som"} title={sound ? "Som ligado" : "Som desligado"}>
+          {sound ? <Volume2 aria-hidden /> : <VolumeX aria-hidden />}
         </Button>
         {cameraOn && torchSupported && (
           <Button size="lg" variant={torchOn ? "accent" : "outline"} aria-pressed={torchOn} onClick={toggleTorch}>

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { connection } from "next/server";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Search } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { CategoryChips } from "@/components/site/category-chips";
 import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
@@ -66,6 +66,24 @@ async function CityContent({ params, searchParams }: { params: Promise<{ slug: s
         <div className="mx-auto max-w-7xl px-4 pb-8 pt-12 sm:px-6">
           <p className="text-sm font-semibold uppercase tracking-widest text-white/70">{city.state}</p>
           <h1 className="font-display text-4xl font-extrabold tracking-tight sm:text-5xl">Eventos em {city.name}</h1>
+          {/* Busca dentro da cidade: leva a /eventos já filtrado pela cidade. */}
+          <form method="get" action="/eventos" role="search" aria-label={`Buscar eventos em ${city.name}`} className="mt-5 flex max-w-xl gap-2">
+            <input type="hidden" name="cidade" value={slug} />
+            <label htmlFor="busca-cidade" className="sr-only">
+              Buscar em {city.name}
+            </label>
+            <input
+              id="busca-cidade"
+              name="q"
+              type="search"
+              maxLength={80}
+              placeholder={`Artista, evento ou local em ${city.name}`}
+              className="h-11 min-w-0 flex-1 rounded-xl border border-white/30 bg-white/10 px-3 text-sm text-white placeholder:text-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            />
+            <button type="submit" className={buttonVariants({ variant: "accent" })}>
+              <Search aria-hidden /> Buscar
+            </button>
+          </form>
           <nav aria-label="Quando" className="scrollbar-none mt-6 inline-flex max-w-full overflow-x-auto rounded-full bg-white/10 p-1 ring-1 ring-white/20 backdrop-blur">
             {[[undefined, "Tudo"] as const, ...PERIODS].map(([value, label]) => (
               <Link

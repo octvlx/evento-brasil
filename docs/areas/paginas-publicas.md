@@ -108,14 +108,23 @@ Só telas: as regras são dos serviços de cada domínio (chamados, não reimple
 
 1. ~~**Incorporar o SEO/erros**~~ (sitemap, robots, páginas de erro, OG padrão,
    canonical) — feito.
-2. **Ordenação na busca** (data, preço, relevância) em `/eventos` e nas cidades —
-   só `catalog.ts` + página.
-3. **`/cidades`** (visão geral das cidades) e destaques/busca na página da cidade.
-4. **Eventos relacionados** na página do evento (mesma categoria/cidade).
-5. **Perfil do organizador:** eventos anteriores (logo e capa já aparecem).
+2. ~~**Ordenação na busca**~~ — feito: `?ordem=relevancia|data|preco-menor|preco-maior`
+   em `/eventos` (`searchEvents`, `sort`). Sem texto, padrão data; com texto, padrão
+   relevância, e data/preço reordenam os resultados do ranking (até 1000). Preço =
+   menor ingresso visível; evento sem ingresso visível vai para o fim. A página da
+   cidade leva a `/eventos?cidade=` para ordenar.
+3. ~~**`/cidades`**~~ — feito: panorama por UF com destaques (`cityOverview`), no
+   rodapé e no sitemap. A página da cidade ganhou busca (vai para `/eventos?cidade=&q=`);
+   os destaques já existiam.
+4. ~~**Eventos relacionados**~~ — feito: "Você também pode gostar" (`relatedEvents`):
+   mesma categoria e cidade, depois categoria, depois cidade; some quando não há.
+5. ~~**Perfil do organizador:** eventos anteriores~~ — feito (`pastOrganizerEvents`).
 6. **Autenticação:** mostrar/ocultar senha; recuperação e redefinição de senha
    (dependem de backend — ver abaixo).
-7. **Home:** organizadores em destaque e recomendações.
+7. ~~**Home:** organizadores em destaque e recomendações~~ — feito:
+   `featuredOrganizers` (aprovados com mais eventos no ar) e "Recomendados para você"
+   (`recommendedEvents`, só com login e compras: categorias e cidades dos pedidos pagos,
+   sem os eventos já comprados).
 8. **Meus ingressos:** paginação do histórico (hoje limitado a 30 pedidos) e
    `/meus-pedidos` dedicado se o negócio quiser.
 9. **Cupom no checkout** (depende do financeiro).
