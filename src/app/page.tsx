@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { ArrowRight, BadgePercent, Megaphone, QrCode, ShieldCheck, Zap } from "lucide-react";
+import { ArrowRight, BadgePercent, Building2, Megaphone, QrCode, ShieldCheck, Zap } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCard, EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { ExternalEventCard } from "@/components/site/external-event-card";
@@ -13,7 +13,8 @@ import { EventCarousel } from "@/components/site/event-carousel";
 import { PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
 import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
-import { eventsInCity, featuredEvents, getPublicCity, listCategories, weekendEvents } from "@/server/services/catalog";
+import { eventsInCity, featuredEvents, featuredOrganizers, getPublicCity, listCategories, recommendedEvents, weekendEvents } from "@/server/services/catalog";
+import { getCurrentUser } from "@/server/auth/current";
 
 export default function HomePage() {
   return (
@@ -69,11 +70,19 @@ export default function HomePage() {
         <NearbySection />
       </Suspense>
 
+      <Suspense fallback={null}>
+        <Recommended />
+      </Suspense>
+
       <Section title="Neste fim de semana" subtitle="De sexta a domingo" href="/eventos?data=fim-de-semana">
         <Suspense fallback={<EventGridSkeleton />}>
           <Weekend />
         </Suspense>
       </Section>
+
+      <Suspense fallback={null}>
+        <FeaturedOrganizers />
+      </Suspense>
 
       <section className="mx-auto mt-16 max-w-7xl px-4 sm:px-6">
         <div className="grid gap-4 sm:grid-cols-3">
@@ -194,6 +203,48 @@ async function NearbySection() {
       ) : (
         <EventGrid events={events} emptyText={`Ainda não há eventos publicados em ${target.name}.`} />
       )}
+    </Section>
+  );
+}
+
+/** Para quem já comprou: eventos das mesmas categorias e cidades (some sem histórico). */
+async function Recommended() {
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const events = await recommendedEvents(db, user.id);
+  if (!events.length) return null;
+  return (
+    <Section title="Recomendados para você" subtitle="Com base nos eventos que você já comprou" href="/eventos">
+      <EventGrid events={events} emptyText="" />
+    </Section>
+  );
+}
+
+/** Organizadores com mais eventos no ar, com link para o perfil público. */
+async function FeaturedOrganizers() {
+  await connection();
+  const orgs = await featuredOrganizers(db);
+  if (!orgs.length) return null;
+  return (
+    <Section title="Organizadores em destaque" subtitle="Quem tem mais eventos no ar agora">
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {orgs.map((o) => (
+          <li key={o.id}>
+            <Link href={`/organizadores/${o.slug}`} className="flex h-full flex-col items-center gap-2 rounded-2xl border border-border bg-card p-4 text-center shadow-card hover:border-secondary">
+              {o.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- logo enviado pelo organizador (URL do armazenamento)
+                <img src={o.logoUrl} alt="" className="size-14 rounded-xl object-cover" />
+              ) : (
+                <span className="grid size-14 place-items-center rounded-xl bg-night text-lime">
+                  <Building2 className="size-6" aria-hidden />
+                </span>
+              )}
+              <span className="line-clamp-2 text-sm font-semibold">{o.name}</span>
+              <span className="text-xs text-muted-foreground">{o.upcoming === 1 ? "1 evento" : `${o.upcoming} eventos`}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
     </Section>
   );
 }

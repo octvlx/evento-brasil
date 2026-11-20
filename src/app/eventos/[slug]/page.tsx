@@ -16,7 +16,8 @@ import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
 import { getPaymentAdapter } from "@/server/payments";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
-import { getPublicEvent, trackingLinkCouponCode } from "@/server/services/catalog";
+import { getPublicEvent, relatedEvents, trackingLinkCouponCode } from "@/server/services/catalog";
+import { EventGrid } from "@/components/site/event-card";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { formatAddress } from "@/lib/br";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
@@ -128,6 +129,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   };
 
   return (
+    <>
     <article className="mx-auto max-w-7xl px-4 pb-10 pt-6 sm:px-6">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd).replace(/</g, "\\u003c") }} />
@@ -320,6 +322,11 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
         </aside>
       </div>
     </article>
+    {/* Relacionados: carrega depois do evento, sem segurar a página. */}
+    <Suspense fallback={null}>
+      <RelatedSection event={{ id: event.id, categoryId: event.categoryId, cityId: event.venue?.cityId ?? event.cityId }} />
+    </Suspense>
+    </>
   );
 }
 
@@ -334,5 +341,19 @@ function Info({ icon: Icon, title, children }: { icon: typeof MapPin; title: str
         {children && <div className="text-sm text-muted-foreground">{children}</div>}
       </div>
     </div>
+  );
+}
+
+/** Outros eventos da mesma categoria e/ou cidade (só aparece quando há algum). */
+async function RelatedSection({ event }: { event: { id: string; categoryId: string; cityId: string | null } }) {
+  const events = await relatedEvents(db, event);
+  if (!events.length) return null;
+  return (
+    <section aria-labelledby="relacionados-titulo" className="mx-auto max-w-7xl px-4 pb-12 sm:px-6">
+      <h2 id="relacionados-titulo" className="mb-5 font-display text-2xl font-extrabold">
+        Você também pode gostar
+      </h2>
+      <EventGrid events={events} emptyText="" />
+    </section>
   );
 }
