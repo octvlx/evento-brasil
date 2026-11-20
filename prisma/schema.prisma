@@ -456,6 +456,9 @@ model Event {
   // Transferência: antecedência em horas (0–8760), total por ingresso (1–10) e
   // permissão de nova transferência consentida para um titular anterior.
   transferDeadlineHours      Int             @default(24)
+  // Portaria: o check-in abre estes minutos antes do início (padrão 6 h; o organizador
+  // escolhe de 0 a 7 dias, regra no serviço; o CHECK do banco aceita até 1 ano).
+  checkinOpensMinutesBefore  Int             @default(360)
   transferMaxTransfers       Int             @default(1)
   transferAllowReturn        Boolean         @default(false)
   accessibilityInfo          String?

@@ -1,6 +1,9 @@
 import "server-only";
 import type { CheckinResult, EventStatus, OfflineDivergence, TicketKind } from "@/generated/prisma/client";
-import { checkinWindowOpen } from "@/lib/event-lifecycle";
+import { CHECKIN_GRACE_MS, checkinNotYetOpen, checkinOpensAt, checkinWindowOpen, MAX_CHECKIN_OPENS_MINUTES } from "@/lib/event-lifecycle";
+import { formatDateTimeShort } from "@/lib/datetime";
+import { audit } from "../audit";
+import { assertEventPermission, roleHas } from "../auth/permissions";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
 import { hashToken, qrTokenHash } from "../crypto";
@@ -15,8 +18,11 @@ export interface CheckinResponse {
   // transferred: o ingresso mudou de titular por transferência aceita (R6); holderName é
   // o titular atual. qrReplaced: o QR lido é o anterior a uma transferência (resultado
   // INVALID) — só informado para a mesma organização do evento.
-  ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null; transferred: boolean; qrReplaced?: true };
+  // simulated: ingresso de pedido com pagamento simulado (provedor de testes) — a portaria vê "TESTE".
+  ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null; transferred: boolean; qrReplaced?: true; simulated?: boolean };
   counters: { admitted: number; total: number };
+  /** Portaria ainda fechada: quando abre (ISO). */
+  opensAt?: string;
   /** Só em leitura offline sincronizada: o aparelho e o servidor discordaram. */
   divergence?: OfflineDivergence;
 }
@@ -42,9 +48,11 @@ async function counters(db: Db, eventId: string) {
 // (nem UPDATEs que não mexem na chave), mas espera quem segura FOR UPDATE — ou seja,
 // cancelamento, reembolso e chargeback — e impede que eles comecem no meio da leitura.
 async function lockEventForCheckin(tx: Tx, eventId: string) {
-  const rows = await tx.$queryRaw<{ status: EventStatus; endsAt: Date; organizationId: string }[]>`SELECT status, "endsAt", "organizationId" FROM "Event" WHERE id = ${eventId} FOR KEY SHARE`;
+  const rows = await tx.$queryRaw<{ status: EventStatus; startsAt: Date; endsAt: Date; checkinOpensMinutesBefore: number; timezone: string; organizationId: string }[]>`
+    SELECT status, "startsAt", "endsAt", "checkinOpensMinutesBefore", timezone, "organizationId" FROM "Event" WHERE id = ${eventId} FOR KEY SHARE`;
   if (!rows[0]) throw notFound("Evento não encontrado.");
-  return { status: rows[0].status, endsAt: new Date(rows[0].endsAt), organizationId: rows[0].organizationId };
+  const r = rows[0];
+  return { ...r, startsAt: new Date(r.startsAt), endsAt: new Date(r.endsAt), checkinOpensMinutesBefore: Number(r.checkinOpensMinutesBefore) };
 }
 
 /**
@@ -64,7 +72,7 @@ async function lockOrderForCheckin(tx: Tx, orderId: string) {
   await tx.$queryRaw`SELECT status FROM "Order" WHERE id = ${orderId} FOR KEY SHARE`;
 }
 
-const ticketForView = { ticketType: { select: { name: true, kind: true } }, event: { select: { organizationId: true } } } as const;
+const ticketForView = { ticketType: { select: { name: true, kind: true } }, event: { select: { organizationId: true } }, order: { select: { isSimulated: true } } } as const;
 
 async function wasTransferred(tx: Tx, ticketId: string) {
   return !!(await tx.ticketTransfer.findFirst({ where: { ticketId, status: "ACCEPTED" }, select: { id: true } }));
@@ -103,7 +111,7 @@ export async function checkInTicket(
   let divergence: OfflineDivergence | undefined;
 
   const outcome = await db.$transaction(
-    async (tx): Promise<{ result: CheckinResult; ticket?: CheckinResponse["ticket"] }> => {
+    async (tx): Promise<{ result: CheckinResult; ticket?: CheckinResponse["ticket"]; opensAt?: Date; timezone?: string }> => {
       const record = (result: CheckinResult, ticketId: string | null, refusedButValid = false) => {
         divergence = refusedButValid ? "REFUSED_BUT_VALID" : local === "ADMITTED" && result !== "ADMITTED" ? "ADMITTED_BUT_REJECTED" : undefined;
         return tx.ticketCheckin.create({
@@ -121,7 +129,8 @@ export async function checkInTicket(
       // por 12 h; depois disso, fecha mesmo que o status no banco siga PUBLISHED.
       if (!checkinWindowOpen(event, now)) {
         await record("EVENT_NOT_ACTIVE", null);
-        return { result: "EVENT_NOT_ACTIVE" };
+        // Antes da abertura configurada pelo organizador: diz quando abre.
+        return checkinNotYetOpen(event, now) ? { result: "EVENT_NOT_ACTIVE", opensAt: checkinOpensAt(event), timezone: event.timezone } : { result: "EVENT_NOT_ACTIVE" };
       }
 
       // 2. QR → ingresso (busca pelo token; o código precisa bater).
@@ -142,7 +151,7 @@ export async function checkInTicket(
       }
       // Só consultado quando o ingresso vai aparecer na tela (mesma organização).
       const transferred = ticket.event.organizationId === event.organizationId ? await wasTransferred(tx, ticket.id) : false;
-      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, ticketKind: ticket.ticketType.kind, checkedInAt, transferred });
+      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, ticketKind: ticket.ticketType.kind, checkedInAt, transferred, simulated: ticket.order.isSimulated });
 
       if (ticket.eventId !== eventId) {
         // Ingresso de outra organização: a leitura não é vinculada ao ingresso nem revela
@@ -199,8 +208,17 @@ export async function checkInTicket(
       ? "Recusado sem internet, mas o ingresso é válido: continua sem entrada"
       : outcome.ticket?.qrReplaced
         ? "QR SUBSTITUÍDO — ingresso transferido"
-        : MESSAGES[outcome.result];
-  return { result: outcome.result, message, ticket: outcome.ticket, divergence, counters: opts.skipCounters ? { admitted: 0, total: 0 } : await counters(db, eventId) };
+        : outcome.opensAt
+          ? `Check-in ainda não abriu: abre ${formatDateTimeShort(outcome.opensAt, outcome.timezone)}`
+          : MESSAGES[outcome.result];
+  return {
+    result: outcome.result,
+    message,
+    ticket: outcome.ticket,
+    divergence,
+    ...(outcome.opensAt ? { opensAt: outcome.opensAt.toISOString() } : {}),
+    counters: opts.skipCounters ? { admitted: 0, total: 0 } : await counters(db, eventId),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +239,9 @@ export interface OfflinePackage {
   eventId: string;
   generatedAt: string;
   validUntil: string;
-  tickets: { h: string; code: string; status: "VALID" | "CHECKED_IN" | "REVOKED"; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind }[];
+  /** Abertura da portaria (ISO): antes disso o aparelho também recusa. Ausente em listas antigas. */
+  opensAt?: string;
+  tickets: { h: string; code: string; status: "VALID" | "CHECKED_IN" | "REVOKED"; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; sim?: boolean }[];
 }
 
 /**
@@ -231,17 +251,33 @@ export interface OfflinePackage {
  */
 export async function checkinOfflinePackage(db: Db, actor: Actor, eventId: string, now = new Date()): Promise<OfflinePackage> {
   await resolveCheckinAccess(db, actor, eventId);
-  const event = await db.event.findUnique({ where: { id: eventId }, select: { status: true, endsAt: true } });
-  if (!event || !checkinWindowOpen(event, now)) throw new AppError("INVALID_STATE", "O check-in deste evento não está aberto: não há lista para baixar.");
+  const event = await db.event.findUnique({ where: { id: eventId }, select: { status: true, startsAt: true, endsAt: true, checkinOpensMinutesBefore: true, timezone: true } });
+  // A lista pode ser baixada antes da abertura (preparação dos aparelhos), desde que a
+  // portaria abra dentro da validade dela; o aparelho só libera a partir da abertura.
+  const opensAt = event ? checkinOpensAt(event) : null;
+  const usable = event && (checkinWindowOpen(event, now) || (checkinNotYetOpen(event, now) && opensAt!.getTime() - now.getTime() < OFFLINE_PACKAGE_TTL_MS));
+  if (!event || !usable) {
+    const when = event && opensAt && checkinNotYetOpen(event, now) ? ` A portaria abre ${formatDateTimeShort(opensAt, event.timezone)}; baixe a lista nas 12 horas anteriores.` : "";
+    throw new AppError("INVALID_STATE", `O check-in deste evento não está aberto: não há lista para baixar.${when}`);
+  }
   const rows = await db.issuedTicket.findMany({
     where: { eventId },
-    select: { code: true, validationTokenHash: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } } },
+    select: { code: true, validationTokenHash: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } }, order: { select: { isSimulated: true } } },
   });
   return {
     eventId,
     generatedAt: now.toISOString(),
     validUntil: new Date(now.getTime() + OFFLINE_PACKAGE_TTL_MS).toISOString(),
-    tickets: rows.map((t) => ({ h: t.validationTokenHash, code: t.code, status: t.status, holderName: t.holderName, ticketTypeName: t.ticketType.name, ticketKind: t.ticketType.kind })),
+    opensAt: opensAt!.toISOString(),
+    tickets: rows.map((t) => ({
+      h: t.validationTokenHash,
+      code: t.code,
+      status: t.status,
+      holderName: t.holderName,
+      ticketTypeName: t.ticketType.name,
+      ticketKind: t.ticketType.kind,
+      ...(t.order.isSimulated ? { sim: true } : {}),
+    })),
   };
 }
 
@@ -349,4 +385,146 @@ export async function listOfflineDivergences(
     page,
     pageCount,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Configuração da portaria e histórico completo
+// ---------------------------------------------------------------------------
+
+/**
+ * Eventos da lista /check-in (até 12 h após o término): todos os da organização para
+ * quem vê o histórico completo (dono, admin, gestor de eventos); para a equipe de
+ * portaria, só os atribuídos e enquanto o papel ainda permitir ler QR — as mesmas
+ * regras de resolveCheckinAccess.
+ */
+export async function listCheckinEvents(db: Db, userId: string, now = new Date()) {
+  const memberships = await db.organizationMember.findMany({ where: { userId } });
+  const fullAccessOrgs = memberships.filter((m) => roleHas(m.role, "checkin:history")).map((m) => m.organizationId);
+  const scanOrgs = memberships.filter((m) => roleHas(m.role, "checkin:scan")).map((m) => m.organizationId);
+  return db.event.findMany({
+    where: {
+      status: { in: ["PUBLISHED", "COMPLETED"] },
+      endsAt: { gt: new Date(now.getTime() - CHECKIN_GRACE_MS) },
+      OR: [{ organizationId: { in: fullAccessOrgs } }, { organizationId: { in: scanOrgs }, staffAssignments: { some: { userId } } }],
+    },
+    orderBy: { startsAt: "asc" },
+    include: { organization: { select: { name: true } } },
+  });
+}
+
+/** Quantos minutos antes do início a portaria abre (quem edita o evento). */
+export async function setCheckinOpening(db: Db, actor: Actor, eventId: string, minutes: number) {
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_CHECKIN_OPENS_MINUTES)
+    throw new AppError("VALIDATION", "Escolha uma abertura entre o horário do início e 7 dias antes.");
+  return db.$transaction(async (tx) => {
+    await assertEventPermission(tx, actor, eventId, "event:write");
+    const [row] = await tx.$queryRaw<{ checkinOpensMinutesBefore: number; organizationId: string }[]>`
+      SELECT "checkinOpensMinutesBefore", "organizationId" FROM "Event" WHERE id = ${eventId} FOR NO KEY UPDATE`;
+    if (!row) throw notFound("Evento não encontrado.");
+    const previous = Number(row.checkinOpensMinutesBefore);
+    if (previous === minutes) return { minutes };
+    await tx.event.update({ where: { id: eventId }, data: { checkinOpensMinutesBefore: minutes } });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: row.organizationId,
+      action: "event.checkin_opening",
+      entityType: "Event",
+      entityId: eventId,
+      metadata: { minutes, previous },
+    });
+    return { minutes };
+  });
+}
+
+export const CHECKIN_RESULTS: readonly CheckinResult[] = ["ADMITTED", "DUPLICATE", "WRONG_EVENT", "REVOKED", "INVALID", "EVENT_NOT_ACTIVE"];
+
+export interface CheckinHistoryFilters {
+  result?: CheckinResult;
+  offline?: boolean;
+}
+
+/** Filtros da URL (`resultado`, `origem` = online/offline); valores desconhecidos são ignorados. */
+export function parseCheckinHistoryFilters(sp: Record<string, string | null | undefined>): CheckinHistoryFilters {
+  const result = CHECKIN_RESULTS.includes(sp.resultado as CheckinResult) ? (sp.resultado as CheckinResult) : undefined;
+  const offline = sp.origem === "offline" ? true : sp.origem === "online" ? false : undefined;
+  return { result, offline };
+}
+
+/** Filtros → parâmetros de URL (links, paginação e CSV). */
+export function checkinHistoryParams(f: CheckinHistoryFilters): { resultado?: string; origem?: string } {
+  return { resultado: f.result, origem: f.offline === undefined ? undefined : f.offline ? "offline" : "online" };
+}
+
+function historyWhere(eventId: string, f: CheckinHistoryFilters) {
+  return { eventId, ...(f.result ? { result: f.result } : {}), ...(f.offline !== undefined ? { offline: f.offline } : {}) };
+}
+
+/** Entradas por hora local do evento ("AAAA-MM-DD HH:00"), em ordem. */
+export function admittedPerHour(times: Date[], timeZone: string): { hour: string; admitted: number }[] {
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
+  const counts = new Map<string, number>();
+  for (const t of times) {
+    const p = Object.fromEntries(fmt.formatToParts(t).map((x) => [x.type, x.value]));
+    const key = `${p.year}-${p.month}-${p.day} ${p.hour}:00`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([hour, admitted]) => ({ hour, admitted }));
+}
+
+/** Linhas por exportação do histórico. */
+export const CHECKIN_EXPORT_LIMIT = 50_000;
+
+/**
+ * Histórico completo do evento (quem vê todas as leituras): página, filtros, totais por
+ * resultado e entradas liberadas por hora (fuso do evento).
+ */
+export async function checkinHistoryReport(db: Db, actor: Actor, eventId: string, filters: CheckinHistoryFilters = {}, opts: { page?: number; pageSize?: number } = {}) {
+  const { canSeeAllHistory } = await resolveCheckinAccess(db, actor, eventId);
+  if (!canSeeAllHistory) throw forbidden();
+  const event = await db.event.findUniqueOrThrow({ where: { id: eventId }, select: { timezone: true } });
+  const pageSize = opts.pageSize ?? 50;
+  const where = historyWhere(eventId, filters);
+  const [total, byResult, hours] = await Promise.all([
+    db.ticketCheckin.count({ where }),
+    db.ticketCheckin.groupBy({ by: ["result"], where: { eventId }, _count: { _all: true } }),
+    // Agrupado aqui, pelo horário que o Prisma devolve: conta de horário em SQL depende do
+    // fuso da sessão do banco (o adaptador grava sem fuso).
+    db.ticketCheckin.findMany({ where: { eventId, result: "ADMITTED" }, select: { scannedAt: true } }),
+  ]);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Math.floor(opts.page ?? 1) || 1), pageCount);
+  const rows = await db.ticketCheckin.findMany({
+    where,
+    include: { ticket: { select: { code: true, holderName: true } }, scannedBy: { select: { name: true } } },
+    orderBy: [{ scannedAt: "desc" }, { id: "desc" }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+  });
+  const counts = Object.fromEntries(CHECKIN_RESULTS.map((r) => [r, byResult.find((b) => b.result === r)?._count._all ?? 0])) as Record<CheckinResult, number>;
+  const perHour = admittedPerHour(hours.map((h) => h.scannedAt), event.timezone);
+  return { rows, total, page, pageCount, counts, perHour, timezone: event.timezone };
+}
+
+/** CSV do histórico com os filtros da tela; a exportação fica registrada. */
+export async function exportCheckinHistory(db: Db, actor: Actor, eventId: string, filters: CheckinHistoryFilters = {}) {
+  const { canSeeAllHistory } = await resolveCheckinAccess(db, actor, eventId);
+  if (!canSeeAllHistory) throw forbidden();
+  const event = await db.event.findUniqueOrThrow({ where: { id: eventId }, select: { timezone: true, organizationId: true, slug: true } });
+  const rows = await db.ticketCheckin.findMany({
+    where: historyWhere(eventId, filters),
+    include: { ticket: { select: { code: true, holderName: true } }, scannedBy: { select: { name: true } } },
+    orderBy: [{ scannedAt: "asc" }, { id: "asc" }],
+    take: CHECKIN_EXPORT_LIMIT + 1,
+  });
+  const truncated = rows.length > CHECKIN_EXPORT_LIMIT;
+  const items = truncated ? rows.slice(0, CHECKIN_EXPORT_LIMIT) : rows;
+  await audit(db, {
+    actorUserId: actor.id,
+    organizationId: event.organizationId,
+    action: "checkin.history_exported",
+    entityType: "Event",
+    entityId: eventId,
+    metadata: { rows: items.length, truncated, result: filters.result ?? null, offline: filters.offline ?? null },
+  });
+  return { items, truncated, timezone: event.timezone, slug: event.slug };
 }
