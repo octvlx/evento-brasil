@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useForm, useWatch, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ImagePlus } from "lucide-react";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, FieldError, Input, Label, Select, Textarea } from "@/components/ui/primitives";
 import { eventInputSchema, type EventInput } from "@/features/schemas";
 import { BR_TIMEZONES } from "@/lib/br";
-import { saveEventAction, uploadCoverAction } from "./actions";
+import { lookupVenuePostalCodeAction, saveEventAction, uploadCoverAction } from "./actions";
 import { MunicipalityCombobox } from "./municipality-combobox";
 import { CHANGE_REASON_MIN, CHANGE_REASON_REQUIRED, REFUND_WINDOW_DAYS_AFTER_CHANGE } from "./event-change-rules";
 
@@ -206,12 +206,12 @@ export function EventForm({ eventId, defaults, categories, venues, locked, relev
                   <Label htmlFor="vdist">Bairro</Label>
                   <Input id="vdist" className="mt-1.5" {...form.register("newVenue.district")} />
                 </div>
-                <div>
-                  <Label htmlFor="vcep">CEP</Label>
-                  <Input id="vcep" className="mt-1.5" inputMode="numeric" placeholder="00000-000" {...form.register("newVenue.postalCode")} />
-                  <FieldError message={errors.newVenue?.postalCode?.message} />
-                </div>
-                <EditMunicipality form={form} cityError={errors.newVenue?.cityIbgeCode?.message ?? errors.newVenue?.cityId?.message} ufError={errors.newVenue?.cityUf?.message} />
+                <EditPostalCodeAndCity
+                  form={form}
+                  postalCodeError={errors.newVenue?.postalCode?.message}
+                  cityError={errors.newVenue?.cityIbgeCode?.message ?? errors.newVenue?.cityId?.message}
+                  ufError={errors.newVenue?.cityUf?.message}
+                />
               </div>
             )}
           </div>
@@ -350,9 +350,120 @@ export function EventForm({ eventId, defaults, categories, venues, locked, relev
   );
 }
 
-function EditMunicipality({ form, ufError, cityError }: { form: UseFormReturn<EventInput>; ufError?: string; cityError?: string }) {
+/**
+ * CEP com busca no ViaCEP (pelo servidor, a mesma do assistente) e a cidade. Ao sair do
+ * campo só preenche o que estiver vazio; "Buscar" sobrescreve rua, bairro e cidade. O
+ * número fica sempre com o organizador (o endereço aqui é "rua e número" numa linha).
+ */
+function EditPostalCodeAndCity({
+  form,
+  postalCodeError,
+  ufError,
+  cityError,
+}: {
+  form: UseFormReturn<EventInput>;
+  postalCodeError?: string;
+  ufError?: string;
+  cityError?: string;
+}) {
   const [uf, ibgeCode] = useWatch({ control: form.control, name: ["newVenue.cityUf", "newVenue.cityIbgeCode"] });
   const [name, setName] = useState("");
+  const [state, setState] = useState<{ tone: "info" | "error"; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const revision = useRef(0);
+  const last = useRef<string | null>(null);
+  const field = form.register("newVenue.postalCode");
+
+  async function lookup(force: boolean) {
+    const digits = (form.getValues("newVenue.postalCode") ?? "").replace(/\D/g, "");
+    if (!/^\d{8}$/.test(digits)) {
+      if (force) setState({ tone: "error", text: "Informe um CEP de 8 dígitos." });
+      return;
+    }
+    if (!force && last.current === digits) return;
+    const mine = ++revision.current;
+    last.current = digits;
+    setBusy(true);
+    setState({ tone: "info", text: "Buscando endereço…" });
+    const res = await lookupVenuePostalCodeAction(digits);
+    if (mine !== revision.current) return;
+    setBusy(false);
+    if (!res.ok) return setState({ tone: "error", text: `${res.error.replace(/\s*Preencha o endereço manualmente\.?$/, "")} Você pode preencher o endereço manualmente.` });
+    const a = res.data;
+    const opts = { shouldDirty: true };
+    form.setValue("newVenue.postalCode", `${digits.slice(0, 5)}-${digits.slice(5)}`, opts);
+    if (a.street && (force || !form.getValues("newVenue.addressLine")?.trim())) form.setValue("newVenue.addressLine", `${a.street}, `, opts);
+    if (a.district && (force || !form.getValues("newVenue.district")?.trim())) form.setValue("newVenue.district", a.district, opts);
+    if (a.ibgeCode && (force || !form.getValues("newVenue.cityIbgeCode"))) {
+      form.setValue("newVenue.cityUf", a.state, opts);
+      form.setValue("newVenue.cityIbgeCode", a.ibgeCode, opts);
+      setName(a.city);
+    }
+    const tips = [!a.street && "informe a rua (CEP geral da cidade)", !a.ibgeCode && `escolha a cidade na lista (${a.city} – ${a.state} não foi encontrada na base do IBGE)`, "complete o número no endereço"].filter(Boolean);
+    setState({ tone: "info", text: `Endereço localizado: ${[a.street, a.district, `${a.city} — ${a.state}`].filter(Boolean).join(", ")}. Agora ${tips.join(" e ")}.` });
+  }
+
+  return (
+    <>
+      <div>
+        <Label htmlFor="vcep">CEP</Label>
+        <div className="mt-1.5 flex gap-2">
+          <Input
+            {...field}
+            id="vcep"
+            inputMode="numeric"
+            autoComplete="postal-code"
+            placeholder="00000-000"
+            maxLength={9}
+            aria-describedby="vcep-status"
+            onChange={(e) => {
+              revision.current++;
+              setBusy(false);
+              setState(null);
+              return field.onChange(e);
+            }}
+            onBlur={(e) => {
+              void lookup(false);
+              return field.onBlur(e);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void lookup(true);
+              }
+            }}
+          />
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void lookup(true)}>
+            Buscar
+          </Button>
+        </div>
+        <p id="vcep-status" role="status" className={state?.tone === "error" ? "mt-1 text-xs text-destructive" : "mt-1 text-xs text-muted-foreground"}>
+          {state?.text}
+        </p>
+        <FieldError message={postalCodeError} />
+      </div>
+      <EditMunicipality form={form} uf={uf} ibgeCode={ibgeCode} name={name} setName={setName} cityError={cityError} ufError={ufError} />
+    </>
+  );
+}
+
+function EditMunicipality({
+  form,
+  uf,
+  ibgeCode,
+  name,
+  setName,
+  ufError,
+  cityError,
+}: {
+  form: UseFormReturn<EventInput>;
+  uf: unknown;
+  ibgeCode: unknown;
+  name: string;
+  setName: (v: string) => void;
+  ufError?: string;
+  cityError?: string;
+}) {
   return (
     <MunicipalityCombobox
       className="sm:col-span-2"

@@ -71,6 +71,7 @@ export function transactionalEmail(
     | "refund"
     | "cancellation"
     | "invitation"
+    | "ownership"
     | "event",
   title: string,
   lines: string[],
@@ -83,11 +84,14 @@ export function transactionalEmail(
     refund: `Atualização do seu reembolso | ${BRAND.name}`,
     cancellation: `Seu pedido de cancelamento | ${BRAND.name}`,
     invitation: `Você recebeu um convite | ${BRAND.name}`,
+    ownership: `Responsável pela organização | ${BRAND.name}`,
     event: `Atualização importante sobre seu evento | ${BRAND.name}`,
   };
   const label =
     kind === "invitation"
       ? "Visualizar convite"
+      : kind === "ownership"
+        ? "Abrir"
       : kind === "tickets"
         ? "Visualizar meus ingressos"
         : "Ver detalhes";

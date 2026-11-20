@@ -3,6 +3,7 @@
 // deixar a organização sem OWNER. Inclui casos de autorização negada e concorrência.
 import { beforeEach, describe, expect, it } from "vitest";
 import type { OrgRole } from "@/generated/prisma/client";
+import { hashToken, randomToken } from "@/server/crypto";
 import {
   acceptInvitation,
   changeMemberRole,
@@ -135,8 +136,14 @@ describe("N — convites da equipe", () => {
     const { owner, org } = await teamOrg();
     const invitee = await makeUser();
     const a = await inviteMember(db, owner, org.id, { email: invitee.email, role: "FINANCE" });
-    const b = await inviteMember(db, owner, org.id, { email: invitee.email, role: "EVENT_MANAGER" });
-    const results = await Promise.allSettled([acceptInvitation(db, invitee, a.token), acceptInvitation(db, invitee, b.token)]);
+    // Hoje só há um convite ativo por e-mail (CONFLICT); o segundo simula um convite
+    // anterior a essa regra, que ainda pode estar no banco.
+    await expect(inviteMember(db, owner, org.id, { email: invitee.email, role: "EVENT_MANAGER" })).rejects.toMatchObject({ code: "CONFLICT" });
+    const bToken = randomToken(32);
+    await db.organizationInvitation.create({
+      data: { organizationId: org.id, email: invitee.email, role: "EVENT_MANAGER", tokenHash: hashToken(bToken), invitedById: owner.id, expiresAt: new Date(Date.now() + 86_400_000) },
+    });
+    const results = await Promise.allSettled([acceptInvitation(db, invitee, a.token), acceptInvitation(db, invitee, bToken)]);
     expect(results.every((r) => r.status === "fulfilled")).toBe(true);
     expect(await db.organizationMember.count({ where: { organizationId: org.id, userId: invitee.id } })).toBe(1);
   });
