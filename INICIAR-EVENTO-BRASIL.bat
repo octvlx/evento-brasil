@@ -44,6 +44,9 @@ echo  [ok] Dependencias instaladas
 
 rem --- 4. Banco de dados -----------------------------------------------------
 echo.
+rem PostgreSQL instalado como servico (ou Docker) ja respondendo: nao sobe o embutido.
+node scripts\setup-helper.mjs db-up
+if not errorlevel 1 goto :db_ready
 echo  [..] Iniciando o banco de dados...
 start "Evento Brasil - Banco de dados" /min cmd /k "npm run db:start"
 node scripts\setup-helper.mjs wait-db
@@ -51,6 +54,7 @@ if errorlevel 1 (
   echo  [ERRO] O banco de dados nao respondeu. Veja a janela "Evento Brasil - Banco de dados".
   goto :fail
 )
+:db_ready
 echo  [ok] Banco de dados ativo
 
 call npx prisma migrate deploy

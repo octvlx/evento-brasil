@@ -265,7 +265,7 @@ Pré-requisitos: Node 24, `npm ci`, `.env` copiado de `.env.example` (nunca vers
 | Docker | `docker compose up -d` (porta 5433, volume `pgdata`, health check) |
 | Sem Docker | `npm run db:start` (PostgreSQL embutido; dados em `%LOCALAPPDATA%\evento-brasil\pgdata\<porta>` no Windows e `~/.local/share/evento-brasil/pgdata/<porta>` nos demais; `DEV_PG_DATA_DIR` sobrescreve; recusa `NODE_ENV=production`) |
 | Windows, um clique | `INICIAR-EVENTO-BRASIL.bat` |
-| PostgreSQL instalado (serviço) | Instale o PostgreSQL 17 (instalador oficial para Windows) na porta da `DATABASE_URL` e rode `npm run db:setup-service` (cria usuário e banco do `.env`, collation C, fuso `America/Sao_Paulo`; `-- --testes` cria também `evento_test` e `evento_e2e`). Depois `db:deploy` e `db:seed`. Não use `db:start` na mesma porta. |
+| PostgreSQL instalado (serviço) | Instale o PostgreSQL 17 (instalador oficial para Windows) na porta da `DATABASE_URL` e rode `npm run db:setup-service` (cria usuário e banco do `.env`, collation C, fuso `America/Sao_Paulo`; `-- --testes` cria também `evento_test` e `evento_e2e`). Depois `db:deploy` e `db:seed`. Com o serviço no ar, `db:start` e o `INICIAR-EVENTO-BRASIL.bat` detectam o banco respondendo na porta da `DATABASE_URL` e não sobem o embutido. |
 
 ### Quando o PostgreSQL embutido não inicia no Windows
 
