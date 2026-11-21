@@ -20,13 +20,20 @@ import { halfPriceEventInput } from "./half-price";
 import { rankPublicEventPage, type RankOptions } from "./search-ranking";
 import { publicExternalWhere } from "./external-visibility";
 
-export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
+/** À venda e acessível pelo link (inclui evento privado). */
+export const reachableEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
   // Suspenso pela plataforma: fora da vitrine (os ingressos vendidos continuam valendo).
   suspendedAt: null,
   endsAt: { gt: now },
   organization: { status: "APPROVED" },
 });
+
+/**
+ * Listagens públicas (busca, vitrines, cidade, perfil, sitemap): como `reachableEventWhere`,
+ * sem eventos privados. A página do evento continua abrindo pelo link (getPublicEvent).
+ */
+export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({ ...reachableEventWhere(now), isUnlisted: false });
 
 // Cards do not need full descriptions, policies, or organizer-only event fields.
 const cardSelect = {
@@ -492,7 +499,7 @@ export async function relatedEvents(db: Db, event: { id: string; categoryId: str
 /** Eventos já realizados de um organizador (perfil público), mais recentes primeiro. */
 export async function pastOrganizerEvents(db: Db, organizationId: string, limit = 12, now = new Date()) {
   const rows = await db.event.findMany({
-    where: { organizationId, status: { in: ["PUBLISHED", "COMPLETED"] }, endsAt: { lte: now }, organization: { status: "APPROVED" } },
+    where: { organizationId, status: { in: ["PUBLISHED", "COMPLETED"] }, endsAt: { lte: now }, isUnlisted: false, organization: { status: "APPROVED" } },
     select: cardSelect,
     orderBy: [{ startsAt: "desc" }, { id: "desc" }],
     take: limit,
@@ -584,7 +591,8 @@ const TRACKING_CODE = /^[A-Za-z0-9]{6,16}$/;
 export async function recordTrackingClick(db: Db, code: string, now = new Date()) {
   if (!TRACKING_CODE.test(code)) return null;
   const link = await db.trackingLink.findFirst({
-    where: { code, archivedAt: null, event: publicEventWhere(now) },
+    // Link rastreado também funciona para evento privado: é um jeito de divulgar o link.
+    where: { code, archivedAt: null, event: reachableEventWhere(now) },
     select: { id: true, utmSource: true, utmMedium: true, utmCampaign: true, utmContent: true, utmTerm: true, event: { select: { slug: true } } },
   });
   if (!link) return null;

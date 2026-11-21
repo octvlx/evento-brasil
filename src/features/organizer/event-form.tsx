@@ -44,6 +44,7 @@ export function EventForm({ eventId, defaults, categories, venues, locked, relev
   const { errors } = form.formState;
   const locationType = useWatch({ control: form.control, name: "locationType" });
   const cover = useWatch({ control: form.control, name: "coverImageUrl" });
+  const mapImage = useWatch({ control: form.control, name: "mapImageUrl" });
   const [startsAtLocal, timezone, venueId] = useWatch({ control: form.control, name: ["startsAtLocal", "timezone", "venueId"] });
   const [reasonRequested, setReasonRequested] = useState(false);
   // Prévia no navegador; quem decide é o servidor (que também compara cidade do local).
@@ -85,13 +86,13 @@ export function EventForm({ eventId, defaults, categories, venues, locked, relev
     }),
   );
 
-  const upload = async (file: File) => {
+  const upload = async (file: File, target: "coverImageUrl" | "mapImageUrl" = "coverImageUrl") => {
     setUploading(true);
     const fd = new FormData();
     fd.set("file", file);
     const res = await uploadCoverAction(fd);
     setUploading(false);
-    if (res.ok) form.setValue("coverImageUrl", res.data.url, { shouldDirty: true });
+    if (res.ok) form.setValue(target, res.data.url, { shouldDirty: true });
     else setError(res.error);
   };
 
@@ -326,6 +327,36 @@ export function EventForm({ eventId, defaults, categories, venues, locked, relev
         <div className="sm:col-span-2">
           <Label htmlFor="accessibilityInfo">Acessibilidade</Label>
           <Textarea id="accessibilityInfo" className="mt-1.5" placeholder="Rampas, banheiros adaptados, Libras, espaço para cadeirantes…" {...form.register("accessibilityInfo")} />
+        </div>
+        <div className="sm:col-span-2">
+          <Label>Mapa do evento (opcional)</Label>
+          <div className="mt-1.5 flex flex-wrap items-center gap-4">
+            {mapImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={mapImage} alt="Mapa atual" className="h-20 w-32 rounded-xl object-contain bg-muted" />
+            ) : (
+              <div className="grid h-20 w-32 place-items-center rounded-xl bg-muted text-xs text-muted-foreground">Sem mapa</div>
+            )}
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">
+              <ImagePlus className="size-4" aria-hidden /> {uploading ? "Enviando…" : "Enviar mapa"}
+              <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0], "mapImageUrl")} />
+            </label>
+            {mapImage && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => form.setValue("mapImageUrl", "", { shouldDirty: true })}>
+                Remover mapa
+              </Button>
+            )}
+            <span className="text-xs text-muted-foreground">Planta com setores, palco e acessos. JPG, PNG ou WebP até 5 MB.</span>
+          </div>
+          <FieldError message={errors.mapImageUrl?.message} />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" {...form.register("isUnlisted")} /> Evento privado (fora da busca)
+          </label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Não aparece na busca, na página da cidade, no seu perfil público nem nos buscadores. Quem tiver o link (ou um link rastreado) abre a página e compra normalmente.
+          </p>
         </div>
       </fieldset>
       {showReason && !locked && (

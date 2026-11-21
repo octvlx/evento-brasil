@@ -175,6 +175,8 @@ export const step4Schema = z.object({
   coverImageUrl: s.coverImageUrl,
   ageRestriction: s.ageRestriction,
   accessibilityInfo: s.accessibilityInfo,
+  mapImageUrl: s.mapImageUrl,
+  isUnlisted: s.isUnlisted,
 });
 
 export const step5Schema = z.object({
@@ -197,7 +199,7 @@ export const STEP_FIELDS: Record<DataStep, readonly string[]> = {
   1: ["title", "categoryId", "summary"],
   2: ["timezone", "startsAtLocal", "endsAtLocal", "locationType", "venueMode", "venueId", "newVenue", "onlineUrl"],
   3: ["capacity", "halfPriceQuotaPercent", "maxTicketsPerAccount", "salesStartLocal", "salesEndLocal"],
-  4: ["description", "coverImageUrl", "ageRestriction", "accessibilityInfo"],
+  4: ["description", "coverImageUrl", "ageRestriction", "accessibilityInfo", "mapImageUrl", "isUnlisted"],
   5: ["refundPolicy", "refundWindowDays", "refundMinHoursBeforeEvent", "transferDeadlineHours", "transferMaxTransfers", "transferAllowReturn"],
 };
 
@@ -234,6 +236,8 @@ export interface WizardValues {
   coverImageUrl: string;
   ageRestriction: string;
   accessibilityInfo: string;
+  mapImageUrl: string;
+  isUnlisted: boolean;
   transferDeadlineHours: string;
   transferMaxTransfers: string;
   transferAllowReturn: boolean;
@@ -264,6 +268,8 @@ export const BLANK_WIZARD_VALUES: WizardValues = {
   coverImageUrl: "",
   ageRestriction: "0",
   accessibilityInfo: "",
+  mapImageUrl: "",
+  isUnlisted: false,
   transferDeadlineHours: "24",
   transferMaxTransfers: "1",
   transferAllowReturn: false,
@@ -308,6 +314,8 @@ export function wizardToEventInput(v: WizardValues, changeReason?: string): Even
     maxTicketsPerAccount: v.maxTicketsPerAccount,
     coverImageUrl: v.coverImageUrl,
     accessibilityInfo: v.accessibilityInfo,
+    mapImageUrl: v.mapImageUrl,
+    isUnlisted: v.isUnlisted,
     refundPolicy: v.refundPolicy,
     refundWindowDays: v.refundWindowDays,
     refundMinHoursBeforeEvent: v.refundMinHoursBeforeEvent,
@@ -349,6 +357,8 @@ export function stepPayload(step: DataStep, v: WizardValues): Record<string, unk
         coverImageUrl: v.coverImageUrl,
         ageRestriction: v.ageRestriction,
         accessibilityInfo: v.accessibilityInfo,
+        mapImageUrl: v.mapImageUrl,
+        isUnlisted: v.isUnlisted,
       };
     case 5:
       return {

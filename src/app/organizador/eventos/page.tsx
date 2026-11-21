@@ -112,6 +112,11 @@ async function Content({ searchParams }: { searchParams: Promise<Params> }) {
                           Suspenso
                         </Badge>
                       )}
+                      {e.isUnlisted && (
+                        <Badge className="ml-1" title="Fora da busca e das vitrines; abre pelo link">
+                          Privado
+                        </Badge>
+                      )}
                     </td>
                     <td className="p-3 text-right tabular-nums">
                       {sold}/{e.capacity}

@@ -146,6 +146,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             id: t.id,
             name: t.name,
             description: t.description,
+            sector: t.sector,
             kind: t.kind,
             priceCents: t.priceCents,
             quantityTotal: t.quantityTotal,
@@ -256,6 +257,8 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             refundMinHoursBeforeEvent: event.refundMinHoursBeforeEvent,
             accessibilityInfo: event.accessibilityInfo ?? undefined,
             coverImageUrl: event.coverImageUrl ?? undefined,
+            mapImageUrl: event.mapImageUrl ?? undefined,
+            isUnlisted: event.isUnlisted,
           }}
         />
       </Card>
