@@ -21,6 +21,22 @@ export class PaymentNotStartedError extends AppError {
   }
 }
 
+/**
+ * O provedor recebeu o pedido e o recusou de forma definitiva (HTTP 400/422): nada foi
+ * criado nele. Diferente de timeout, 5xx ou 409, em que o resultado é incerto.
+ * `causeCodes` são só os códigos (ex.: "2031"); a mensagem do provedor nunca é guardada.
+ */
+export class ProviderRejectedError extends AppError {
+  constructor(
+    public readonly httpStatus: number,
+    public readonly causeCodes: readonly string[],
+    message: string,
+  ) {
+    super("PROVIDER_ERROR", message);
+    this.name = "ProviderRejectedError";
+  }
+}
+
 export type ProviderMethod = "PIX" | "CREDIT_CARD";
 
 export type ProviderPaymentStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "CANCELLED" | "REFUNDED" | "DISPUTED" | "CHARGED_BACK";

@@ -18,7 +18,7 @@ import { audit } from "../audit";
 import { adminHas } from "../auth/admin-roles";
 import { assertActive, assertOrgPermission, type Actor, assertAdminPermission } from "../auth/permissions";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
-import { VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
+import { ProviderRejectedError, VALID_PAID_PAYMENTS, type PaymentProviderAdapter } from "../payments/types";
 import { commissionReturnedOnRefund } from "./commission";
 import { financeLog } from "./finance-log";
 import { postReversal } from "./ledger";
@@ -530,11 +530,32 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
     await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
     return db.refund.findUnique({ where: { id: refundId } });
   }
+  const { key, rotated } = await refundAttemptKey(db, refund);
+  if (rotated) {
+    // Chave nova só depois de confirmar no provedor que este estorno não aconteceu.
+    let state: ProviderRefundState;
+    try {
+      state = await providerRefundState(db, adapter, { ...refund, payment: refund.payment });
+    } catch (err) {
+      await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro ao consultar o provedor antes de nova tentativa: ${String(err).slice(0, 300)}`);
+      return db.refund.findUnique({ where: { id: refundId } });
+    }
+    if (state === "REFUNDED") {
+      await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
+      await audit(db, { organizationId: refund.order.organizationId, action: "refund.found_refunded_before_retry", entityType: "Refund", entityId: refundId, metadata: { orderId: refund.orderId } });
+      financeLog("warn", "refund.found_refunded_before_retry", { orderId: refund.orderId, refundId }, {});
+      return db.refund.findUnique({ where: { id: refundId } });
+    }
+    if (state === "MISMATCH") {
+      await recordRefundFailure(db, refund, "PROVIDER_STATE_MISMATCH", "o total estornado no provedor não bate com os reembolsos do pedido: exige análise manual.");
+      return db.refund.findUnique({ where: { id: refundId } });
+    }
+  }
   try {
     const result = await adapter.refundPayment({
       providerPaymentId: refund.payment.providerPaymentId,
       amountCents: refund.amountCents,
-      idempotencyKey: refund.idempotencyKey,
+      idempotencyKey: key,
       organizationId: refund.order.organizationId,
     });
     await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });
@@ -542,9 +563,57 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
     else if (result.status === "FAILED") await recordRefundFailure(db, refund, "PROVIDER_REFUSED", "Provedor recusou o estorno.");
     // PENDING: aguarda webhook do provedor.
   } catch (err) {
-    await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro no provedor: ${String(err).slice(0, 300)}`);
+    if (err instanceof ProviderRejectedError) await recordRefundFailure(db, refund, "PROVIDER_REJECTED", rejectionMessage(err));
+    else await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro no provedor: ${String(err).slice(0, 300)}`);
   }
   return db.refund.findUnique({ where: { id: refundId } });
+}
+
+/** Saldo do vendedor abaixo do valor a devolver (Mercado Pago, cause 2031). */
+const INSUFFICIENT_SELLER_BALANCE_CAUSE = "2031";
+
+function rejectionMessage(err: ProviderRejectedError) {
+  const where = `HTTP ${err.httpStatus}${err.causeCodes.length ? `, cause ${err.causeCodes.join(",")}` : ""}`;
+  return err.causeCodes.includes(INSUFFICIENT_SELLER_BALANCE_CAUSE)
+    ? `saldo insuficiente na conta Mercado Pago do organizador para o estorno (${where}). Peça ao organizador para deixar o valor disponível na conta e reprocesse.`
+    : `provedor recusou o pedido de estorno (${where}).`;
+}
+
+/**
+ * Chave de idempotência desta tentativa. O provedor guarda a resposta de uma chave
+ * (no Mercado Pago, por 24 h): reenviar a mesma chave depois de uma recusa definitiva
+ * repetiria a recusa mesmo com a causa resolvida (ex.: saldo reposto). Cada recusa
+ * definitiva — HTTP 400/422 ou estorno criado e rejeitado — "gasta" a chave e a próxima
+ * tentativa usa outra. Falhas incertas (timeout, 5xx, 409) mantêm a chave, para o
+ * provedor reconhecer a repetição e nunca estornar duas vezes.
+ */
+async function refundAttemptKey(client: Db | Tx, refund: { id: string; idempotencyKey: string }) {
+  const rejections = await client.auditLog.count({
+    where: {
+      entityType: "Refund",
+      entityId: refund.id,
+      action: ATTEMPT_FAILED,
+      OR: DEFINITIVE_REJECTIONS.map((kind) => ({ metadata: { path: ["kind"], equals: kind } })),
+    },
+  });
+  return { key: rejections ? `${refund.idempotencyKey}:r${rejections}` : refund.idempotencyKey, rotated: rejections > 0 };
+}
+
+type ProviderRefundState = "REFUNDED" | "NOT_REFUNDED" | "MISMATCH";
+
+/** Este estorno já aconteceu no provedor? Compara o total estornado lá com os reembolsos concluídos aqui. */
+async function providerRefundState(
+  db: Db,
+  adapter: PaymentProviderAdapter,
+  refund: { id: string; orderId: string; amountCents: number; order: { organizationId: string }; payment: { providerPaymentId: string | null } },
+): Promise<ProviderRefundState> {
+  const snapshot = await adapter.getPayment(refund.payment.providerPaymentId!, { organizationId: refund.order.organizationId });
+  if (snapshot.status === "REFUNDED") return "REFUNDED";
+  if (snapshot.refundedCents == null) return "MISMATCH";
+  const succeeded = await committedRefundCents(db, refund.orderId, ["SUCCEEDED"], refund.id);
+  if (snapshot.refundedCents >= succeeded + refund.amountCents) return "REFUNDED";
+  if (snapshot.refundedCents === succeeded && snapshot.status === "PAID") return "NOT_REFUNDED";
+  return "MISMATCH";
 }
 
 // ───────────────────────────── Política para reembolso FAILED ─────────────────────────────
@@ -553,9 +622,12 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
 // Se o provedor recusar ou falhar, o comprador ficaria sem dinheiro e sem ingresso,
 // então a falha NUNCA é silenciosa:
 //   1. cada falha é registrada (auditoria `refund.attempt_failed` + log com o id do pedido);
-//   2. a manutenção (cron) reprocessa automaticamente, com a MESMA chave de
-//      idempotência, até `maxAutomaticAttempts` tentativas, com espera crescente;
-//   3. esgotadas as tentativas (ou bloqueio por estorno acima do pago), o reembolso
+//   2. a manutenção (cron) reprocessa automaticamente até `maxAutomaticAttempts`
+//      tentativas, com espera crescente. A chave de idempotência só muda depois de
+//      uma recusa definitiva, e só após confirmar no provedor que o estorno não
+//      aconteceu (`refundAttemptKey`, `providerRefundState`);
+//   3. esgotadas as tentativas (ou bloqueio por estorno acima do pago / total no
+//      provedor que não bate), o reembolso
 //      fica aguardando decisão do admin: reprocessar (`adminRetryRefund`) ou
 //      restaurar os ingressos e voltar o pedido a PAID (`adminRestoreAfterFailedRefund`).
 // As tentativas são contadas pelos registros de auditoria (sem coluna no schema).
@@ -567,13 +639,16 @@ export const REFUND_RETRY_POLICY = {
   backoffMinutes: [5, 30, 120],
 } as const;
 
-type RefundFailureKind = "PROVIDER_REFUSED" | "PROVIDER_ERROR" | "OVER_REFUND_BLOCKED";
+type RefundFailureKind = "PROVIDER_REFUSED" | "PROVIDER_REJECTED" | "PROVIDER_ERROR" | "OVER_REFUND_BLOCKED" | "PROVIDER_STATE_MISMATCH";
 
 const ATTEMPT_FAILED = "refund.attempt_failed";
+/** Falhas em que o provedor recusou sem estornar: a chave usada não serve mais. */
+const DEFINITIVE_REJECTIONS: RefundFailureKind[] = ["PROVIDER_REJECTED", "PROVIDER_REFUSED"];
+/** Bloqueios: não são tentativas no provedor e nunca são reprocessados sozinhos. */
+const BLOCKING_KINDS: RefundFailureKind[] = ["OVER_REFUND_BLOCKED", "PROVIDER_STATE_MISMATCH"];
 
 async function recordRefundFailure(db: Db, refund: { id: string; orderId: string }, kind: RefundFailureKind, message: string) {
-  // Bloqueio por estorno acima do pago não é tentativa no provedor e nunca é reprocessado sozinho.
-  const isAttempt = kind !== "OVER_REFUND_BLOCKED";
+  const isAttempt = !BLOCKING_KINDS.includes(kind);
   const max = REFUND_RETRY_POLICY.maxAutomaticAttempts;
   const failure = await db.$transaction(async (tx) => {
     const ref = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { eventId: true } });
@@ -625,7 +700,7 @@ export async function refundRetryStates(client: Db | Tx, refunds: { id: string; 
     refunds.map((r): [string, RefundRetryState] => {
       const row = byId.get(r.id);
       const attempts = row?._count._all ?? 0;
-      const blocked = r.note?.startsWith("OVER_REFUND_BLOCKED") ?? false;
+      const blocked = BLOCKING_KINDS.some((kind) => r.note?.startsWith(kind));
       if (blocked || attempts >= maxAutomaticAttempts) return [r.id, { attempts, nextRetryAt: null, awaitingAdminDecision: true }];
       const last = row?._max.createdAt ?? r.updatedAt;
       const wait = backoffMinutes[Math.max(0, attempts - 1)] ?? backoffMinutes[backoffMinutes.length - 1];
@@ -843,8 +918,8 @@ export async function adminRestoreAfterFailedRefund(
 
 /**
  * Retoma um reembolso parado em PROCESSING (ex.: o processo caiu entre "reivindicar"
- * e chamar o provedor). Reenvia ao provedor com a MESMA chave de idempotência, então
- * nunca estorna duas vezes. Usado pela reconciliação.
+ * e chamar o provedor). Reenvia ao provedor com a MESMA chave da tentativa interrompida
+ * (`refundAttemptKey`), então nunca estorna duas vezes. Usado pela reconciliação.
  */
 export async function resumeRefund(db: Db, adapter: PaymentProviderAdapter, refundId: string) {
   const refund = await db.refund.findUnique({
@@ -858,17 +933,20 @@ export async function resumeRefund(db: Db, adapter: PaymentProviderAdapter, refu
     await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
     return "SUCCEEDED";
   }
+  // A mesma chave da tentativa interrompida: o provedor reconhece a repetição.
+  const { key } = await refundAttemptKey(db, refund);
   let result;
   try {
     result = await adapter.refundPayment({
       providerPaymentId: refund.payment.providerPaymentId,
       amountCents: refund.amountCents,
-      idempotencyKey: refund.idempotencyKey,
+      idempotencyKey: key,
       organizationId: refund.order.organizationId,
     });
   } catch (err) {
     // Entra na política de retentativas limitadas em vez de ficar preso em PROCESSING.
-    await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro no provedor (reconciliação): ${String(err).slice(0, 300)}`);
+    if (err instanceof ProviderRejectedError) await recordRefundFailure(db, refund, "PROVIDER_REJECTED", `${rejectionMessage(err)} (reconciliação)`);
+    else await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro no provedor (reconciliação): ${String(err).slice(0, 300)}`);
     return "FAILED";
   }
   await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });

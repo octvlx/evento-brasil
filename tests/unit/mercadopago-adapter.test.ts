@@ -23,7 +23,7 @@ vi.mock("@/server/payments/mercadopago-oauth", () => ({
 }));
 
 import { MercadoPagoAdapter } from "@/server/payments/mercadopago";
-import { PaymentNotStartedError } from "@/server/payments/types";
+import { PaymentNotStartedError, ProviderRejectedError } from "@/server/payments/types";
 
 const db = {
   payment: { findUnique: vi.fn(), findFirst: vi.fn() },
@@ -234,6 +234,31 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(diagnostic).toContain("4021");
     expect(diagnostic).not.toContain("private token");
     expect(diagnostic).not.toContain("do-not-log");
+  });
+
+  it("refund: 400 with a cause is a definitive rejection with only the cause codes; 409 and 5xx stay uncertain", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const refund = () => adapter().refundPayment({ providerPaymentId: "190", amountCents: 100, idempotencyKey: "refund:o1:admin:r1", organizationId: "org-1" }).catch((e: unknown) => e);
+
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(
+      { error: "bad_request", message: "Collector hasn't enough available money", cause: [{ code: 2031, description: "do-not-keep" }] },
+      { status: 400 },
+    ));
+    const rejected = await refund();
+    expect(rejected).toBeInstanceOf(ProviderRejectedError);
+    expect(rejected).toMatchObject({ code: "PROVIDER_ERROR", httpStatus: 400, causeCodes: ["2031"] });
+    expect(JSON.stringify(rejected)).not.toContain("do-not-keep");
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url)).toBe("https://api.mercadopago.com/v1/payments/190/refunds");
+    expect(new Headers(init?.headers).get("X-Idempotency-Key")).toBe("refund:o1:admin:r1");
+    expect(JSON.parse(String(init?.body))).toEqual({ amount: 1 });
+
+    for (const status of [409, 500]) {
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json({ error: "x" }, { status }));
+      const uncertain = await refund();
+      expect(uncertain).toMatchObject({ code: "PROVIDER_ERROR" });
+      expect(uncertain).not.toBeInstanceOf(ProviderRejectedError);
+    }
   });
 
   it("maps an authoritative payment response and uses the seller account from a verified webhook", async () => {

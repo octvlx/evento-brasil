@@ -106,7 +106,7 @@ describe("recusa do provedor", () => {
 });
 
 describe("retentativa automática", () => {
-  it("respeita a espera e conclui com a mesma chave de idempotência", async () => {
+  it("respeita a espera e conclui com chave nova depois da recusa (a recusa 'gasta' a chave)", async () => {
     const { tt, customer, order } = await setup();
     const { flaky, calls } = scriptedAdapter(["refuse", "ok"]);
     const refund = await requestCustomerRefund(db, flaky, customer, order.id);
@@ -117,7 +117,8 @@ describe("retentativa automática", () => {
 
     const report = await reconcilePayments(db, flaky, minutesFromNow(6));
     expect(report).toMatchObject({ refundsRetried: 1, refundsRetrySucceeded: 1, refundsAwaitingAdminDecision: 0, errors: [] });
-    expect(new Set(calls.map((c) => c.idempotencyKey))).toEqual(new Set([refund.idempotencyKey]));
+    // Reenviar a chave recusada repetiria a resposta guardada pelo provedor.
+    expect(calls.map((c) => c.idempotencyKey)).toEqual([refund.idempotencyKey, `${refund.idempotencyKey}:r1`]);
 
     const s = await state(order.id);
     expect(s.order.status).toBe("REFUNDED");
