@@ -559,14 +559,33 @@ export async function processRefund(db: Db, adapter: PaymentProviderAdapter, ref
       organizationId: refund.order.organizationId,
     });
     await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });
-    if (result.status === "SUCCEEDED") await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
-    else if (result.status === "FAILED") await recordRefundFailure(db, refund, "PROVIDER_REFUSED", "Provedor recusou o estorno.");
+    if (result.status === "SUCCEEDED") {
+      await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
+      await syncFeeAfterRefund(db, adapter, refund);
+    } else if (result.status === "FAILED") await recordRefundFailure(db, refund, "PROVIDER_REFUSED", "Provedor recusou o estorno.");
     // PENDING: aguarda webhook do provedor.
   } catch (err) {
     if (err instanceof ProviderRejectedError) await recordRefundFailure(db, refund, "PROVIDER_REJECTED", rejectionMessage(err));
     else await recordRefundFailure(db, refund, "PROVIDER_ERROR", `Erro no provedor: ${String(err).slice(0, 300)}`);
   }
   return db.refund.findUnique({ where: { id: refundId } });
+}
+
+/**
+ * Depois do estorno, acompanha a tarifa de processamento que o provedor devolveu (o
+ * Mercado Pago devolve a tarifa num estorno). Melhor esforço: o estorno já está
+ * confirmado, e o webhook e a reconciliação refazem a consulta se esta falhar.
+ * Import dinâmico: `payments` importa este módulo.
+ */
+async function syncFeeAfterRefund(db: Db, adapter: PaymentProviderAdapter, refund: { id: string; orderId: string; payment: { providerPaymentId: string | null } | null }) {
+  const providerPaymentId = refund.payment?.providerPaymentId;
+  if (!providerPaymentId) return;
+  try {
+    const { syncPaymentFromProvider } = await import("./payments");
+    await syncPaymentFromProvider(db, adapter, providerPaymentId);
+  } catch (err) {
+    financeLog("warn", "refund.fee_sync_failed", { orderId: refund.orderId, refundId: refund.id }, { message: String(err).slice(0, 300) });
+  }
 }
 
 /** Saldo do vendedor abaixo do valor a devolver (Mercado Pago, cause 2031). */
@@ -950,8 +969,10 @@ export async function resumeRefund(db: Db, adapter: PaymentProviderAdapter, refu
     return "FAILED";
   }
   await db.refund.update({ where: { id: refundId }, data: { providerRefundId: result.providerRefundId } });
-  if (result.status === "SUCCEEDED") await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
-  else if (result.status === "FAILED") await recordRefundFailure(db, refund, "PROVIDER_REFUSED", "Provedor recusou o estorno (reconciliação).");
+  if (result.status === "SUCCEEDED") {
+    await db.$transaction((tx) => confirmRefundTxWithLocks(tx, refundId), TX_OPTIONS);
+    await syncFeeAfterRefund(db, adapter, refund);
+  } else if (result.status === "FAILED") await recordRefundFailure(db, refund, "PROVIDER_REFUSED", "Provedor recusou o estorno (reconciliação).");
   return result.status;
 }
 

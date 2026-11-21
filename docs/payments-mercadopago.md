@@ -35,6 +35,15 @@ Sem instruções, o checkout mantém a mensagem de confirmação pendente.
 Correções criam partidas pelo delta, sem editar o histórico. Repetições não
 duplicam custos, e `null` nunca apaga um custo já conhecido.
 
+O total é o que **ficou** com o Mercado Pago: a tarifa cobrada (`fee_details`,
+sem `application_fee`, que é a comissão) menos a que ele devolveu em estornos
+(`charges_details` de tipo `fee` com destino `mp`, campo `amounts.refunded`).
+No estorno integral real de 21/11/2026 (pagamento `190779304814`), o Mercado
+Pago devolveu a tarifa de R$ 0,01 inteira. Por isso a atualização `REFUNDED`
+também reconcilia a tarifa, inclusive quando o pagamento já estava estornado
+pelo nosso reembolso, e o reembolso bem-sucedido consulta o provedor logo em
+seguida (melhor esforço; o webhook e a reconciliação refazem).
+
 ## O que o sistema já espera de qualquer provedor
 
 Contrato em `src/server/payments/types.ts`:

@@ -120,6 +120,12 @@ const paymentSchema = z.object({
   transaction_amount_refunded: z.number().nonnegative().nullish(),
   date_of_expiration: z.string().nullish(),
   fee_details: z.array(z.object({ amount: z.number().nonnegative(), type: z.string().nullish() })).nullish(),
+  // Movimentações de taxa; `amounts.refunded` mostra quanto o provedor devolveu num estorno.
+  charges_details: z.array(z.object({
+    type: z.string().nullish(),
+    accounts: z.object({ to: z.string().nullish() }).nullish(),
+    amounts: z.object({ refunded: z.number().nonnegative().nullish() }).nullish(),
+  })).nullish(),
   point_of_interaction: z.object({
     transaction_data: z.object({
       qr_code: z.string().nullish(),
@@ -221,11 +227,25 @@ function mapStatus(status: string, detail: string | null | undefined): ProviderP
   }
 }
 
+/**
+ * Tarifa de processamento que ficou com o Mercado Pago: a cobrada (`fee_details`) menos a
+ * que ele devolveu em estornos (`charges_details` com destino "mp"). `application_fee` é a
+ * comissão da plataforma (marketplace_fee), já lançada na venda: somá-la contaria a
+ * comissão duas vezes. Null quando o provedor não informa a tarifa.
+ */
+function netProcessingFeeCents(payment: z.infer<typeof paymentSchema>) {
+  if (!payment.fee_details) return null;
+  const charged = payment.fee_details.filter((fee) => fee.type !== "application_fee").reduce((total, fee) => total + cents(fee.amount), 0);
+  const refunded = (payment.charges_details ?? [])
+    .filter((charge) => charge.type === "fee" && charge.accounts?.to === "mp")
+    .reduce((total, charge) => total + cents(charge.amounts?.refunded ?? 0), 0);
+  return Math.max(0, charged - refunded);
+}
+
 function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
   const parsed = paymentSchema.safeParse(raw);
   if (!parsed.success) throw providerError();
   const payment = parsed.data;
-  const fees = payment.fee_details;
   const expiration = payment.point_of_interaction?.transaction_data?.date_of_expiration ?? payment.date_of_expiration;
   return {
     providerPaymentId: payment.id,
@@ -235,11 +255,7 @@ function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
       ? `${payment.status}:${payment.status_detail}`
       : payment.status,
     amountCents: cents(payment.transaction_amount),
-    // `application_fee` é a comissão da plataforma (marketplace_fee), já lançada na venda:
-    // somá-la como taxa de processamento contaria a comissão duas vezes.
-    processingFeeCents: fees
-      ? fees.filter((fee) => fee.type !== "application_fee").reduce((total, fee) => total + cents(fee.amount), 0)
-      : null,
+    processingFeeCents: netProcessingFeeCents(payment),
     refundedCents: payment.transaction_amount_refunded == null ? null : cents(payment.transaction_amount_refunded),
     pixCopyPaste: payment.point_of_interaction?.transaction_data?.qr_code ?? undefined,
     pixQrCodeBase64: payment.point_of_interaction?.transaction_data?.qr_code_base64 ?? undefined,

@@ -11,13 +11,19 @@ beforeEach(resetDb);
 
 type Step = "reject2031" | "uncertain" | "pass";
 
-/** Adaptador simulado que segue um roteiro no estorno e registra chaves e consultas. */
+/**
+ * Adaptador simulado que segue um roteiro no estorno e registra chaves e consultas.
+ * `lookupsBefore[i]`: consultas ao provedor feitas antes do i-ésimo pedido de estorno
+ * (depois de um estorno bem-sucedido há outra, para a tarifa, que não conta aqui).
+ */
 function scripted(steps: Step[]) {
   const keys: string[] = [];
+  const lookupsBefore: number[] = [];
   let lookups = 0;
   const a = Object.create(adapter) as PaymentProviderAdapter;
   a.refundPayment = async (input) => {
     keys.push(input.idempotencyKey);
+    lookupsBefore.push(lookups);
     const step = steps.shift() ?? "pass";
     if (step === "reject2031") throw new ProviderRejectedError(400, ["2031"], "Não foi possível concluir a operação com o Mercado Pago.");
     if (step === "uncertain") throw new AppError("PROVIDER_ERROR", "Não foi possível concluir a operação com o Mercado Pago.");
@@ -27,7 +33,7 @@ function scripted(steps: Step[]) {
     lookups++;
     return adapter.getPayment(providerPaymentId);
   };
-  return { adapter: a, keys, lookups: () => lookups };
+  return { adapter: a, keys, lookupsBefore, lookups: () => lookups };
 }
 
 async function setup() {
@@ -57,7 +63,8 @@ describe("chave de idempotência nas retentativas de estorno", () => {
     const retried = await adminRetryRefund(db, p.adapter, admin, failed.id, "Saldo reposto");
     expect(retried.status).toBe("SUCCEEDED");
     expect(p.keys).toEqual([failed.idempotencyKey, `${failed.idempotencyKey}:r1`]);
-    expect(p.lookups()).toBe(1);
+    // Uma consulta antes do pedido com a chave nova (a primeira tentativa não consulta).
+    expect(p.lookupsBefore).toEqual([0, 1]);
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("REFUNDED");
     expect(await checkFinancialInvariants(db)).toEqual([]);
   });
@@ -85,7 +92,7 @@ describe("chave de idempotência nas retentativas de estorno", () => {
     const retried = await adminRetryRefund(db, p.adapter, admin, failed.id, "Nova tentativa");
     expect(retried.status).toBe("SUCCEEDED");
     expect(p.keys).toEqual([failed.idempotencyKey, failed.idempotencyKey]);
-    expect(p.lookups()).toBe(0);
+    expect(p.lookupsBefore).toEqual([0, 0]);
   });
 
   it("total estornado no provedor que não bate: não pede estorno e espera o admin", async () => {
