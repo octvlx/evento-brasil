@@ -4,10 +4,10 @@
 // aprovada) e sugestões agrupadas que não criam nada.
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
-import { searchEvents } from "@/server/services/catalog";
+import { customDateRange, searchEvents } from "@/server/services/catalog";
 import { planSearch, suggestSearch } from "@/server/services/search";
 import { rankPublicEvents } from "@/server/services/search-ranking";
-import { db, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -241,4 +241,25 @@ it("conta mais de 500 correspondências e filtra antes de paginar", async () => 
   const free = await searchEvents(db, { q: "Festival Auditoria", price: "gratis" });
   expect(free.total).toBe(1);
   expect(free.events[0].id).toBe("ranking-500");
+});
+
+it("período livre (?de=&ate=) filtra pelos dias de Brasília e vence o atalho de data", async () => {
+  const user = await makeUser();
+  const org = await makeOrg(user);
+  const inDays = (d: number, hourUtc = 15) => {
+    const t = new Date(Date.now() + d * 86_400_000);
+    t.setUTCHours(hourUtc, 0, 0, 0);
+    return t;
+  };
+  const near = await makeEvent(org, { startsAt: inDays(3) });
+  const far = await makeEvent(org, { startsAt: inDays(40) });
+  const key = (d: Date) => new Date(d.getTime() - 3 * 3_600_000).toISOString().slice(0, 10);
+  const range = customDateRange(key(inDays(35)), key(inDays(45)))!;
+  const res = await searchEvents(db, { dateRange: range });
+  const ids = res.events.map((e) => e.id);
+  expect(ids).toContain(far.id);
+  expect(ids).not.toContain(near.id);
+  // Com período e atalho juntos, o período manda (o atalho "7 dias" pegaria só o próximo).
+  const both = await searchEvents(db, { dateRange: range, date: "7-dias" });
+  expect(both.events.map((e) => e.id)).toEqual(ids);
 });

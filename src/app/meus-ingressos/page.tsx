@@ -16,6 +16,7 @@ import { formatBRL } from "@/lib/money";
 import { normalizeTransferPolicy, transferCutoff } from "@/lib/transfer-policy";
 import { timezoneLabel } from "@/lib/datetime";
 import { CANCEL_HELP_HREF } from "@/lib/help-links";
+import { loadMyTickets } from "@/server/services/my-tickets";
 import { ORDER_STATUS, TICKET_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Meus ingressos", robots: { index: false } };
@@ -26,30 +27,24 @@ export default function MyTicketsPage({ searchParams }: PageProps<"/meus-ingress
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <h1 className="font-display text-3xl font-extrabold tracking-tight">Meus ingressos</h1>
       <Suspense fallback={<Skeleton className="mt-6 h-64" />}>
-        <Content searchParams={searchParams as Promise<{ transferir?: string | string[] }>} />
+        <Content searchParams={searchParams as Promise<{ transferir?: string | string[]; anteriores?: string | string[] }>} />
       </Suspense>
     </div>
   );
 }
 
-async function Content({ searchParams }: { searchParams: Promise<{ transferir?: string | string[] }> }) {
-  const { transferir } = await searchParams;
+async function Content({ searchParams }: { searchParams: Promise<{ transferir?: string | string[]; anteriores?: string | string[] }> }) {
+  const { transferir, anteriores } = await searchParams;
   const preselect = typeof transferir === "string" ? transferir : null;
   const user = await requireUser(preselect ? `/meus-ingressos?transferir=${encodeURIComponent(preselect)}` : "/meus-ingressos");
   const now = new Date();
-  const [tickets, orders, transfers] = await Promise.all([
-    db.issuedTicket.findMany({
-      where: { holderUserId: user.id },
-      include: {
-        ticketType: { select: { name: true } },
-        order: { select: { status: true } },
-        event: { select: { id: true, title: true, slug: true, startsAt: true, endsAt: true, timezone: true, coverImageUrl: true, status: true, transferDeadlineHours: true, transferMaxTransfers: true, transferAllowReturn: true } },
-      },
-      orderBy: { event: { startsAt: "asc" } },
-    }),
+  const [{ upcoming: upcomingTickets, past: pastGroups, pastTotal, pastPage }, orders, transfers] = await Promise.all([
+    loadMyTickets(db, user.id, anteriores, now),
     db.order.findMany({ where: { userId: user.id }, include: { event: { select: { title: true } } }, orderBy: { createdAt: "desc" }, take: 5 }),
     listMyTransfers(db, user),
   ]);
+  const pastTickets = pastGroups.flat();
+  const tickets = [...upcomingTickets, ...pastTickets];
   // One batched count for all owned tickets; never expose other holders' details.
   const acceptedCounts = tickets.length ? await db.ticketTransfer.groupBy({
     by: ["ticketId"],
@@ -68,12 +63,12 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
   const canTransfer = (t: (typeof tickets)[number]) => t.status === "VALID" && t.order.status === "PAID" && t.event.status === "PUBLISHED" && transferCutoff(t.event.startsAt, t.event) > now && (acceptedByTicket.get(t.id) ?? 0) < t.event.transferMaxTransfers;
 
   const byEvent = new Map<string, typeof tickets>();
-  for (const t of tickets) byEvent.set(t.event.id, [...(byEvent.get(t.event.id) ?? []), t]);
-  const groups = [...byEvent.values()];
-  const upcoming = groups.filter((g) => g[0].event.endsAt >= now);
-  const past = groups.filter((g) => g[0].event.endsAt < now);
+  for (const t of upcomingTickets) byEvent.set(t.event.id, [...(byEvent.get(t.event.id) ?? []), t]);
+  const upcoming = [...byEvent.values()];
+  const past = pastGroups;
+  const pastHref = (p: number) => `/meus-ingressos${p > 1 ? `?anteriores=${p}` : ""}#anteriores`;
 
-  if (!tickets.length && !orders.length && !incoming.length && !transferredAway.length) {
+  if (!tickets.length && !pastTotal && !orders.length && !incoming.length && !transferredAway.length) {
     return (
       <div className="mt-10 rounded-3xl border border-dashed border-border p-10 text-center">
         <Ticket className="mx-auto size-10 text-secondary" aria-hidden />
@@ -172,10 +167,29 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
         <h2 className="mb-3 font-display text-xl font-bold">Próximos</h2>
         {upcoming.length ? <ul className="space-y-4">{upcoming.map((g) => <Group key={g[0].event.id} g={g} />)}</ul> : <p className="text-muted-foreground">Nenhum ingresso para eventos futuros.</p>}
       </section>
-      {past.length > 0 && (
-        <section>
-          <h2 className="mb-3 font-display text-xl font-bold">Anteriores</h2>
+      {pastTotal > 0 && (
+        <section id="anteriores" className="scroll-mt-24" aria-labelledby="past-title">
+          <h2 id="past-title" className="mb-3 font-display text-xl font-bold">
+            Anteriores <span className="text-sm font-normal text-muted-foreground">({pastTotal === 1 ? "1 evento" : `${pastTotal} eventos`})</span>
+          </h2>
           <ul className="space-y-4 opacity-80">{past.map((g) => <Group key={g[0].event.id} g={g} />)}</ul>
+          {pastPage.pageCount > 1 && (
+            <nav aria-label="Paginação dos eventos anteriores" className="mt-4 flex items-center justify-center gap-3" data-testid="past-pager">
+              {pastPage.page > 1 && (
+                <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={pastHref(pastPage.page - 1)}>
+                  Mais recentes
+                </Link>
+              )}
+              <span className="text-sm text-muted-foreground">
+                Página {pastPage.page} de {pastPage.pageCount}
+              </span>
+              {pastPage.page < pastPage.pageCount && (
+                <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={pastHref(pastPage.page + 1)}>
+                  Mais antigos
+                </Link>
+              )}
+            </nav>
+          )}
         </section>
       )}
       {transferredAway.length > 0 && (

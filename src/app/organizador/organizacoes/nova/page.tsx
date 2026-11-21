@@ -19,10 +19,7 @@ export default function NewOrganizationPage() {
 
 async function Content() {
   const user = await requireUser("/organizador/organizacoes/nova");
-  const [cities, pending] = await Promise.all([
-    db.city.findMany({ orderBy: [{ state: "asc" }, { name: "asc" }] }),
-    db.organizationMember.count({ where: { userId: user.id, role: "OWNER", organization: { status: "PENDING_REVIEW" } } }),
-  ]);
+  const pending = await db.organizationMember.count({ where: { userId: user.id, role: "OWNER", organization: { status: "PENDING_REVIEW" } } });
   return (
     <>
       <PageTitle title="Nova organização" subtitle="Você será o responsável (OWNER). A nova organização passa por análise antes de publicar eventos." />
@@ -32,7 +29,7 @@ async function Content() {
         </Alert>
       )}
       <Card className="p-6">
-        <ApplicationForm cities={cities.map((c) => ({ id: c.id, label: `${c.name} – ${c.state}` }))} defaults={{ contactEmail: user.email }} />
+        <ApplicationForm defaults={{ contactEmail: user.email }} />
       </Card>
     </>
   );
