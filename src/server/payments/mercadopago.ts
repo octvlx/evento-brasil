@@ -124,7 +124,7 @@ const paymentSchema = z.object({
   charges_details: z.array(z.object({
     type: z.string().nullish(),
     accounts: z.object({ to: z.string().nullish() }).nullish(),
-    amounts: z.object({ refunded: z.number().nonnegative().nullish() }).nullish(),
+    amounts: z.object({ original: z.number().nonnegative().nullish(), refunded: z.number().nonnegative().nullish() }).nullish(),
   })).nullish(),
   point_of_interaction: z.object({
     transaction_data: z.object({
@@ -228,17 +228,23 @@ function mapStatus(status: string, detail: string | null | undefined): ProviderP
 }
 
 /**
- * Tarifa de processamento que ficou com o Mercado Pago: a cobrada (`fee_details`) menos a
- * que ele devolveu em estornos (`charges_details` com destino "mp"). `application_fee` é a
- * comissão da plataforma (marketplace_fee), já lançada na venda: somá-la contaria a
- * comissão duas vezes. Null quando o provedor não informa a tarifa.
+ * Tarifa de processamento que ficou com o Mercado Pago: cobrada menos devolvida em estornos.
+ * Fonte preferida: `charges_details` com destino "mp". Ali aparecem todas as tarifas do
+ * provedor, inclusive a de antecipação do cartão (`financed_advance_fee`), que NÃO vem em
+ * `fee_details`; contar só `fee_details` subestimava a tarifa e, depois do estorno, subtraía
+ * devoluções de tarifas nunca contadas. Sem `amounts.original` em todas elas, cai em
+ * `fee_details` (sem `application_fee`, que é a comissão da plataforma, já lançada na
+ * venda). Null quando o provedor não informa a tarifa.
  */
 function netProcessingFeeCents(payment: z.infer<typeof paymentSchema>) {
+  const mpCharges = (payment.charges_details ?? []).filter((charge) => charge.type === "fee" && charge.accounts?.to === "mp");
+  const refunded = mpCharges.reduce((total, charge) => total + cents(charge.amounts?.refunded ?? 0), 0);
+  if (mpCharges.length && mpCharges.every((charge) => typeof charge.amounts?.original === "number")) {
+    const charged = mpCharges.reduce((total, charge) => total + cents(charge.amounts!.original!), 0);
+    return Math.max(0, charged - refunded);
+  }
   if (!payment.fee_details) return null;
   const charged = payment.fee_details.filter((fee) => fee.type !== "application_fee").reduce((total, fee) => total + cents(fee.amount), 0);
-  const refunded = (payment.charges_details ?? [])
-    .filter((charge) => charge.type === "fee" && charge.accounts?.to === "mp")
-    .reduce((total, charge) => total + cents(charge.amounts?.refunded ?? 0), 0);
   return Math.max(0, charged - refunded);
 }
 

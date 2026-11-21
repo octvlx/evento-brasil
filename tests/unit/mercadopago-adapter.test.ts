@@ -287,6 +287,34 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(await adapter().getPayment("987", { organizationId: "org-1" })).toMatchObject({ processingFeeCents: 250 });
   });
 
+  it("counts the card advance fee, which only charges_details lists (real payment 189772021215)", async () => {
+    // Cartão R$ 1,00: comissão 0,07, tarifa MP 0,02 e antecipação 0,02 (líquido 0,89).
+    const card = (refunded: boolean) => paymentResponse({
+      status: refunded ? "refunded" : "approved",
+      status_detail: refunded ? "refunded" : "accredited",
+      transaction_amount: 1,
+      transaction_amount_refunded: refunded ? 1 : 0,
+      fee_details: [{ amount: 0.02, type: "mercadopago_fee" }, { amount: 0.07, type: "application_fee" }],
+      charges_details: [
+        { type: "fee", name: "third_payment", accounts: { from: "collector", to: "marketplace_owner" }, amounts: { original: 0.07, refunded: refunded ? 0.07 : 0 } },
+        { type: "fee", name: "mercadopago_fee", accounts: { from: "collector", to: "mp" }, amounts: { original: 0.02, refunded: refunded ? 0.02 : 0 } },
+        { type: "fee", name: "financed_advance_fee", accounts: { from: "collector", to: "mp" }, amounts: { original: 0.02, refunded: refunded ? 0.02 : 0 } },
+      ],
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(card(false)));
+    expect(await adapter().getPayment("189772021215", { organizationId: "org-1" })).toMatchObject({ status: "PAID", processingFeeCents: 4 });
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(card(true)));
+    expect(await adapter().getPayment("189772021215", { organizationId: "org-1" })).toMatchObject({ status: "REFUNDED", processingFeeCents: 0 });
+  });
+
+  it("falls back to fee_details when a provider fee has no original amount", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
+      fee_details: [{ amount: 0.03, type: "mercadopago_fee" }],
+      charges_details: [{ type: "fee", accounts: { to: "mp" }, amounts: { refunded: 0 } }],
+    })));
+    expect(await adapter().getPayment("987", { organizationId: "org-1" })).toMatchObject({ processingFeeCents: 3 });
+  });
+
   it("maps an authoritative payment response and uses the seller account from a verified webhook", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
       point_of_interaction: {
