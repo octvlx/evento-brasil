@@ -62,17 +62,28 @@ fica em `REFUND_PENDING` e o reembolso em `FAILED`, **nunca em silêncio**:
    (`"<KIND>: <mensagem> (tentativa N, limite automático 4)"`) e emite log
    estruturado com o id do pedido como correlation id.
 2. **Retentativa automática:** `reconcilePayments` (cron de manutenção) chama
-   `retryFailedRefunds`, que reenvia ao provedor com a **mesma chave de
-   idempotência** (nunca estorna duas vezes). `REFUND_RETRY_POLICY`: até 4
+   `retryFailedRefunds`. A **chave de idempotência** (`refundAttemptKey`) só
+   muda depois de uma recusa definitiva do provedor (`PROVIDER_REJECTED`: HTTP
+   400/422; ou `PROVIDER_REFUSED`: estorno criado e rejeitado), quando nada foi
+   estornado: a tentativa seguinte usa `<chave>:r<n>`. O provedor guarda a
+   resposta de uma chave (Mercado Pago: 24 h), então reenviar a mesma chave
+   depois de uma recusa repetia a recusa mesmo com a causa resolvida (caso real
+   de 20/11/2026: cause 2031, saldo do vendedor reposto). Antes de usar chave
+   nova, `providerRefundState` confere no provedor o total estornado: se o
+   estorno já aconteceu, confirma sem pedir outro; se o total não bate, bloqueia
+   (`PROVIDER_STATE_MISMATCH`, decisão do admin). Falhas incertas (timeout, 5xx,
+   409) mantêm a chave, e nunca se estorna duas vezes. A nota guarda só o HTTP e
+   os códigos de causa, nunca a mensagem do provedor; a cause 2031 vira "saldo
+   insuficiente na conta Mercado Pago do organizador". `REFUND_RETRY_POLICY`: até 4
    tentativas no total, esperando 5 min, 30 min e 2 h após a 1ª, 2ª e 3ª falha.
    Só toca reembolsos `FAILED` de pedidos em `REFUND_PENDING`. Um reembolso
    parado em `PROCESSING` cujo provedor lança erro na retomada também entra na
    política (antes ficava preso).
 3. **Decisão do admin:** esgotadas as tentativas (auditoria
    `refund.retry_exhausted`, log `refund.awaiting_admin_decision`) ou se o
-   reembolso foi bloqueado por `OVER_REFUND_BLOCKED` (nunca reprocessado
-   sozinho), o reembolso aguarda o admin, que pode:
-   - **reprocessar** — nova tentativa com a mesma chave (conta como tentativa);
+   reembolso foi bloqueado por `OVER_REFUND_BLOCKED` ou `PROVIDER_STATE_MISMATCH`
+   (nunca reprocessados sozinhos), o reembolso aguarda o admin, que pode:
+   - **reprocessar** — nova tentativa pela mesma regra de chave acima (conta como tentativa);
    - **restaurar** — o reembolso vira `REJECTED` (terminal), os ingressos
      revogados por ele (`revocationReason = REFUNDED`) voltam a `VALID` e o
      pedido volta a `PAID`. Contadores, status do pagamento e razão **não

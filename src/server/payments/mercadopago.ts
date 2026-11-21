@@ -11,6 +11,7 @@ import {
 } from "./mercadopago-oauth";
 import {
   PaymentNotStartedError,
+  ProviderRejectedError,
   type CreatePaymentInput,
   type PaymentProviderAdapter,
   type ProviderPaymentSnapshot,
@@ -176,6 +177,9 @@ async function requestJson(
       error: z.string().optional(),
       cause: z.array(z.object({ code: z.union([z.string(), z.number()]).optional() })).optional(),
     }).safeParse(body);
+    const causeCodes = parsedError.success
+      ? (parsedError.data.cause ?? []).map((cause) => safeDiagnosticCode(cause.code) ?? "unknown")
+      : [];
     providerDiagnostic("request_rejected", {
       path,
       status: response.status,
@@ -183,12 +187,12 @@ async function requestJson(
       errorCode: parsedError.success
         ? safeDiagnosticCode(parsedError.data.error)
         : undefined,
-      causeCodes: parsedError.success
-        ? parsedError.data.cause
-            ?.map((cause) => safeDiagnosticCode(cause.code) ?? "unknown")
-            .join(",")
-        : undefined,
+      causeCodes: causeCodes.length ? causeCodes.join(",") : undefined,
     });
+    // 400/422: o provedor validou e recusou, nada foi criado. Outros (401, 409, 5xx…) ficam incertos.
+    if (response.status === 400 || response.status === 422) {
+      throw new ProviderRejectedError(response.status, causeCodes, providerError().message);
+    }
     throw providerError();
   }
   return body;
