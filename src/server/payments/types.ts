@@ -122,6 +122,12 @@ export interface PaymentProviderAdapter {
   refundPayment(input: { providerPaymentId: string; amountCents: number; idempotencyKey: string; organizationId?: string }): Promise<RefundResult>;
   verifyWebhook(req: WebhookRequest): Promise<WebhookVerification>;
   /**
+   * Opcional: o aviso é de uma conta que nunca foi conectada ao app e de um pagamento
+   * que não existe aqui (ex.: validação de cartão de R$ 0 em outra conta)? Só é
+   * consultado depois que o processamento falhou; true = marcar como ignorado.
+   */
+  isForeignWebhook?(event: { providerPaymentId: string; payload: unknown }): Promise<boolean>;
+  /**
    * Opcional: localiza no provedor um pagamento pela nossa chave de idempotência
    * (referência externa). Usado na reconciliação quando o processo caiu entre a
    * criação no provedor e o registro do id localmente.

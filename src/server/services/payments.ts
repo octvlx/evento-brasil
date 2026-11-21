@@ -473,6 +473,12 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
  * Processa um webhook: verifica assinatura, registra o evento (idempotente) e
  * consulta o provedor. Retorna o status HTTP a responder.
  */
+/** Falha ao consultar um aviso de conta alheia ao app: não há o que processar nem alertar. */
+export async function isForeignWebhook(adapter: PaymentProviderAdapter, providerPaymentId: string, payload: unknown) {
+  if (!adapter.isForeignWebhook) return false;
+  return adapter.isForeignWebhook({ providerPaymentId, payload }).catch(() => false);
+}
+
 export async function handlePaymentWebhook(db: Db, adapter: PaymentProviderAdapter, req: WebhookRequest): Promise<{ status: number; body: string }> {
   const verification = await adapter.verifyWebhook(req);
   if (!verification.valid) {
@@ -507,6 +513,10 @@ export async function handlePaymentWebhook(db: Db, adapter: PaymentProviderAdapt
     await db.paymentWebhookEvent.update({ where: { id: record.id }, data: { processedAt: new Date(), processingResult: outcome, error: null } });
     return { status: 200, body: outcome };
   } catch (err) {
+    if (await isForeignWebhook(adapter, verification.providerPaymentId, verification.payload)) {
+      await db.paymentWebhookEvent.update({ where: { id: record.id }, data: { processedAt: new Date(), processingResult: "ignored_unknown_account", error: null } });
+      return { status: 200, body: "ignored" };
+    }
     await db.paymentWebhookEvent.update({ where: { id: record.id }, data: { error: String(err).slice(0, 1000) } });
     const local = await db.payment
       .findFirst({ where: { provider: adapter.id, providerPaymentId: verification.providerPaymentId }, select: { id: true, orderId: true } })
