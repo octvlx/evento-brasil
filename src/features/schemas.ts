@@ -62,7 +62,12 @@ export const organizerApplicationSchema = z
     document: z.string().trim(),
     contactEmail: email,
     contactPhone: mobile.optional(),
-    cityId: z.string().optional(),
+    // Cidade-sede (opcional): município do IBGE pelo autocomplete. `cityId` fica só por
+    // compatibilidade com formulários antigos; `cityName` é só a exibição do campo.
+    cityUf: emptyToUndefined(z.enum(UF_CODES, { message: "Selecione a UF" }).optional()),
+    cityIbgeCode: emptyToUndefined(z.string().trim().regex(/^\d{7}$/, "Selecione a cidade na lista").optional()),
+    cityName: z.string().optional(),
+    cityId: emptyToUndefined(z.string().optional()),
     description: optionalText(2000),
     websiteUrl: z
       .string()
@@ -78,6 +83,7 @@ export const organizerApplicationSchema = z
   .superRefine((v, ctx) => {
     const ok = v.legalType === "INDIVIDUAL" ? isValidCPF(v.document) : isValidCNPJ(v.document);
     if (!ok) ctx.addIssue({ code: "custom", path: ["document"], message: v.legalType === "INDIVIDUAL" ? "CPF inválido" : "CNPJ inválido" });
+    if (v.cityUf && !v.cityIbgeCode) ctx.addIssue({ code: "custom", path: ["cityIbgeCode"], message: "Selecione a cidade na lista" });
   });
 export type OrganizerApplicationInput = z.input<typeof organizerApplicationSchema>;
 

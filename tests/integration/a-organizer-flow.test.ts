@@ -76,6 +76,20 @@ describe("A — organizador: cadastro → aprovação → evento → publicaçã
     expect(logs.map((l) => l.action)).toEqual(expect.arrayContaining(["organization.submitted", "organization.approved", "event.created", "event.approved"]));
   });
 
+  it("cidade-sede pelo autocomplete do IBGE: cria/reaproveita a cidade; UF sem cidade é recusada", async () => {
+    const user = await makeUser();
+    const base = { name: "Org Cidade", legalType: "INDIVIDUAL" as const, legalName: "Org Cidade", document: "529.982.247-25", contactEmail: "c@example.com" };
+    const org = await submitOrganizerApplication(db, user, { ...base, cityUf: "SP", cityIbgeCode: "3550308", cityName: "São Paulo" });
+    const city = await db.city.findUniqueOrThrow({ where: { id: org.cityId! } });
+    expect(city).toMatchObject({ ibgeCode: "3550308", state: "SP" });
+    const other = await makeUser();
+    const again = await submitOrganizerApplication(db, other, { ...base, cityUf: "SP", cityIbgeCode: "3550308" });
+    expect(again.cityId).toBe(city.id);
+    await expect(submitOrganizerApplication(db, await makeUser(), { ...base, cityUf: "SP" })).rejects.toThrow();
+    // Código de outra UF: o município não confere com a UF.
+    await expect(submitOrganizerApplication(db, await makeUser(), { ...base, cityUf: "RJ", cityIbgeCode: "3550308" })).rejects.toThrow(/Município inválido/);
+  });
+
   it("publica direto quando a organização tem publicação automática", async () => {
     const user = await makeUser();
     const admin = await makeUser({ admin: true });

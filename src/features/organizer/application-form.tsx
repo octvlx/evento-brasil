@@ -6,17 +6,16 @@ import { useState, useTransition } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
-import { Alert, FieldError, Input, Label, Select, Textarea } from "@/components/ui/primitives";
+import { Alert, FieldError, Input, Label, Textarea } from "@/components/ui/primitives";
 import { organizerApplicationSchema, type OrganizerApplicationInput } from "@/features/schemas";
 import { createOrganizationAction, resubmitApplicationAction } from "./actions";
+import { MunicipalityCombobox } from "./municipality-combobox";
 
 /** `resubmitOrganizationId` presente = reenvio de cadastro recusado; ausente = nova organização. */
 export function ApplicationForm({
-  cities,
   defaults,
   resubmitOrganizationId,
 }: {
-  cities: { id: string; label: string }[];
   defaults?: Partial<OrganizerApplicationInput>;
   resubmitOrganizationId?: string;
 }) {
@@ -29,6 +28,7 @@ export function ApplicationForm({
   });
   const { errors } = form.formState;
   const legalType = useWatch({ control: form.control, name: "legalType" });
+  const [cityUf, cityIbgeCode, cityName] = useWatch({ control: form.control, name: ["cityUf", "cityIbgeCode", "cityName"] });
 
   const onSubmit = form.handleSubmit((values) =>
     start(async () => {
@@ -85,17 +85,25 @@ export function ApplicationForm({
           Necessário para repasses e obrigações fiscais. Armazenado cifrado; exibimos apenas os últimos dígitos.
         </p>
       </div>
-      <div>
-        <Label htmlFor="cityId">Cidade-sede</Label>
-        <Select id="cityId" className="mt-1.5" {...form.register("cityId")}>
-          <option value="">Selecione</option>
-          {cities.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.label}
-            </option>
-          ))}
-        </Select>
-      </div>
+      {/* Cidade-sede (opcional): UF + município, uma UF por vez (não baixa as 5.571 cidades). */}
+      <fieldset className="sm:col-span-2">
+        <legend className="mb-1.5 text-sm font-medium">Cidade-sede (opcional)</legend>
+        <MunicipalityCombobox
+          idPrefix="org-city"
+          help="Escolha a cidade na lista. Aparece no perfil público da organização."
+          value={{ uf: String(cityUf ?? ""), ibgeCode: String(cityIbgeCode ?? ""), name: cityName ?? "" }}
+          ufError={errors.cityUf?.message}
+          cityError={errors.cityIbgeCode?.message}
+          onChange={(v) => {
+            const opts = { shouldDirty: true, shouldValidate: form.formState.isSubmitted };
+            form.setValue("cityUf", v.uf as OrganizerApplicationInput["cityUf"], opts);
+            form.setValue("cityIbgeCode", v.ibgeCode, opts);
+            form.setValue("cityName", v.name, opts);
+            // Escolheu (ou limpou) pelo autocomplete: a cidade antiga deixa de valer.
+            form.setValue("cityId", undefined);
+          }}
+        />
+      </fieldset>
       <div>
         <Label htmlFor="contactEmail">E-mail de contato</Label>
         <Input id="contactEmail" type="email" className="mt-1.5" aria-invalid={!!errors.contactEmail} {...form.register("contactEmail")} />

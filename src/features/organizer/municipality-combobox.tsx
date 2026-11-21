@@ -44,6 +44,7 @@ export function MunicipalityCombobox({
   cityError,
   disabled,
   className,
+  help,
 }: {
   value: MunicipalityValue;
   onChange: (v: MunicipalityValue) => void;
@@ -52,6 +53,8 @@ export function MunicipalityCombobox({
   cityError?: string;
   disabled?: boolean;
   className?: string;
+  /** Texto de ajuda abaixo do campo (padrão: o do endereço do evento). */
+  help?: string;
 }) {
   const ufId = `${idPrefix}-uf`;
   const inputId = `${idPrefix}-city`;
@@ -242,7 +245,7 @@ export function MunicipalityCombobox({
           ) : loading ? (
             "Carregando municípios…"
           ) : (
-            "Escolha a cidade na lista. Ela aparece no site quando o evento for publicado."
+            (help ?? "Escolha a cidade na lista. Ela aparece no site quando o evento for publicado.")
           )}
         </p>
         {cityError && (

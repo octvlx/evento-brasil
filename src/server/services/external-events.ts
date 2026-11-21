@@ -684,6 +684,8 @@ export interface ExternalListFilter {
   q?: string;
   /** Filtros da busca. Eventos externos não têm categoria: com categoria, nenhum aparece. */
   date?: DateFilter;
+  /** Período livre (customDateRange); tem prioridade sobre `date`. */
+  dateRange?: { from: Date; to: Date };
   price?: PriceFilter;
   categorySlug?: string;
   featuredOnly?: boolean;
@@ -706,8 +708,8 @@ function externalListWhere(filter: ExternalListFilter, now: Date): Prisma.Extern
   // Destaque só de hoje em diante: evento que já aconteceu sai sozinho do destaque.
   if (filter.featuredOnly) and.push({ isFeatured: true, startsAt: { gte: externalTodayStart(now) } });
   if (q) and.push({ OR: [{ title: { contains: q, mode: "insensitive" } }, { venueName: { contains: q, mode: "insensitive" } }, { cityName: { contains: q, mode: "insensitive" } }] });
-  if (filter.date) {
-    const range = dateFilterRange(filter.date, now);
+  if (filter.dateRange || filter.date) {
+    const range = filter.dateRange ?? dateFilterRange(filter.date!, now);
     // Sem horário de término na fonte: conta pelo início dentro da janela.
     and.push({ startsAt: { gte: range.from, lt: range.to } });
   }
