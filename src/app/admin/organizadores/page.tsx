@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
-import { AdminActionButton } from "@/features/admin/controls";
-import { autoPublishAction, reviewOrganizationAction, suspendOrganizationAction } from "@/features/admin/actions";
+import Link from "next/link";
+import { OrganizationAdminActions } from "@/features/admin/entity-actions";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { formatDateShort } from "@/lib/datetime";
@@ -40,7 +40,10 @@ async function Content() {
       <li className="flex flex-wrap items-start justify-between gap-3 p-4">
         <div className="min-w-0">
           <p className="font-semibold">
-            {o.name} <Badge variant={st.tone === "success" ? "success" : st.tone === "warning" ? "warning" : st.tone === "danger" ? "danger" : "default"}>{st.label}</Badge>
+            <Link href={`/admin/organizadores/${o.id}`} className="hover:underline">
+              {o.name}
+            </Link>{" "}
+            <Badge variant={st.tone === "success" ? "success" : st.tone === "warning" ? "warning" : st.tone === "danger" ? "danger" : "default"}>{st.label}</Badge>
           </p>
           <p className="text-xs text-muted-foreground">
             {o.legalType === "COMPANY" ? "Empresa" : "Pessoa física"} · {v ? `${v.documentType} final ${v.documentLast4} · ${v.legalName}` : "sem verificação"} · {o.city ? `${o.city.name} – ${o.city.state}` : "cidade não informada"}
@@ -50,21 +53,7 @@ async function Content() {
           </p>
           {o.statusReason && <p className="text-xs text-destructive">Motivo: {o.statusReason}</p>}
         </div>
-        <div className="flex flex-wrap items-start gap-2">
-          {o.status === "PENDING_REVIEW" && (
-            <>
-              <AdminActionButton label="Aprovar" variant="secondary" action={reviewOrganizationAction.bind(null, o.id, "APPROVE")} />
-              <AdminActionButton label="Rejeitar" variant="outline" askReason="Motivo (enviado ao organizador)" reasonRequired action={reviewOrganizationAction.bind(null, o.id, "REJECT")} />
-            </>
-          )}
-          {o.status === "APPROVED" && (
-            <>
-              <AdminActionButton label={o.autoPublishEvents ? "Exigir moderação" : "Publicação automática"} action={autoPublishAction.bind(null, o.id, !o.autoPublishEvents)} />
-              <AdminActionButton label="Suspender" variant="destructive" askReason="Motivo da suspensão" reasonRequired action={suspendOrganizationAction.bind(null, o.id, true)} />
-            </>
-          )}
-          {o.status === "SUSPENDED" && <AdminActionButton label="Reativar" action={suspendOrganizationAction.bind(null, o.id, false)} confirm="Reativar a organização?" />}
-        </div>
+        <OrganizationAdminActions o={o} />
       </li>
     );
   };
