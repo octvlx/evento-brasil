@@ -85,6 +85,8 @@ model User {
   transfersDecided      TicketTransfer[]      @relation("TransferDecidedBy")
   eventChanges          EventChange[]
   cancellationRequests  CancellationRequest[] @relation("CancellationRequester")
+  eventReports          EventReport[]         @relation("EventReportReporter")
+  eventReportsDecided   EventReport[]         @relation("EventReportDecider")
   cancellationsAssigned CancellationRequest[] @relation("CancellationAssignee")
   cancellationsDecided  CancellationRequest[] @relation("CancellationDecider")
   termsAcceptances      TermsAcceptance[]
@@ -511,6 +513,7 @@ model Event {
   orders           Order[]
   tickets          IssuedTicket[]
   checkins         TicketCheckin[]
+  reports          EventReport[]
   staffAssignments EventStaffAssignment[]
   commissionRules  CommissionRule[]
   coupons          Coupon[]
@@ -1726,4 +1729,43 @@ model AppleWalletRegistration {
 
   @@unique([deviceLibraryId, passId])
   @@index([passId])
+}
+
+enum EventReportReason {
+  FRAUD
+  MISLEADING
+  INAPPROPRIATE
+  RIGHTS_VIOLATION
+  OTHER
+}
+
+enum EventReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+/// Denúncia de evento feita por um usuário logado. A moderação decide por evento:
+/// RESOLVED (procedente, com nota) ou DISMISSED. Uma denúncia aberta por pessoa e evento
+/// (índice parcial na migração). Ver services/event-reports.ts.
+model EventReport {
+  id           String            @id @default(cuid())
+  eventId      String
+  reporterId   String
+  reason       EventReportReason
+  details      String?           @db.VarChar(1000)
+  status       EventReportStatus @default(OPEN)
+  decidedById  String?
+  decidedAt    DateTime?         @db.Timestamptz(3)
+  decisionNote String?           @db.VarChar(1000)
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
+
+  event     Event @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  reporter  User  @relation("EventReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  decidedBy User? @relation("EventReportDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([eventId, status])
+  @@index([reporterId, createdAt])
 }
