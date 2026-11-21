@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setEventSuspended, setEventFeatured, updateEvent, upsertTicketType } from "@/server/services/events";
 import { getPublicEvent, searchEvents } from "@/server/services/catalog";
 import { checkInTicket } from "@/server/services/checkin";
-import { qrPayload } from "@/server/services/tickets";
 import { assignCancellationRequest, createCancellationRequest, decideCancellationRequest, listCancellationAssignees } from "@/server/services/cancellation-requests";
 import {
   cancellationQueueToCsv,
@@ -14,7 +13,7 @@ import {
   searchTransfers,
   transfersToCsv,
 } from "@/server/services/admin-oversight";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -50,7 +49,7 @@ describe("suspender evento sem reembolsar", () => {
     await expect(buy(await makeUser(), event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 1 }])).rejects.toMatchObject({ code: "SALES_CLOSED" });
     // Ingresso já vendido continua valendo na portaria.
     const ticket = await db.issuedTicket.findFirstOrThrow({ where: { orderId: order.id } });
-    expect((await checkInTicket(db, owner, event.id, qrPayload(ticket))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(ticket))).result).toBe("ADMITTED");
     // Organizador travado.
     await expect(updateEvent(db, owner, event.id, {} as never)).rejects.toMatchObject({ code: "INVALID_STATE" });
     await expect(upsertTicketType(db, owner, event.id, { name: "Extra", kind: "GENERAL", priceCents: 1000, quantityTotal: 10 })).rejects.toMatchObject({ code: "INVALID_STATE" });

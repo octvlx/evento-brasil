@@ -8,7 +8,6 @@
 // cron (passes.ts) — nunca recebe o QR novo.
 import "server-only";
 import { createSign } from "node:crypto";
-import { qrPayload } from "../../services/tickets";
 import type { GoogleWalletConfig } from "./config";
 import type { WalletTicket } from "./types";
 import { BRAND, BRAND_COLORS } from "@/lib/brand";
@@ -60,9 +59,13 @@ export function googleWalletResources(tickets: WalletTicket[], cfg: GoogleWallet
       ticketHolderName: t.holderName ?? undefined,
       ticketNumber: t.code,
       ticketType: text(t.kind === "HALF_PRICE" ? `${t.ticketTypeName} (meia-entrada: documento na entrada)` : t.ticketTypeName),
-      barcode: { type: "QR_CODE", value: qrPayload(t), alternateText: t.code },
+      // Sem código de barras: a entrada é pelo QR dinâmico na tela do ingresso.
+      textModulesData: [
+        { id: "entrada", header: "Entrada", body: "Abra o ingresso no app/site para mostrar o QR de entrada (muda a cada 30 s). Este passe é comprovante." },
+        ...(t.isSimulated ? [{ id: "teste", header: "Ingresso de teste", body: "Pagamento simulado: sem validade real." }] : []),
+      ],
       hexBackgroundColor: BRAND_HEX,
-      ...(t.isSimulated ? { textModulesData: [{ id: "teste", header: "Ingresso de teste", body: "Pagamento simulado: sem validade real." }] } : {}),
+
     };
   });
   return { classes: [...classes.values()], objects };

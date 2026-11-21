@@ -4,9 +4,8 @@ import { checkInTicket } from "@/server/services/checkin";
 import { expireStaleOrders } from "@/server/services/orders";
 import { checkFinancialInvariants } from "@/server/services/reconciliation";
 import { requestCustomerRefund } from "@/server/services/refunds";
-import { qrPayload } from "@/server/services/tickets";
 import { acceptTransfer, expireTicketTransfers, requestTransfer } from "@/server/services/transfers";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 afterEach(async () => { expect(await checkFinancialInvariants(db)).toEqual([]); });
@@ -63,11 +62,11 @@ describe("ZD — política do evento e integridade financeira", () => {
     const before = await snapshot(ticket.id);
     await expect(request(recipient, ticket.id, other)).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
     expect(await snapshot(ticket.id)).toEqual(before);
-    expect((await checkInTicket(db, owner, event.id, qrPayload(ticket))).result).toBe("INVALID");
+    expect((await checkInTicket(db, owner, event.id, gateQr(ticket))).result).toBe("INVALID");
     await expect(requestCustomerRefund(db, adapter, recipient, order.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     const refund = await requestCustomerRefund(db, adapter, buyer, order.id);
     expect(refund).toMatchObject({ paymentId: payment.id, amountCents: order.totalCents, status: "SUCCEEDED" });
-    expect((await checkInTicket(db, owner, event.id, qrPayload(current))).result).toBe("REVOKED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(current))).result).toBe("REVOKED");
     expect(await db.refund.count({ where: { orderId: order.id } })).toBe(1);
   });
 

@@ -4,8 +4,7 @@ import { cancelEvent } from "@/server/services/cancellation";
 import { checkInTicket, checkinHistory } from "@/server/services/checkin";
 import { createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
-import { qrPayload, ticketQrToken } from "@/server/services/tickets";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
+import { adapter, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -26,7 +25,7 @@ async function setup() {
 describe("E/F — check-in", () => {
   it("admite uma vez e recusa leituras repetidas", async () => {
     const { staff, event, tickets } = await setup();
-    const payload = qrPayload(tickets[0]);
+    const payload = gateQr(tickets[0]);
     const first = await checkInTicket(db, staff, event.id, payload);
     expect(first.result).toBe("ADMITTED");
     expect(first.counters).toEqual({ admitted: 1, total: 2 });
@@ -38,7 +37,7 @@ describe("E/F — check-in", () => {
 
   it("leituras simultâneas do mesmo QR admitem exatamente uma", async () => {
     const { staff, owner, event, tickets } = await setup();
-    const payload = qrPayload(tickets[1]);
+    const payload = gateQr(tickets[1]);
     const results = await Promise.all(Array.from({ length: 8 }, (_, i) => checkInTicket(db, i % 2 ? staff : owner, event.id, payload)));
     expect(results.filter((r) => r.result === "ADMITTED")).toHaveLength(1);
     expect(results.filter((r) => r.result === "DUPLICATE")).toHaveLength(7);
@@ -54,7 +53,7 @@ describe("E/F — check-in", () => {
     await db.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION test_falha_checkin() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'falha simulada no registro'; END $$ LANGUAGE plpgsql`);
     await db.$executeRawUnsafe(`CREATE TRIGGER test_falha_checkin BEFORE INSERT ON "TicketCheckin" FOR EACH ROW EXECUTE FUNCTION test_falha_checkin()`);
     try {
-      await expect(checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).rejects.toThrow();
+      await expect(checkInTicket(db, staff, event.id, gateQr(tickets[0]))).rejects.toThrow();
     } finally {
       await db.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_falha_checkin ON "TicketCheckin"`);
       await db.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_falha_checkin()`);
@@ -64,7 +63,7 @@ describe("E/F — check-in", () => {
     expect(ticket.checkedInAt).toBeNull();
     expect(await db.ticketCheckin.count()).toBe(0);
     // Sem a falha, a mesma leitura é admitida normalmente.
-    expect((await checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, staff, event.id, gateQr(tickets[0]))).result).toBe("ADMITTED");
   });
 
   it("cancelamento do evento concorrente com leituras: sem deadlock e estados consistentes", async () => {
@@ -77,7 +76,7 @@ describe("E/F — check-in", () => {
     const tickets = await db.issuedTicket.findMany({ where: { orderId: { in: orders.map((o) => o.id) } } });
     expect(tickets).toHaveLength(20);
 
-    const scans = tickets.map((t, i) => checkInTicket(db, i % 2 ? staff : owner, event.id, qrPayload(t)));
+    const scans = tickets.map((t, i) => checkInTicket(db, i % 2 ? staff : owner, event.id, gateQr(t)));
     const cancel = cancelEvent(db, adapter, owner, event.id, "Problema com o local");
     const [cancelled, ...scanned] = await Promise.allSettled([cancel, ...scans]);
 
@@ -109,7 +108,7 @@ describe("E/F — check-in", () => {
     const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id } });
     const webhook = await adapter.simulate(payment.providerPaymentId!, "chargeback");
 
-    const scans = tickets.map((t, i) => checkInTicket(db, i % 2 ? staff : owner, event.id, qrPayload(t)));
+    const scans = tickets.map((t, i) => checkInTicket(db, i % 2 ? staff : owner, event.id, gateQr(t)));
     const [charged, ...scanned] = await Promise.allSettled([handlePaymentWebhook(db, adapter, webhook), ...scans]);
 
     expect(charged.status).toBe("fulfilled");
@@ -134,22 +133,22 @@ describe("E/F — check-in", () => {
 
   it("detecta evento errado, ingresso revogado e QR inválido/forjado", async () => {
     const { staff, owner, event, otherEvent, tickets } = await setup();
-    expect((await checkInTicket(db, owner, otherEvent.id, qrPayload(tickets[0]))).result).toBe("WRONG_EVENT");
+    expect((await checkInTicket(db, owner, otherEvent.id, gateQr(tickets[0]))).result).toBe("WRONG_EVENT");
     await db.issuedTicket.update({ where: { id: tickets[0].id }, data: { status: "REVOKED", revocationReason: "ADMIN" } });
-    expect((await checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).result).toBe("REVOKED");
+    expect((await checkInTicket(db, staff, event.id, gateQr(tickets[0]))).result).toBe("REVOKED");
     expect((await checkInTicket(db, staff, event.id, "qualquer coisa")).result).toBe("INVALID");
-    // Código correto com token adivinhado.
-    const forged = qrPayload({ code: tickets[1].code, validationToken: "A".repeat(43) });
+    // Código correto com assinatura adivinhada.
+    const forged = `EB2:${tickets[1].code}:${Math.floor(Date.now() / 30_000)}:${"A".repeat(86)}`;
     expect((await checkInTicket(db, staff, event.id, forged)).result).toBe("INVALID");
-    // Token correto com código de outro ingresso.
-    const mixed = qrPayload({ code: tickets[0].code, validationToken: ticketQrToken(tickets[1])! });
+    // QR válido de um ingresso com o código trocado pelo de outro.
+    const mixed = gateQr(tickets[0]).replace(tickets[0].code, tickets[1].code);
     expect((await checkInTicket(db, staff, event.id, mixed)).result).toBe("INVALID");
   });
 
   it("evento errado de outra organização não revela o titular nem vincula a leitura ao ingresso", async () => {
     const { owner, event, otherEvent, tickets } = await setup();
     // Mesma organização: a portaria vê de quem é o ingresso para orientar o cliente.
-    const sameOrg = await checkInTicket(db, owner, otherEvent.id, qrPayload(tickets[0]));
+    const sameOrg = await checkInTicket(db, owner, otherEvent.id, gateQr(tickets[0]));
     expect(sameOrg.result).toBe("WRONG_EVENT");
     expect(sameOrg.ticket?.code).toBe(tickets[0].code);
 
@@ -160,7 +159,7 @@ describe("E/F — check-in", () => {
     await db.eventStaffAssignment.create({ data: { eventId: rivalEvent.id, userId: rivalStaff.id, assignedById: rivalOwner.id } });
 
     for (const actor of [rivalOwner, rivalStaff]) {
-      const r = await checkInTicket(db, actor, rivalEvent.id, qrPayload(tickets[1]));
+      const r = await checkInTicket(db, actor, rivalEvent.id, gateQr(tickets[1]));
       expect(r.result).toBe("WRONG_EVENT");
       expect(r.ticket).toBeUndefined();
       expect(r.counters).toEqual({ admitted: 0, total: 0 });
@@ -172,7 +171,7 @@ describe("E/F — check-in", () => {
     expect(history.map((h) => h.ticket)).toEqual([null, null]);
     // O ingresso continua válido no evento certo.
     expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[1].id } })).status).toBe("VALID");
-    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[1]))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(tickets[1]))).result).toBe("ADMITTED");
   });
 
   it("meia-entrada: devolve o tipo do ingresso ao admitir e no duplicado, mas não para outra organização", async () => {
@@ -193,18 +192,18 @@ describe("E/F — check-in", () => {
     const [full] = tickets.filter((t) => t.ticketType.kind === "GENERAL");
     const [half, half2] = tickets.filter((t) => t.ticketType.kind === "HALF_PRICE");
 
-    const admitted = await checkInTicket(db, owner, event.id, qrPayload(half));
+    const admitted = await checkInTicket(db, owner, event.id, gateQr(half));
     expect(admitted.result).toBe("ADMITTED");
     expect(admitted.ticket?.ticketKind).toBe("HALF_PRICE");
-    const duplicate = await checkInTicket(db, owner, event.id, qrPayload(half));
+    const duplicate = await checkInTicket(db, owner, event.id, gateQr(half));
     expect(duplicate.result).toBe("DUPLICATE");
     expect(duplicate.ticket?.ticketKind).toBe("HALF_PRICE");
-    expect((await checkInTicket(db, owner, event.id, qrPayload(full))).ticket?.ticketKind).toBe("GENERAL");
+    expect((await checkInTicket(db, owner, event.id, gateQr(full))).ticket?.ticketKind).toBe("GENERAL");
 
     // Outra organização: nada do ingresso (nem o tipo) é revelado.
     const rivalOwner = await makeUser();
     const rivalEvent = await makeEvent(await makeOrg(rivalOwner));
-    const rival = await checkInTicket(db, rivalOwner, rivalEvent.id, qrPayload(half2));
+    const rival = await checkInTicket(db, rivalOwner, rivalEvent.id, gateQr(half2));
     expect(rival.result).toBe("WRONG_EVENT");
     expect(rival.ticket).toBeUndefined();
     expect(JSON.stringify(rival)).not.toContain("HALF_PRICE");
@@ -212,16 +211,16 @@ describe("E/F — check-in", () => {
 
   it("equipe só acessa eventos atribuídos; clientes não acessam", async () => {
     const { staff, unassignedStaff, customer, event, otherEvent, tickets } = await setup();
-    await expect(checkInTicket(db, unassignedStaff, event.id, qrPayload(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(checkInTicket(db, staff, otherEvent.id, qrPayload(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(checkInTicket(db, customer, event.id, qrPayload(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(checkInTicket(db, unassignedStaff, event.id, gateQr(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(checkInTicket(db, staff, otherEvent.id, gateQr(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(checkInTicket(db, customer, event.id, gateQr(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(await db.issuedTicket.count({ where: { status: "CHECKED_IN" } })).toBe(0);
   });
 
   it("histórico: equipe vê só as próprias leituras; organizador vê todas", async () => {
     const { staff, owner, event, tickets } = await setup();
-    await checkInTicket(db, staff, event.id, qrPayload(tickets[0]));
-    await checkInTicket(db, owner, event.id, qrPayload(tickets[1]));
+    await checkInTicket(db, staff, event.id, gateQr(tickets[0]));
+    await checkInTicket(db, owner, event.id, gateQr(tickets[1]));
     expect(await checkinHistory(db, staff, event.id)).toHaveLength(1);
     expect(await checkinHistory(db, owner, event.id)).toHaveLength(2);
   });
@@ -229,6 +228,6 @@ describe("E/F — check-in", () => {
   it("recusa check-in em evento cancelado", async () => {
     const { staff, event, tickets } = await setup();
     await db.event.update({ where: { id: event.id }, data: { status: "CANCELLED" } });
-    expect((await checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).result).toBe("EVENT_NOT_ACTIVE");
+    expect((await checkInTicket(db, staff, event.id, gateQr(tickets[0]))).result).toBe("EVENT_NOT_ACTIVE");
   });
 });

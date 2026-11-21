@@ -13,9 +13,8 @@ import { cancelPendingOrder, createOrder, expireStaleOrders, ticketsHeldByAccoun
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { requestCustomerRefund } from "@/server/services/refunds";
 import { handlePaymentWebhook } from "@/server/services/payments";
-import { qrPayload } from "@/server/services/tickets";
 import { acceptTransfer, expireTicketTransfers, requestTransfer } from "@/server/services/transfers";
-import { adapter, buy, buyAndPay, db, makeCategory, makeCity, makeEvent, makeOrg, makeVerifiedUser as makeUser, orderInput, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeCategory, makeCity, makeEvent, makeOrg, makeVerifiedUser as makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 afterEach(async () => {
@@ -80,7 +79,7 @@ describe("V1.1 — aceite de transferência × check-in", () => {
       const { token } = await transfer(buyer, old.id, recipients[i]);
       const [accept, ...scans] = await Promise.allSettled([
         acceptTransfer(db, recipients[i], token),
-        ...Array.from({ length: 4 }, () => checkInTicket(db, owner, event.id, qrPayload(old))),
+        ...Array.from({ length: 4 }, () => checkInTicket(db, owner, event.id, gateQr(old))),
       ]);
       const admittedOld = scans.filter((s) => s.status === "fulfilled" && s.value.result === "ADMITTED").length;
       const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: old.id } });
@@ -91,8 +90,8 @@ describe("V1.1 — aceite de transferência × check-in", () => {
         expect(after.validationTokenHash).not.toBe(old.validationTokenHash);
         // Depois da troca: QR antigo e novo ao mesmo tempo → só o novo entra, uma vez.
         const race = await Promise.all([
-          ...Array.from({ length: 3 }, () => checkInTicket(db, owner, event.id, qrPayload(old))),
-          ...Array.from({ length: 3 }, () => checkInTicket(db, owner, event.id, qrPayload(after))),
+          ...Array.from({ length: 3 }, () => checkInTicket(db, owner, event.id, gateQr(old))),
+          ...Array.from({ length: 3 }, () => checkInTicket(db, owner, event.id, gateQr(after))),
         ]);
         expect(race.slice(0, 3).every((r) => r.result === "INVALID")).toBe(true);
         expect(race.slice(3).filter((r) => r.result === "ADMITTED")).toHaveLength(1);
@@ -112,9 +111,9 @@ describe("V1.1 — aceite de transferência × check-in", () => {
     const { owner, event, buyer, tickets } = await paidSetup({ quantity: 1 });
     const recipient = await makeUser();
     const moved = await transferAccepted(buyer, tickets[0].id, recipient);
-    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[0]))).result).toBe("INVALID");
-    expect((await checkInTicket(db, owner, event.id, qrPayload(moved))).result).toBe("ADMITTED");
-    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[0]))).result).toBe("INVALID");
+    expect((await checkInTicket(db, owner, event.id, gateQr(tickets[0]))).result).toBe("INVALID");
+    expect((await checkInTicket(db, owner, event.id, gateQr(moved))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(tickets[0]))).result).toBe("INVALID");
     // Ingresso usado não é reembolsável pelo comprador, mesmo transferido.
     await expect(requestCustomerRefund(db, adapter, buyer, tickets[0].orderId)).rejects.toThrow("Há ingressos já utilizados neste pedido.");
   });
@@ -144,7 +143,7 @@ describe("V1.2 — aceite × pedido de reembolso × aprovação do pedido de can
       await expectSingleRefundToPayer(order.id, payment.id, order.totalCents);
       // Nenhum ingresso válido sobra: o QR do destinatário não entra.
       expect((await ticketsOf(order.id)).every((t) => t.status === "REVOKED")).toBe(true);
-      expect((await checkInTicket(db, owner, event.id, qrPayload(moved))).result).toBe("REVOKED");
+      expect((await checkInTicket(db, owner, event.id, gateQr(moved))).result).toBe("REVOKED");
       expect(await ticketsHeldByAccount(db, recipient.id, event.id)).toBe(0);
       expect(await ticketsHeldByAccount(db, buyer.id, event.id)).toBe(0);
       // Nada foi devolvido a outro pagamento.
@@ -168,7 +167,7 @@ describe("V1.2 — aceite × pedido de reembolso × aprovação do pedido de can
       await expectSingleRefundToPayer(order.id, payment.id, order.totalCents);
       const t = await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } });
       expect(t.status).toBe("REVOKED");
-      expect((await checkInTicket(db, owner, event.id, qrPayload(t))).result).toBe("REVOKED");
+      expect((await checkInTicket(db, owner, event.id, gateQr(t))).result).toBe("REVOKED");
       expect((await db.ticketTransfer.findUniqueOrThrow({ where: { id: transferId } })).status).not.toBe("PENDING");
     }
   });
@@ -192,7 +191,7 @@ describe("V1.2 — aceite × pedido de reembolso × aprovação do pedido de can
     await handlePaymentWebhook(db, adapter, await adapter.simulate(payment.providerPaymentId!, "chargeback"));
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("DISPUTED");
     expect((await db.ticketTransfer.findUniqueOrThrow({ where: { id: transferId } })).status).toBe("CANCELLED");
-    expect((await checkInTicket(db, owner, event.id, qrPayload(moved))).result).toBe("REVOKED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(moved))).result).toBe("REVOKED");
     expect(await db.refund.count()).toBe(0);
   });
 });
@@ -248,7 +247,7 @@ describe("V1.3 — janela da alteração relevante com ingressos transferidos", 
     const refund = await requestCustomerRefund(db, adapter, buyer, order.id, change.refundUntil!);
     expect(refund).toMatchObject({ status: "SUCCEEDED", reason: "EVENT_CHANGED", eventChangeId: change.id, amountCents: order.totalCents, paymentId: payment.id });
     await expectSingleRefundToPayer(order.id, payment.id, order.totalCents);
-    expect((await checkInTicket(db, owner, event.id, qrPayload(moved))).result).toBe("REVOKED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(moved))).result).toBe("REVOKED");
   });
 
   it("um milissegundo depois do prazo vale a política normal; a prorrogação reabre a janela", async () => {
@@ -376,7 +375,7 @@ describe("V1.5 — cancelamento do evento com transferências pendentes", () => 
     expect(refund).toMatchObject({ reason: "EVENT_CANCELLED", paymentId: payment.id, amountCents: order.totalCents, requestedById: owner.id });
     await expectSingleRefundToPayer(order.id, payment.id, order.totalCents);
     expect((await ticketsOf(order.id)).every((t) => t.status === "REVOKED" && t.revocationReason === "EVENT_CANCELLED")).toBe(true);
-    expect((await checkInTicket(db, owner, event.id, qrPayload(moved))).result).toBe("EVENT_NOT_ACTIVE");
+    expect((await checkInTicket(db, owner, event.id, gateQr(moved))).result).toBe("EVENT_NOT_ACTIVE");
     expect(await ticketsHeldByAccount(db, r1.id, event.id)).toBe(0);
   });
 
@@ -418,7 +417,7 @@ describe("V1.6 — manutenção (cron) no meio dos fluxos", () => {
     // Manutenção concorrente com uma leitura do QR do destinatário e um novo pedido de reembolso.
     const [cron, scan, again] = await Promise.allSettled([
       runMaintenance(later(11 * MIN)),
-      checkInTicket(db, owner, event.id, qrPayload(moved)),
+      checkInTicket(db, owner, event.id, gateQr(moved)),
       requestCustomerRefund(db, adapter, buyer, order.id),
     ]);
     expect(cron.status).toBe("fulfilled");
@@ -449,7 +448,7 @@ describe("V1.6 — manutenção (cron) no meio dos fluxos", () => {
     expect((await db.ticketTransfer.findUniqueOrThrow({ where: { id: transferId } })).status).toBe("EXPIRED");
     const t = await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } });
     expect(t).toMatchObject({ holderUserId: buyer.id, validationTokenHash: tickets[0].validationTokenHash, status: "VALID" });
-    expect((await checkInTicket(db, owner, event.id, qrPayload(t))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(t))).result).toBe("ADMITTED");
   });
 });
 

@@ -14,9 +14,8 @@ import {
 } from "@/server/services/checkin";
 import { loadPdfTickets } from "@/server/services/notifications";
 import { checkinHistoryToCsv } from "@/server/services/reports";
-import { qrPayload } from "@/server/services/tickets";
 import { CHECKIN_GRACE_MS } from "@/lib/event-lifecycle";
-import { buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -37,18 +36,18 @@ describe("janela de abertura da portaria", () => {
   it("antes da abertura recusa sem gastar o ingresso e diz quando abre; na abertura admite", async () => {
     const { owner, event, tickets } = await setup({ checkinOpensMinutesBefore: 360 });
     const opensAt = new Date(event.startsAt.getTime() - 6 * HOUR);
-    const early = await checkInTicket(db, owner, event.id, qrPayload(tickets[0]), new Date(opensAt.getTime() - 60_000));
+    const early = await checkInTicket(db, owner, event.id, gateQr(tickets[0], new Date(opensAt.getTime() - 60_000)), new Date(opensAt.getTime() - 60_000));
     expect(early).toMatchObject({ result: "EVENT_NOT_ACTIVE", opensAt: opensAt.toISOString() });
     expect(early.message).toMatch(/ainda não abriu: abre/);
     expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } })).status).toBe("VALID");
-    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[0]), opensAt)).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(tickets[0], opensAt), opensAt)).result).toBe("ADMITTED");
   });
 
   it("continua aceitando até 12 h depois do término e fecha depois, sem 'abre às'", async () => {
     const { owner, event, tickets } = await setup({ checkinOpensMinutesBefore: 0 });
     const late = new Date(event.endsAt.getTime() + CHECKIN_GRACE_MS - HOUR);
-    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[0]), late)).result).toBe("ADMITTED");
-    const closed = await checkInTicket(db, owner, event.id, qrPayload(tickets[1]), new Date(event.endsAt.getTime() + CHECKIN_GRACE_MS));
+    expect((await checkInTicket(db, owner, event.id, gateQr(tickets[0], late), late)).result).toBe("ADMITTED");
+    const closed = await checkInTicket(db, owner, event.id, gateQr(tickets[1], new Date(event.endsAt.getTime() + CHECKIN_GRACE_MS)), new Date(event.endsAt.getTime() + CHECKIN_GRACE_MS));
     expect(closed.result).toBe("EVENT_NOT_ACTIVE");
     expect(closed.opensAt).toBeUndefined();
   });
@@ -88,12 +87,12 @@ describe("ingresso de pagamento simulado", () => {
   it("a portaria e a lista offline sabem que é de teste", async () => {
     const { owner, staff, event, order, tickets } = await setup();
     expect(order.isSimulated).toBe(true);
-    const r = await checkInTicket(db, owner, event.id, qrPayload(tickets[0]));
+    const r = await checkInTicket(db, owner, event.id, gateQr(tickets[0]));
     expect(r.ticket?.simulated).toBe(true);
     const pkg = await checkinOfflinePackage(db, staff, event.id);
     expect(pkg.tickets.every((t) => t.sim === true)).toBe(true);
     await db.order.update({ where: { id: order.id }, data: { isSimulated: false } });
-    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[1]))).ticket?.simulated).toBe(false);
+    expect((await checkInTicket(db, owner, event.id, gateQr(tickets[1]))).ticket?.simulated).toBe(false);
   });
 });
 
@@ -101,9 +100,9 @@ describe("histórico completo", () => {
   it("totais por resultado, filtros, entradas por hora (fuso do evento) e CSV registrado", async () => {
     const { owner, staff, event, tickets } = await setup();
     const at = new Date("2026-11-20T23:10:00Z"); // 20:10 em São Paulo
-    await checkInTicket(db, staff, event.id, qrPayload(tickets[0]), at);
-    await checkInTicket(db, staff, event.id, qrPayload(tickets[0]), new Date(at.getTime() + 60_000));
-    await checkInTicket(db, owner, event.id, qrPayload(tickets[1]), new Date(at.getTime() + HOUR));
+    await checkInTicket(db, staff, event.id, gateQr(tickets[0], at), at);
+    await checkInTicket(db, staff, event.id, gateQr(tickets[0], new Date(at.getTime() + 60_000)), new Date(at.getTime() + 60_000));
+    await checkInTicket(db, owner, event.id, gateQr(tickets[1], new Date(at.getTime() + HOUR)), new Date(at.getTime() + HOUR));
     await checkInTicket(db, owner, event.id, "lixo", new Date(at.getTime() + HOUR));
 
     const all = await checkinHistoryReport(db, owner, event.id);
@@ -155,7 +154,7 @@ describe("lista /check-in por papel", () => {
 describe("PDF e ingresso cancelado", () => {
   it("o PDF leva os ingressos válidos e usados, nunca os cancelados", async () => {
     const { owner, event, order, tickets } = await setup();
-    await checkInTicket(db, owner, event.id, qrPayload(tickets[0]));
+    await checkInTicket(db, owner, event.id, gateQr(tickets[0]));
     await db.issuedTicket.update({ where: { id: tickets[1].id }, data: { status: "REVOKED", revokedAt: new Date(), revocationReason: "REFUNDED" } });
     const codes = (await loadPdfTickets(db, { orderId: order.id })).map((t) => t.code).sort();
     expect(codes).toEqual([tickets[0].code, tickets[2].code].sort());

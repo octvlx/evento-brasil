@@ -1,7 +1,7 @@
 // Token do QR fora do banco: HMAC(QR_TOKEN_SECRET, código, versão) recalculado; o banco
 // guarda só o SHA-256. Ingressos anteriores (versão 0) mantêm o QR já enviado.
 import { createHash, randomBytes } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { checkInTicket, checkinOfflinePackage } from "@/server/services/checkin";
 import { loadPdfTickets } from "@/server/services/notifications";
 import { qrPayload, ticketQrToken } from "@/server/services/tickets";
@@ -9,6 +9,13 @@ import { acceptTransfer, requestTransfer } from "@/server/services/transfers";
 import { buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
+// QR fixo (EB1): só vale com a transição ligada (QR_STATIC_ACCEPTED=true). O padrão é recusar.
+beforeAll(() => {
+  process.env.QR_STATIC_ACCEPTED = "true";
+});
+afterAll(() => {
+  delete process.env.QR_STATIC_ACCEPTED;
+});
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 

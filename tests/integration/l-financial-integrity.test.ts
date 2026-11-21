@@ -8,9 +8,8 @@ import { createOrder, expireStaleOrders } from "@/server/services/orders";
 import { confirmReturnedPayment, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { adminRefundOrder, confirmRefundTx, OverRefundError, processRefund, requestCustomerRefund } from "@/server/services/refunds";
-import { qrPayload } from "@/server/services/tickets";
 import { PaymentNotStartedError } from "@/server/payments/types";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, orderInput, resetDb, ticketType } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, orderInput, resetDb, ticketType } from "../support/fixtures";
 
 beforeEach(resetDb);
 // Toda situação testada aqui deve terminar com o banco consistente.
@@ -212,7 +211,7 @@ describe("reembolso × check-in", () => {
       const ticket = await db.issuedTicket.findFirstOrThrow({ where: { orderId: order.id } });
       const [refund, checkin] = await Promise.allSettled([
         requestCustomerRefund(db, adapter, customer, order.id),
-        checkInTicket(db, owner, event.id, qrPayload(ticket)),
+        checkInTicket(db, owner, event.id, gateQr(ticket)),
       ]);
       const wasRefunded = refund.status === "fulfilled" && refund.value.status === "SUCCEEDED";
       const wasAdmitted = checkin.status === "fulfilled" && checkin.value.result === "ADMITTED";
@@ -233,7 +232,7 @@ describe("reembolso × check-in", () => {
     const customer = await makeUser();
     const { order } = await buyAndPay(customer, event.id, [{ ticketTypeId: tt.id, quantity: 2 }]);
     const [t1] = await db.issuedTicket.findMany({ where: { orderId: order.id }, orderBy: { sequence: "asc" } });
-    await checkInTicket(db, owner, event.id, qrPayload(t1));
+    await checkInTicket(db, owner, event.id, gateQr(t1));
     await expect(requestCustomerRefund(db, adapter, customer, order.id)).rejects.toThrow(/utilizados/);
     expect(await db.issuedTicket.count({ where: { orderId: order.id, status: "VALID" } })).toBe(1);
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PAID");
