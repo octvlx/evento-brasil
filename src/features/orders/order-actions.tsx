@@ -57,15 +57,22 @@ export function RefundButton({ orderId, tickets, usedTickets = 0 }: { orderId: s
   if (msg) return <Alert variant={msg.ok ? "success" : "danger"}>{msg.text}</Alert>;
   const choosing = !!tickets && (tickets.length > 1 || usedTickets > 0);
   const whole = !choosing || (selected.length === tickets!.length && usedTickets === 0);
-  const total = tickets?.filter((t) => selected.includes(t.id)).reduce((s, t) => s + t.amountCents, 0) ?? 0;
+  const chosen = tickets?.filter((t) => selected.includes(t.id)) ?? [];
+  const total = chosen.reduce((s, t) => s + t.amountCents, 0);
+  const retained = chosen.reduce((s, t) => s + (t.retainedCents ?? 0), 0);
   return confirming ? (
     <div className="space-y-2 rounded-xl bg-muted p-3 text-sm">
       {choosing && <RefundTicketList tickets={tickets!} selected={selected} onChange={setSelected} disabled={pending} />}
       <p>
         {whole
-          ? "Confirmar o reembolso integral? Os ingressos deste pedido serão cancelados."
-          : `Confirmar o reembolso de ${selected.length} ${selected.length === 1 ? "ingresso" : "ingressos"} (${formatBRL(total)}, com a taxa de serviço)? Os ingressos escolhidos serão cancelados e os demais continuam válidos.`}
+          ? `Confirmar o reembolso${retained ? "" : " integral"}? Os ingressos deste pedido serão cancelados.`
+          : `Confirmar o reembolso de ${selected.length} ${selected.length === 1 ? "ingresso" : "ingressos"} (${formatBRL(total - retained)}${retained ? "" : ", com a taxa de serviço"})? Os ingressos escolhidos serão cancelados e os demais continuam válidos.`}
       </p>
+      {retained > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="refund-retained">
+          Você recebe {formatBRL(total - retained)}. O valor fixo de {formatBRL(retained)} não é reembolsável após 7 dias da compra.
+        </p>
+      )}
       <div className="flex gap-2">
         <Button
           size="sm"

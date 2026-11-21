@@ -127,17 +127,29 @@ export async function postReversal(
   tx: Tx,
   kind: "REFUND" | "CHARGEBACK",
   order: OrderAmounts,
-  opts: { refundId?: string; paymentId?: string; returnCommission: boolean },
+  opts: { refundId?: string; paymentId?: string; returnCommission: boolean; retainedCents?: number },
 ) {
   const commissionOnly = order.commissionCents - order.serviceFeeCents;
+  // Valor fixo retido (não devolvido ao comprador): fica com a plataforma. Sai primeiro da
+  // taxa de serviço (comprador paga a comissão) e, se não houver, da comissão.
+  const retained = opts.retainedCents ?? 0;
+  if (!Number.isSafeInteger(retained) || retained < 0 || retained > order.commissionCents) throw new UnbalancedLedgerError("Valor retido inválido");
+  const retainedFromFee = Math.min(retained, order.serviceFeeCents);
+  const retainedFromCommission = retained - retainedFromFee;
+  const refunded = order.totalCents - retained;
   const entries: Entry[] = opts.returnCommission
     ? [
         { account: "ORGANIZER_PAYABLE", direction: "DEBIT", amountCents: order.totalCents - order.commissionCents, description: "Estorno do repasse" },
-        { account: "PLATFORM_COMMISSION", direction: "DEBIT", amountCents: commissionOnly, description: "Estorno da comissão" },
-        { account: "PLATFORM_SERVICE_FEE", direction: "DEBIT", amountCents: order.serviceFeeCents, description: "Estorno da taxa de serviço" },
+        { account: "PLATFORM_COMMISSION", direction: "DEBIT", amountCents: commissionOnly - retainedFromCommission, description: "Estorno da comissão" },
+        { account: "PLATFORM_SERVICE_FEE", direction: "DEBIT", amountCents: order.serviceFeeCents - retainedFromFee, description: "Estorno da taxa de serviço" },
       ]
-    : [{ account: "ORGANIZER_PAYABLE", direction: "DEBIT", amountCents: order.totalCents, description: "Estorno integral (comissão retida)" }];
-  entries.push({ account: "CUSTOMER_FUNDS", direction: "CREDIT", amountCents: order.totalCents, description: kind === "REFUND" ? "Reembolso ao comprador" : "Chargeback" });
+    : [{ account: "ORGANIZER_PAYABLE", direction: "DEBIT", amountCents: refunded, description: "Estorno integral (comissão retida)" }];
+  entries.push({
+    account: "CUSTOMER_FUNDS",
+    direction: "CREDIT",
+    amountCents: refunded,
+    description: kind === "REFUND" ? (retained ? "Reembolso ao comprador (valor fixo retido)" : "Reembolso ao comprador") : "Chargeback",
+  });
   await postLedgerTransaction(tx, {
     idempotencyKey: `${kind.toLowerCase()}:${opts.refundId ?? opts.paymentId ?? order.id}`,
     type: kind,

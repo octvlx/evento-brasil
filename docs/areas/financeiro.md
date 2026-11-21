@@ -148,6 +148,27 @@ Implementação: `decideRefundApproval` em `refunds.ts` (travas do evento e do p
 transição condicional), migração `20261120180000_refund_approval`, testes em
 `tests/integration/zz-refund-approval.test.ts`.
 
+## Valor fixo não reembolsável e edição de versões de regra
+
+**Valor fixo por ingresso não reembolsável** (`CommissionRule.fixedFeeRefundable = false`):
+- Na compra, o pedido guarda a regra (`Order.fixedFeeRefundable`) e a parte fixa de cada item (`OrderItem.fixedFeePerUnitCents`: metade na meia, zero em gratuito ou cupom de 100%). Editar a regra depois nunca muda pedidos.
+- `retainedFixedFeeCents` (refunds.ts) retém a parte fixa dos ingressos cobertos **só** quando:
+  - o comprador pede pela página do pedido (`CUSTOMER_REQUEST`);
+  - o pagamento tem mais de `ARREPENDIMENTO_DAYS` (7) dias (CDC art. 49);
+  - o provedor permite reter (hoje, só o simulado).
+- Alteração ou cancelamento do evento, reembolso do admin, pedido de cancelamento aprovado e chargeback devolvem tudo. A retenção nunca zera o reembolso.
+- `Refund.retainedFeeCents` guarda o retido, e `amountCents` (o que vai ao provedor) = ingressos cobertos − retido. `partialRefundCents` soma os dois, para um reembolso integral posterior (ex.: cancelamento) devolver só o resto.
+- No razão (`postReversal`), o retido fica com a plataforma: sai primeiro da taxa de serviço e depois da comissão. O comprador recebe `total − retido`. O invariante `PARTIAL_REFUND_AMOUNT_MISMATCH` compara com devolvido + retido.
+- **Mercado Pago real:** a opção fica desabilitada. A documentação não diz como a parte da plataforma (`application_fee`) volta num estorno **parcial** com split. Se voltar proporcionalmente, a plataforma não ficaria com o fixo e o razão ficaria errado. Para liberar, é preciso validar com um estorno parcial real e conferir `charges_details`.
+- **Revisão jurídica pendente:** reter parte do valor pago fora do arrependimento (CDC art. 49 / Decreto 13.108/2026).
+- **Transparência:** a página do evento e a do pedido avisam antes, e a confirmação do reembolso mostra quanto volta.
+
+**Editar ou excluir versão** (`updateCommissionRule` / `deleteCommissionRule`, permissão `finance:commissions`):
+- Só versões que **nenhum pedido usou**, com a versão travada (`FOR UPDATE`).
+- `Order.commissionRuleId` agora é `ON DELETE RESTRICT` (era `SET NULL`), então o banco também impede apagar uma versão em uso.
+- Excluir a vigente reativa a anterior do mesmo alvo (a que ela encerrou). A plataforma nunca fica sem regra vigente.
+- O número da próxima versão é o maior já usado + 1, sem repetir número de versão excluída.
+
 ## Cupons e atribuição (ADR 0002, passo 2)
 
 Preço:

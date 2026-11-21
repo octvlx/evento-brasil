@@ -1,14 +1,14 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { commissionRuleInputSchema } from "@/features/schemas";
+import { commissionRuleInputSchema, commissionRuleValuesSchema } from "@/features/schemas";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { assertAdminPermission } from "@/server/auth/permissions";
 import { getPaymentAdapter } from "@/server/payments";
 import { cancelEvent } from "@/server/services/cancellation";
-import { setCommissionRule } from "@/server/services/commission";
+import { deleteCommissionRule, setCommissionRule, updateCommissionRule } from "@/server/services/commission";
 import { moderateEvent, setEventFeatured, setEventSuspended } from "@/server/services/events";
 import { reviewOrganization, setAutoPublish, setOrganizationSuspended } from "@/server/services/organizers";
 import { adminRefundOrder, processRefund } from "@/server/services/refunds";
@@ -90,6 +90,8 @@ export async function saveCommissionRuleAction(_prev: ActionResult | undefined, 
     processingFeeBearer: formData.get("processingFeeBearer"),
     // Só o provedor simulado retém a comissão; com o Mercado Pago o estorno sempre a devolve.
     refundCommissionOnRefund: !getPaymentAdapter().isSimulated || formData.get("refundCommissionOnRefund") === "on",
+    // Reter o valor fixo também só no simulado (estorno parcial com split ainda não validado no Mercado Pago).
+    fixedFeeRefundable: !getPaymentAdapter().isSimulated || formData.get("fixedFeeNonRefundable") !== "on",
   });
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   const v = parsed.data;
@@ -103,9 +105,41 @@ export async function saveCommissionRuleAction(_prev: ActionResult | undefined, 
       bearer: v.bearer,
       processingFeeBearer: v.processingFeeBearer,
       refundCommissionOnRefund: v.refundCommissionOnRefund,
+      fixedFeeRefundable: v.fixedFeeRefundable,
     }),
   );
 }
+
+function ruleValuesFrom(formData: FormData) {
+  const simulated = getPaymentAdapter().isSimulated;
+  return commissionRuleValuesSchema.safeParse({
+    percent: formData.get("percent"),
+    fixedCentsPerTicket: formData.get("fixedCentsPerTicket") || 0,
+    bearer: formData.get("bearer"),
+    processingFeeBearer: formData.get("processingFeeBearer"),
+    refundCommissionOnRefund: !simulated || formData.get("refundCommissionOnRefund") === "on",
+    fixedFeeRefundable: !simulated || formData.get("fixedFeeNonRefundable") !== "on",
+  });
+}
+
+/** Edita uma versão de regra que nenhum pedido usou (o serviço confere). */
+export async function updateCommissionRuleAction(ruleId: string, _prev: ActionResult | undefined, formData: FormData): Promise<ActionResult> {
+  const parsed = ruleValuesFrom(formData);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  const v = parsed.data;
+  return run((a) =>
+    updateCommissionRule(db, a, String(ruleId), {
+      percentBps: Math.round(v.percent * 100),
+      fixedCentsPerTicket: v.fixedCentsPerTicket,
+      bearer: v.bearer,
+      processingFeeBearer: v.processingFeeBearer,
+      refundCommissionOnRefund: v.refundCommissionOnRefund,
+      fixedFeeRefundable: v.fixedFeeRefundable,
+    }),
+  );
+}
+
+export const deleteCommissionRuleAction = async (ruleId: string) => run((a) => deleteCommissionRule(db, a, String(ruleId)));
 
 // Eventos externos (descoberta): permissão de moderação conferida nos serviços.
 // Cada busca de capa faz o servidor baixar a página e até 5 imagens de um site público

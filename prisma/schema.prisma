@@ -654,6 +654,8 @@ model Order {
   commissionCents        Int
   feePolicyVersion       String
   commissionRuleId       String?
+  /// Cópia da regra na compra: a regra pode ser editada depois (só sem pedidos), o pedido não muda.
+  fixedFeeRefundable     Boolean     @default(true)
   buyerName              String
   buyerEmail             String
   buyerPhone             String?
@@ -683,7 +685,7 @@ model Order {
   user             User                         @relation(fields: [userId], references: [id])
   event            Event                        @relation(fields: [eventId], references: [id])
   organization     Organization                 @relation(fields: [organizationId], references: [id])
-  commissionRule   CommissionRule?              @relation(fields: [commissionRuleId], references: [id])
+  commissionRule   CommissionRule?              @relation(fields: [commissionRuleId], references: [id], onDelete: Restrict)
   // Cupom da mesma organização do pedido; Restrict porque o cupom usado é histórico.
   coupon           Coupon?                      @relation(fields: [couponId, organizationId], references: [id, organizationId], onDelete: Restrict)
   trackingLink     TrackingLink?                @relation(fields: [trackingLinkId], references: [id], onDelete: Restrict)
@@ -725,6 +727,8 @@ model OrderItem {
   listUnitPriceCents     Int
   discountPerUnitCents   Int        @default(0)
   commissionPerUnitCents Int
+  /// Parte fixa da comissão por unidade (já proporcional na meia; 0 se gratuito). Base da retenção no reembolso.
+  fixedFeePerUnitCents   Int        @default(0)
   serviceFeePerUnitCents Int
   quantity               Int
   // [{ name, email?, document? }] quando o tipo exige dados do participante.
@@ -1067,6 +1071,8 @@ model Refund {
   orderId          String
   paymentId        String?
   amountCents      Int
+  /// Valor fixo retido (não devolvido ao comprador). amountCents = ingressos cobertos − retido.
+  retainedFeeCents Int          @default(0)
   status           RefundStatus @default(REQUESTED)
   reason           RefundReason
   requestedById    String?
@@ -1357,6 +1363,9 @@ model CommissionRule {
   bearer                   FeeBearer           @default(ORGANIZER)
   processingFeeBearer      ProcessingFeeBearer @default(ORGANIZER)
   refundCommissionOnRefund Boolean             @default(true)
+  /// Valor fixo por ingresso devolvido em reembolso pedido pelo comprador? false = retido
+  /// (fora do prazo de arrependimento). Copiado para o pedido na compra (Order.fixedFeeRefundable).
+  fixedFeeRefundable       Boolean             @default(true)
   policyVersion            String              @unique
   activeFrom               DateTime            @default(now()) @db.Timestamptz(3)
   activeTo                 DateTime?           @db.Timestamptz(3)

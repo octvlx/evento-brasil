@@ -286,11 +286,11 @@ export async function checkFinancialInvariants(db: Db): Promise<InvariantViolati
     ],
     [
       "PARTIAL_REFUND_AMOUNT_MISMATCH",
-      "Reembolso parcial com valor diferente dos ingressos que cobre (preço + taxa)",
+      "Reembolso parcial com valor diferente dos ingressos que cobre (preço + taxa = devolvido + retido)",
       db.$queryRaw`SELECT r.id FROM "Refund" r
         LEFT JOIN (SELECT t."refundId", SUM(oi."unitPriceCents" + oi."serviceFeePerUnitCents") AS s
                    FROM "IssuedTicket" t JOIN "OrderItem" oi ON oi.id = t."orderItemId" GROUP BY 1) c ON c."refundId" = r.id
-        WHERE r.partial AND r.status <> 'REJECTED' AND COALESCE(c.s, 0) <> r."amountCents"`,
+        WHERE r.partial AND r.status <> 'REJECTED' AND COALESCE(c.s, 0) <> r."amountCents" + r."retainedFeeCents"`,
     ],
     [
       "REFUND_PENDING_WITHOUT_OPEN_REFUND",

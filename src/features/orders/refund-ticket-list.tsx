@@ -8,6 +8,8 @@ export interface RefundableTicket {
   label: string;
   holder?: string | null;
   amountCents: number;
+  /** Valor fixo que não volta neste reembolso (regra da compra + prazo de arrependimento). */
+  retainedCents?: number;
 }
 
 /** Lista de ingressos com caixa de seleção e o total a devolver. */

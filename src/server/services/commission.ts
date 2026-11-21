@@ -91,6 +91,16 @@ export interface NewRuleInput {
   bearer: FeeBearer;
   processingFeeBearer: ProcessingFeeBearer;
   refundCommissionOnRefund: boolean;
+  /** false: o valor fixo por ingresso não volta ao comprador (ver retainedFixedFeeCents). */
+  fixedFeeRefundable?: boolean;
+}
+
+export type RuleValues = Omit<NewRuleInput, "scope" | "organizationId" | "eventId">;
+
+/** Próximo número de versão do alvo: maior número já usado + 1 (versões excluídas não voltam). */
+async function nextVersionNumber(tx: Tx, target: { scope: CommissionScope; organizationId: string | null; eventId: string | null }) {
+  const rows = await tx.commissionRule.findMany({ where: target, select: { policyVersion: true } });
+  return rows.reduce((max, r) => Math.max(max, Number(/:v(\d+)$/.exec(r.policyVersion)?.[1] ?? 0)), 0) + 1;
 }
 
 /** Nova versão de regra: encerra a vigente do mesmo escopo/alvo e cria outra. Regras antigas permanecem. */
@@ -106,7 +116,7 @@ export async function setCommissionRule(db: Db, actor: Actor, input: NewRuleInpu
   return db.$transaction(async (tx) => {
     const now = new Date();
     await tx.commissionRule.updateMany({ where: { ...target, activeTo: null }, data: { activeTo: now } });
-    const count = await tx.commissionRule.count({ where: target });
+    const version = await nextVersionNumber(tx, target);
     const suffix = target.eventId ?? target.organizationId ?? "default";
     const rule = await tx.commissionRule.create({
       data: {
@@ -116,7 +126,8 @@ export async function setCommissionRule(db: Db, actor: Actor, input: NewRuleInpu
         bearer: input.bearer,
         processingFeeBearer: input.processingFeeBearer,
         refundCommissionOnRefund: input.refundCommissionOnRefund,
-        policyVersion: `${input.scope.toLowerCase()}:${suffix}:v${count + 1}`,
+        fixedFeeRefundable: input.fixedFeeRefundable ?? true,
+        policyVersion: `${input.scope.toLowerCase()}:${suffix}:v${version}`,
         activeFrom: now,
         createdById: actor.id,
       },
@@ -130,5 +141,76 @@ export async function setCommissionRule(db: Db, actor: Actor, input: NewRuleInpu
       metadata: { ...input },
     });
     return rule;
+  });
+}
+
+const RULE_VALUE_FIELDS = ["percentBps", "fixedCentsPerTicket", "bearer", "processingFeeBearer", "refundCommissionOnRefund", "fixedFeeRefundable"] as const;
+
+/**
+ * Trava a versão e confere que nenhum pedido a usa. Pedido guarda os valores calculados e
+ * aponta para a versão (Order.commissionRuleId, ON DELETE RESTRICT): versão em uso não muda
+ * nem some; para mudar valores daqui em diante, cria-se uma nova versão.
+ */
+async function lockUnusedRule(tx: Tx, ruleId: string) {
+  await tx.$queryRaw`SELECT id FROM "CommissionRule" WHERE id = ${ruleId} FOR UPDATE`;
+  const rule = await tx.commissionRule.findUnique({ where: { id: ruleId } });
+  if (!rule) throw new AppError("NOT_FOUND", "Versão de regra não encontrada.");
+  const orders = await tx.order.count({ where: { commissionRuleId: ruleId } });
+  if (orders) {
+    throw new AppError("CONFLICT", `Esta versão já foi usada em ${orders} ${orders === 1 ? "pedido" : "pedidos"} e não pode ser alterada nem excluída. Crie uma nova versão.`);
+  }
+  return rule;
+}
+
+/** Corrige os valores de uma versão que nenhum pedido usou (ex.: criada com valor errado). */
+export async function updateCommissionRule(db: Db, actor: Actor, ruleId: string, values: RuleValues): Promise<CommissionRule> {
+  assertAdminPermission(actor, "finance:commissions");
+  return db.$transaction(async (tx) => {
+    const before = await lockUnusedRule(tx, ruleId);
+    const data = Object.fromEntries(RULE_VALUE_FIELDS.map((k) => [k, values[k]])) as RuleValues;
+    const rule = await tx.commissionRule.update({ where: { id: ruleId }, data });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: before.organizationId,
+      action: "commission_rule.updated",
+      entityType: "CommissionRule",
+      entityId: ruleId,
+      metadata: { policyVersion: before.policyVersion, before: Object.fromEntries(RULE_VALUE_FIELDS.map((k) => [k, before[k]])), after: { ...data } },
+    });
+    return rule;
+  });
+}
+
+/**
+ * Exclui uma versão que nenhum pedido usou. Sendo a vigente, a versão anterior do mesmo
+ * alvo (a que ela encerrou) volta a valer. A plataforma nunca fica sem regra vigente.
+ */
+export async function deleteCommissionRule(db: Db, actor: Actor, ruleId: string) {
+  assertAdminPermission(actor, "finance:commissions");
+  return db.$transaction(async (tx) => {
+    const rule = await lockUnusedRule(tx, ruleId);
+    const target = { scope: rule.scope, organizationId: rule.organizationId, eventId: rule.eventId };
+    let reactivated: CommissionRule | null = null;
+    if (!rule.activeTo) {
+      const previous = await tx.commissionRule.findFirst({ where: { ...target, activeTo: rule.activeFrom, NOT: { id: rule.id } }, orderBy: { activeFrom: "desc" } });
+      if (!previous && rule.scope === "PLATFORM") {
+        throw new AppError("INVALID_STATE", "A plataforma precisa de uma regra vigente. Crie outra versão antes de excluir esta.");
+      }
+      if (previous) reactivated = await tx.commissionRule.update({ where: { id: previous.id }, data: { activeTo: null } });
+    }
+    await tx.commissionRule.delete({ where: { id: rule.id } });
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId: rule.organizationId,
+      action: "commission_rule.deleted",
+      entityType: "CommissionRule",
+      entityId: rule.id,
+      metadata: {
+        policyVersion: rule.policyVersion,
+        values: Object.fromEntries(RULE_VALUE_FIELDS.map((k) => [k, rule[k]])),
+        ...(reactivated ? { reactivated: reactivated.policyVersion } : {}),
+      },
+    });
+    return { reactivated: reactivated?.policyVersion ?? null };
   });
 }
