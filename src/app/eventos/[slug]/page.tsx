@@ -67,7 +67,9 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   await connection();
   const data = await getPublicEvent(db, slug);
   if (!data) notFound();
-  const { event, organizer, prices, buyerPaysFee, ended, availability, halfPrice } = data;
+  const { event, organizer, prices, buyerPaysFee, ended, availability, halfPrice, fixedFee } = data;
+  // Igual a retainedFixedFeeCents: só retém com provedor que permite (hoje, o simulado).
+  const retainedFixed = !fixedFee.refundable && fixedFee.cents > 0 && getPaymentAdapter().isSimulated ? fixedFee.cents : 0;
   const user = await getCurrentUser();
   // Cupom pré-aplicado pelo link rastreado desta visita (cookie eb_attr), se for deste evento.
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
@@ -303,6 +305,11 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
               antes do início, se nenhum ingresso do pedido tiver sido usado.
             </p>
             <p className="mt-2 text-[15px] text-foreground/90">{event.refundPolicy}</p>
+            {retainedFixed > 0 && (
+              <p className="mt-2 text-sm text-muted-foreground" data-testid="fixed-fee-policy">
+                A parte fixa da taxa ({formatBRL(retainedFixed)} por ingresso; metade na meia-entrada) é devolvida em até 7 dias da compra e na alteração ou no cancelamento do evento. Depois disso, num reembolso pedido pelo comprador, ela não é devolvida.
+              </p>
+            )}
             {hasHalfType && (
               <div className="mt-2 space-y-1 text-sm text-muted-foreground" data-testid="half-price-info">
                 <p>Meia-entrada disponível conforme a legislação aplicável, mediante comprovação do direito na entrada.</p>

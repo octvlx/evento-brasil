@@ -158,26 +158,53 @@ export function orderAwaitsRefund(refund: { partial: boolean }, orderStatus: str
 export async function ticketRefundAmounts(client: Db | Tx, where: Prisma.IssuedTicketWhereInput) {
   const tickets = await client.issuedTicket.findMany({
     where,
-    select: { id: true, ticketTypeId: true, orderItem: { select: { unitPriceCents: true, serviceFeePerUnitCents: true, commissionPerUnitCents: true } } },
+    select: { id: true, ticketTypeId: true, orderItem: { select: { unitPriceCents: true, serviceFeePerUnitCents: true, commissionPerUnitCents: true, fixedFeePerUnitCents: true } } },
   });
   let totalCents = 0;
   let serviceFeeCents = 0;
   let commissionCents = 0;
+  let fixedFeeCents = 0;
   for (const t of tickets) {
     totalCents += t.orderItem.unitPriceCents + t.orderItem.serviceFeePerUnitCents;
     serviceFeeCents += t.orderItem.serviceFeePerUnitCents;
     commissionCents += t.orderItem.commissionPerUnitCents;
+    fixedFeeCents += t.orderItem.fixedFeePerUnitCents;
   }
-  return { tickets, totalCents, serviceFeeCents, commissionCents };
+  return { tickets, totalCents, serviceFeeCents, commissionCents, fixedFeeCents };
+}
+
+/** Prazo de arrependimento (CDC art. 49) contado do pagamento: dentro dele, tudo é devolvido. */
+export const ARREPENDIMENTO_DAYS = 7;
+
+/**
+ * Valor fixo retido num reembolso: só quando o comprador pede (CUSTOMER_REQUEST), a regra
+ * da compra diz que o fixo não é reembolsável, o pagamento tem mais de ARREPENDIMENTO_DAYS
+ * dias e o provedor permite reter (hoje só o simulado: o estorno parcial com split do
+ * Mercado Pago ainda não foi validado; ver commissionReturnedOnRefund). Alteração ou
+ * cancelamento do evento, admin e chargeback devolvem tudo. Nunca zera o reembolso.
+ */
+export function retainedFixedFeeCents(input: {
+  reason: RefundReason;
+  order: { fixedFeeRefundable: boolean; isSimulated: boolean; paidAt: Date | null };
+  fixedFeeCents: number;
+  coveredCents: number;
+  now: Date;
+}) {
+  const { reason, order, fixedFeeCents, coveredCents, now } = input;
+  if (reason !== "CUSTOMER_REQUEST" || order.fixedFeeRefundable || !order.isSimulated || !order.paidAt) return 0;
+  if (now.getTime() - order.paidAt.getTime() <= ARREPENDIMENTO_DAYS * 86_400_000) return 0;
+  if (fixedFeeCents <= 0 || fixedFeeCents >= coveredCents) return 0;
+  return fixedFeeCents;
 }
 
 /** Soma dos reembolsos parciais do pedido que não foram desfeitos (exceto `excludeId`). */
 export async function partialRefundCents(client: Db | Tx, orderId: string, excludeId?: string) {
+  // Valor dos ingressos cobertos (devolvido + retido): o que falta reembolsar é o resto.
   const agg = await client.refund.aggregate({
     where: { orderId, partial: true, status: { not: "REJECTED" }, ...(excludeId ? { NOT: { id: excludeId } } : {}) },
-    _sum: { amountCents: true },
+    _sum: { amountCents: true, retainedFeeCents: true },
   });
-  return agg._sum.amountCents ?? 0;
+  return (agg._sum.amountCents ?? 0) + (agg._sum.retainedFeeCents ?? 0);
 }
 
 /** Motivos pedidos pelo comprador: ingresso já usado impede o reembolso. */
@@ -207,6 +234,8 @@ export interface RefundRequestLinks {
   cancellationRequestId?: string;
   /** Acima deste valor o reembolso nasce em AWAITING_APPROVAL (não vai ao provedor). */
   approvalAboveCents?: number;
+  /** Momento do pedido (prazo de arrependimento na retenção do valor fixo). Padrão: agora. */
+  now?: Date;
 }
 
 /**
@@ -245,9 +274,10 @@ export async function createRefundRequestTx(
     partial = ids.length < open.length;
     selected = ids;
   }
-  const amountCents = partial
-    ? (await ticketRefundAmounts(tx, { id: { in: selected } })).totalCents
-    : order.totalCents - (await partialRefundCents(tx, orderId));
+  const selectedAmounts = await ticketRefundAmounts(tx, { id: { in: selected } });
+  const coveredCents = partial ? selectedAmounts.totalCents : order.totalCents - (await partialRefundCents(tx, orderId));
+  const retainedFeeCents = retainedFixedFeeCents({ reason, order, fixedFeeCents: selectedAmounts.fixedFeeCents, coveredCents, now: links.now ?? new Date() });
+  const amountCents = coveredCents - retainedFeeCents;
 
   // Um reembolso anterior com o mesmo motivo pode ter sido encerrado como
   // REJECTED (admin restaurou os ingressos): o novo pedido precisa de chave própria.
@@ -266,6 +296,7 @@ export async function createRefundRequestTx(
       orderId,
       paymentId: order.payments[0]?.id ?? null,
       amountCents,
+      retainedFeeCents,
       partial,
       ...(awaitingApproval ? { status: "AWAITING_APPROVAL" as const, approvalRequired: true } : {}),
       reason,
@@ -300,6 +331,7 @@ export async function createRefundRequestTx(
     metadata: {
       reason,
       ...(refund.status === "AWAITING_APPROVAL" ? { awaitingApproval: true, amountCents } : {}),
+      ...(refund.retainedFeeCents ? { retainedFeeCents: refund.retainedFeeCents } : {}),
       ...(partial ? { partial: true, tickets: selected.length } : {}),
       ...(transfersClosed ? { transfersClosed } : {}),
       ...(links.eventChangeId ? { eventChangeId: links.eventChangeId } : {}),
@@ -339,7 +371,7 @@ export async function requestCustomerRefund(db: Db, adapter: PaymentProviderAdap
   const refund =
     check.basis === "EVENT_CHANGED"
       ? await createRefundRequest(db, orderId, "EVENT_CHANGED", actor.id, { eventChangeId: check.window.eventChangeId }, ticketIds)
-      : await createRefundRequest(db, orderId, "CUSTOMER_REQUEST", actor.id, undefined, ticketIds);
+      : await createRefundRequest(db, orderId, "CUSTOMER_REQUEST", actor.id, { now }, ticketIds);
   await processRefund(db, adapter, refund.id);
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
 }
@@ -1021,8 +1053,8 @@ export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()
     const parts = await ticketRefundAmounts(tx, { orderId: order.id, refund: { partial: true, status: { not: "REJECTED" }, NOT: { id: refundId } } });
     amounts = { totalCents: order.totalCents - parts.totalCents, commissionCents: order.commissionCents - parts.commissionCents, serviceFeeCents: order.serviceFeeCents - parts.serviceFeeCents };
   }
-  if (amounts.totalCents !== refund.amountCents) {
-    throw new OverRefundError(`Reembolso ${refundId}: valor ${refund.amountCents} difere dos ingressos cobertos (${amounts.totalCents}).`);
+  if (amounts.totalCents - refund.retainedFeeCents !== refund.amountCents) {
+    throw new OverRefundError(`Reembolso ${refundId}: valor ${refund.amountCents} (+ ${refund.retainedFeeCents} retido) difere dos ingressos cobertos (${amounts.totalCents}).`);
   }
 
   // Pedido encerrado quando nenhum ingresso fica fora de um reembolso concluído.
@@ -1037,6 +1069,7 @@ export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()
     refundId,
     paymentId: refund.paymentId ?? undefined,
     returnCommission: commissionReturnedOnRefund(order.commissionRule, order.isSimulated),
+    retainedCents: refund.retainedFeeCents,
   });
   await audit(tx, {
     organizationId: order.organizationId,

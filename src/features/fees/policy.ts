@@ -45,6 +45,8 @@ export interface FeeLine {
   unitPriceCents: number;
   lineDiscountCents: number;
   commissionPerUnitCents: number;
+  /** Parte fixa contida em `commissionPerUnitCents` (meia: proporcional; gratuito: 0). */
+  fixedFeePerUnitCents: number;
   serviceFeePerUnitCents: number;
   lineSubtotalCents: number;
   lineCommissionCents: number;
@@ -66,10 +68,15 @@ export interface FeeBreakdown {
 /** Fração da parte fixa da comissão cobrada na meia-entrada (D4): a mesma do preço. */
 export const HALF_PRICE_FIXED_FEE_BPS = 5_000;
 
+/** Parte fixa da comissão por unidade: 0 em ingresso gratuito, proporcional na meia (D4). */
+export function fixedFeePerUnit(unitPriceCents: number, rule: Pick<FeeRule, "fixedCentsPerTicket">, halfPrice = false): number {
+  if (unitPriceCents === 0) return 0;
+  return halfPrice ? applyBps(rule.fixedCentsPerTicket, HALF_PRICE_FIXED_FEE_BPS) : rule.fixedCentsPerTicket;
+}
+
 export function commissionPerUnit(unitPriceCents: number, rule: Pick<FeeRule, "percentBps" | "fixedCentsPerTicket">, halfPrice = false): number {
   if (unitPriceCents === 0) return 0;
-  const fixed = halfPrice ? applyBps(rule.fixedCentsPerTicket, HALF_PRICE_FIXED_FEE_BPS) : rule.fixedCentsPerTicket;
-  return applyBps(unitPriceCents, rule.percentBps) + fixed;
+  return applyBps(unitPriceCents, rule.percentBps) + fixedFeePerUnit(unitPriceCents, rule, halfPrice);
 }
 
 /**
@@ -101,6 +108,7 @@ export function computeFees(lines: FeeLineInput[], rule: FeeRule): FeeBreakdown 
       unitPriceCents: net,
       lineDiscountCents: discount * l.quantity,
       commissionPerUnitCents: commission,
+      fixedFeePerUnitCents: fixedFeePerUnit(net, rule, l.halfPrice),
       serviceFeePerUnitCents: serviceFee,
       lineSubtotalCents: net * l.quantity,
       lineCommissionCents: commission * l.quantity,

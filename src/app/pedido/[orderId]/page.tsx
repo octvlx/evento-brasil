@@ -17,7 +17,7 @@ import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
 import { walletAvailability } from "@/server/tickets/wallet";
 import { WalletLinks } from "@/features/wallet/wallet-links";
-import { openChangeRefundWindow, refundEligibility, type RefundEligibility } from "@/server/services/refunds";
+import { ARREPENDIMENTO_DAYS, openChangeRefundWindow, refundEligibility, retainedFixedFeeCents, type RefundEligibility } from "@/server/services/refunds";
 import { PROVISIONAL_CANCELLATION_RESPONSE_DAYS } from "@/server/services/cancellation-requests";
 import { formatDateShort, formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
@@ -59,7 +59,10 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
     .filter((t) => t.status === "VALID" && !t.refundId)
     .map((t) => {
       const item = itemById.get(t.orderItemId);
-      return { id: t.id, label: t.ticketType.name, holder: t.holderName, amountCents: (item?.unitPriceCents ?? 0) + (item?.serviceFeePerUnitCents ?? 0) };
+      const amountCents = (item?.unitPriceCents ?? 0) + (item?.serviceFeePerUnitCents ?? 0);
+      // Mesma regra do serviço: o pedido do comprador (CUSTOMER_REQUEST) com o fixo não reembolsável.
+      const retainedCents = retainedFixedFeeCents({ reason: "CUSTOMER_REQUEST", order, fixedFeeCents: item?.fixedFeePerUnitCents ?? 0, coveredCents: amountCents, now });
+      return { id: t.id, label: t.ticketType.name, holder: t.holderName, amountCents, retainedCents };
     });
   // Um reembolso por vez: com outro em aberto (ex.: parcial em reprocessamento), não oferece novo.
   const openRefund = order.refunds.some((r) => ["AWAITING_APPROVAL", "REQUESTED", "PROCESSING", "FAILED"].includes(r.status));
@@ -247,6 +250,11 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
             !order.refunds.length && <p className="text-sm text-muted-foreground">{eligibility.reason}</p>
           )}
           <p className="text-xs text-muted-foreground">Política do evento: {order.event.refundPolicy}</p>
+          {!order.fixedFeeRefundable && order.items.some((i) => i.fixedFeePerUnitCents > 0) && (
+            <p className="text-xs text-muted-foreground" data-testid="fixed-fee-policy">
+              Valor fixo da taxa por ingresso: devolvido em até {ARREPENDIMENTO_DAYS} dias da compra, na alteração ou no cancelamento do evento. Depois disso, num reembolso pedido por você, ele não é devolvido.
+            </p>
+          )}
           <Link href={CANCEL_HELP_HREF} className="inline-block text-sm font-semibold text-secondary hover:underline">
             Cancelar compra / arrependimento: como funciona
           </Link>

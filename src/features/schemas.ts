@@ -332,6 +332,10 @@ export const commissionRuleInputSchema = z.object({
   bearer: z.enum(["ORGANIZER", "BUYER"]),
   processingFeeBearer: z.enum(["ORGANIZER", "PLATFORM"]),
   refundCommissionOnRefund: z.coerce.boolean().default(true),
+  fixedFeeRefundable: z.coerce.boolean().default(true),
 });
+
+/** Edição de uma versão sem pedidos: só os valores (escopo e alvo não mudam). */
+export const commissionRuleValuesSchema = commissionRuleInputSchema.omit({ scope: true, organizationId: true, eventId: true });
 
 export const ufSchema = z.enum(UF_CODES);

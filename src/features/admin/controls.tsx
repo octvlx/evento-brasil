@@ -1,10 +1,10 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import type { ActionResult } from "@/server/errors";
-import { saveCommissionRuleAction } from "./actions";
+import { deleteCommissionRuleAction, saveCommissionRuleAction, updateCommissionRuleAction } from "./actions";
 import { commissionPreview } from "./commission-preview";
 import { formatBRL, parseBRLToCents } from "@/lib/money";
 import type { FeeBearer } from "@/features/fees/policy";
@@ -372,6 +372,16 @@ export function CommissionRuleForm({
           </p>
         )}
       </div>
+      <div className="text-sm sm:col-span-3">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" name="fixedFeeNonRefundable" disabled={!commissionRetentionAvailable} aria-describedby="fixed-fee-note" /> Valor fixo por ingresso não reembolsável
+        </label>
+        <p id="fixed-fee-note" className="mt-1 text-xs text-muted-foreground">
+          {commissionRetentionAvailable
+            ? `Em reembolso pedido pelo comprador depois de ${ARREPENDIMENTO_DAYS_LABEL} da compra, o valor fixo não é devolvido. Arrependimento (até ${ARREPENDIMENTO_DAYS_LABEL}), alteração ou cancelamento do evento devolvem tudo.`
+            : "Com o Mercado Pago, o estorno parcial com split ainda não foi validado (a parte da plataforma pode voltar proporcionalmente). Por isso o valor fixo continua reembolsável."}
+        </p>
+      </div>
       <section aria-labelledby="commission-preview-title" className="rounded-2xl border border-border bg-muted/40 p-4 sm:col-span-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h3 id="commission-preview-title" className="text-sm font-bold">
@@ -419,6 +429,192 @@ export function CommissionRuleForm({
       {state?.ok && <Alert variant="success" className="sm:col-span-3">Nova versão da regra criada. Pedidos anteriores mantêm a versão original.</Alert>}
       <div className="sm:col-span-3">
         <Button disabled={pending}>{pending ? "Salvando…" : "Criar nova versão da regra"}</Button>
+      </div>
+    </form>
+  );
+}
+
+const ARREPENDIMENTO_DAYS_LABEL = "7 dias";
+
+export interface EditableRule {
+  id: string;
+  policyVersion: string;
+  percentBps: number;
+  fixedCentsPerTicket: number;
+  bearer: FeeBearer;
+  processingFeeBearer: "ORGANIZER" | "PLATFORM";
+  refundCommissionOnRefund: boolean;
+  fixedFeeRefundable: boolean;
+}
+
+/**
+ * Editar ou excluir uma versão de regra sem pedidos. O servidor confere de novo (com a
+ * versão travada) e recusa se algum pedido já a usou.
+ */
+export function CommissionRuleRowActions({
+  rule,
+  commissionRetentionAvailable,
+}: {
+  rule: EditableRule;
+  commissionRetentionAvailable: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, startDelete] = useTransition();
+
+  if (editing)
+    return (
+      <EditCommissionRuleForm
+        rule={rule}
+        commissionRetentionAvailable={commissionRetentionAvailable}
+        onClose={() => setEditing(false)}
+      />
+    );
+  if (confirmDelete) {
+    return (
+      <div className="flex min-w-[16rem] flex-col gap-1.5 rounded-xl border border-border p-2 text-left text-xs">
+        <p>
+          Excluir {rule.policyVersion}? Se for a vigente, a versão anterior
+          volta a valer.
+        </p>
+        {deleteError && <p className="text-destructive">{deleteError}</p>}
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={deleting}
+            onClick={() =>
+              startDelete(async () => {
+                const r = await deleteCommissionRuleAction(rule.id);
+                if (!r.ok) setDeleteError(r.error);
+              })
+            }
+          >
+            {deleting ? "…" : "Excluir"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setConfirmDelete(false)}
+          >
+            Voltar
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex gap-1">
+      <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+        Editar
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
+        Excluir
+      </Button>
+    </div>
+  );
+}
+
+/** Formulário de edição; fecha sozinho quando o servidor confirma. */
+function EditCommissionRuleForm({
+  rule,
+  commissionRetentionAvailable,
+  onClose,
+}: {
+  rule: EditableRule;
+  commissionRetentionAvailable: boolean;
+  onClose: () => void;
+}) {
+  const [state, action, pending] = useActionState(
+    updateCommissionRuleAction.bind(null, rule.id),
+    undefined,
+  );
+  useEffect(() => {
+    if (state?.ok) onClose();
+  }, [state, onClose]);
+  return (
+    <form
+      action={action}
+      className="grid min-w-[22rem] gap-2 rounded-xl border border-border bg-card p-3 text-left"
+      aria-label={`Editar ${rule.policyVersion}`}
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label htmlFor={`percent-${rule.id}`}>Comissão (%)</Label>
+          <Input
+            id={`percent-${rule.id}`}
+            name="percent"
+            type="number"
+            step="0.01"
+            min={0}
+            max={100}
+            defaultValue={(rule.percentBps / 100).toFixed(2)}
+            className="mt-1 h-9"
+          />
+        </div>
+        <div>
+          <Label htmlFor={`fixed-${rule.id}`}>Fixo (centavos)</Label>
+          <Input
+            id={`fixed-${rule.id}`}
+            name="fixedCentsPerTicket"
+            type="number"
+            min={0}
+            defaultValue={rule.fixedCentsPerTicket}
+            className="mt-1 h-9"
+          />
+        </div>
+        <div>
+          <Label htmlFor={`bearer-${rule.id}`}>Quem paga</Label>
+          <Select
+            id={`bearer-${rule.id}`}
+            name="bearer"
+            defaultValue={rule.bearer}
+            className="mt-1 h-9"
+          >
+            <option value="ORGANIZER">Organizador</option>
+            <option value="BUYER">Comprador</option>
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor={`proc-${rule.id}`}>Processamento</Label>
+          <Select
+            id={`proc-${rule.id}`}
+            name="processingFeeBearer"
+            defaultValue={rule.processingFeeBearer}
+            className="mt-1 h-9"
+          >
+            <option value="ORGANIZER">Organizador</option>
+            <option value="PLATFORM">Plataforma</option>
+          </Select>
+        </div>
+      </div>
+      <label className="flex items-center gap-2 text-xs">
+        <input
+          type="checkbox"
+          name="refundCommissionOnRefund"
+          defaultChecked={rule.refundCommissionOnRefund}
+          disabled={!commissionRetentionAvailable}
+        />{" "}
+        Devolver a comissão em reembolsos
+      </label>
+      <label className="flex items-center gap-2 text-xs">
+        <input
+          type="checkbox"
+          name="fixedFeeNonRefundable"
+          defaultChecked={!rule.fixedFeeRefundable}
+          disabled={!commissionRetentionAvailable}
+        />{" "}
+        Valor fixo por ingresso não reembolsável
+      </label>
+      {state && !state.ok && <Alert variant="danger">{state.error}</Alert>}
+      <div className="flex gap-2">
+        <Button size="sm" disabled={pending}>
+          {pending ? "Salvando…" : "Salvar"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
+          Cancelar
+        </Button>
       </div>
     </form>
   );
