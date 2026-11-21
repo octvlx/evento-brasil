@@ -426,15 +426,16 @@ Apresente o ingresso (QR Code) e um documento com foto. Meia-entrada: leve o com
 export function StepDescription({ form, errors, onError }: { form: Form; errors: Errors; onError: (msg: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const cover = useWatch({ control: form.control, name: "coverImageUrl" });
+  const mapImage = useWatch({ control: form.control, name: "mapImageUrl" });
   const description = useWatch({ control: form.control, name: "description" }) ?? "";
 
-  const upload = async (file: File) => {
+  const upload = async (file: File, target: "coverImageUrl" | "mapImageUrl" = "coverImageUrl") => {
     setUploading(true);
     const fd = new FormData();
     fd.set("file", file);
     try {
       const res = await uploadCoverAction(fd);
-      if (res.ok) form.setValue("coverImageUrl", res.data.url, { shouldDirty: true });
+      if (res.ok) form.setValue(target, res.data.url, { shouldDirty: true });
       else onError(res.error);
     } catch {
       onError("Não foi possível enviar a imagem. Verifique sua conexão e tente de novo.");
@@ -517,6 +518,52 @@ export function StepDescription({ form, errors, onError }: { form: Form; errors:
         <Field name="accessibilityInfo" label="Acessibilidade (opcional)" error={errors.accessibilityInfo} className="sm:col-span-2">
           {(a) => <Textarea {...a} placeholder="Rampas, banheiros adaptados, Libras, espaço para cadeirantes…" {...reg(form, "accessibilityInfo")} />}
         </Field>
+      </div>
+
+      <div>
+        <p className="text-sm font-medium" id="ew-map-label">
+          Mapa do evento (opcional)
+        </p>
+        <div className="mt-1.5 flex flex-col gap-4 sm:flex-row sm:items-center">
+          {mapImage ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={mapImage} alt="Mapa do evento" className="aspect-video w-full max-w-60 rounded-xl bg-muted object-contain" />
+          ) : (
+            <div className="grid aspect-video w-full max-w-60 place-items-center rounded-xl bg-muted text-xs text-muted-foreground">Sem mapa</div>
+          )}
+          <div className="space-y-2">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-semibold focus-within:ring-2 focus-within:ring-ring hover:bg-muted">
+              <ImagePlus className="size-4" aria-hidden /> {uploading ? "Enviando…" : mapImage ? "Trocar mapa" : "Enviar mapa"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                aria-labelledby="ew-map-label"
+                aria-describedby="ew-map-help"
+                disabled={uploading}
+                onChange={(e) => e.target.files?.[0] && upload(e.target.files[0], "mapImageUrl")}
+              />
+            </label>
+            {mapImage && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => form.setValue("mapImageUrl", "", { shouldDirty: true })}>
+                Remover mapa
+              </Button>
+            )}
+            <p id="ew-map-help" className="text-xs text-muted-foreground">
+              Planta com setores, palco, banheiros e acessos. Aparece inteira na página do evento. JPG, PNG ou WebP até 5 MB.
+            </p>
+            {errors.mapImageUrl && <p className="text-xs text-destructive">{errors.mapImageUrl}</p>}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          <input type="checkbox" aria-describedby="ew-unlisted-help" {...form.register("isUnlisted")} /> Evento privado (fora da busca)
+        </label>
+        <p id="ew-unlisted-help" className="mt-1 text-xs text-muted-foreground">
+          Não aparece na busca, na página da cidade, no seu perfil público nem nos buscadores. Quem tiver o link (ou um link rastreado) abre a página e compra normalmente.
+        </p>
       </div>
       <Tip>Boas descrições são curtas nos parágrafos, usam títulos (Programação, Informações importantes) e respondem às dúvidas antes que o público precise perguntar.</Tip>
     </div>

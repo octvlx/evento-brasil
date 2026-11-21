@@ -109,6 +109,8 @@ function eventData(input: ReturnType<typeof eventInputSchema.parse>) {
     refundMinHoursBeforeEvent: input.refundMinHoursBeforeEvent,
     accessibilityInfo: input.accessibilityInfo ?? null,
     coverImageUrl: input.coverImageUrl || null,
+    mapImageUrl: input.mapImageUrl || null,
+    isUnlisted: input.isUnlisted,
   };
 }
 
@@ -303,6 +305,7 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
     const data = {
       name: input.name,
       description: input.description ?? null,
+      sector: input.sector ?? null,
       kind: input.kind,
       priceCents: input.priceCents,
       quantityTotal: input.quantityTotal,
@@ -592,6 +595,8 @@ export async function duplicateEvent(db: Db, actor: Actor, eventId: string, star
         description: source.description,
         categoryId: source.categoryId,
         coverImageUrl: source.coverImageUrl,
+        mapImageUrl: source.mapImageUrl,
+        isUnlisted: source.isUnlisted,
         locationType: source.locationType,
         venueId: source.venueId,
         onlineUrl: source.onlineUrl,
@@ -623,6 +628,7 @@ export async function duplicateEvent(db: Db, actor: Actor, eventId: string, star
           eventId: event.id,
           name: t.name,
           description: t.description,
+          sector: t.sector,
           kind: t.kind,
           priceCents: t.priceCents,
           quantityTotal: t.quantityTotal,

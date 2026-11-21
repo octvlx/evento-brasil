@@ -13,9 +13,9 @@ const PLAIN = "aaaaaaeeeeiiiiooooouuuucnyy";
 /** Expressão SQL normalizada, com espaço nas pontas (casamento por palavra inteira). */
 const norm = (sql: Prisma.Sql) => Prisma.sql`(' ' || regexp_replace(translate(lower(coalesce(${sql}, '')), ${ACCENTED}, ${PLAIN}), '[^a-z0-9]+', ' ', 'g') || ' ')`;
 
-// Mesmas regras de `publicEventWhere` (catalog.ts): publicado, não encerrado e de
-// organização aprovada. Quem usa os ids ainda aplica `publicEventWhere` no Prisma.
-const PUBLIC = (now: Date) => Prisma.sql`e.status = 'PUBLISHED' AND e."endsAt" > ${now} AND o.status = 'APPROVED'`;
+// Mesmas regras de `publicEventWhere` (catalog.ts): publicado, não suspenso, não privado,
+// não encerrado e de organização aprovada. Quem usa os ids ainda aplica `publicEventWhere`.
+const PUBLIC = (now: Date) => Prisma.sql`e.status = 'PUBLISHED' AND e."suspendedAt" IS NULL AND NOT e."isUnlisted" AND e."endsAt" > ${now} AND o.status = 'APPROVED'`;
 
 const like = (s: string) => `%${s}%`;
 

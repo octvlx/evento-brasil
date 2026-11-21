@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { connection } from "next/server";
-import { Accessibility, ArrowDown, CalendarDays, CalendarPlus, ChevronRight, Clock, MapPin, Navigation, Share2, ShieldAlert, Users } from "lucide-react";
+import { Accessibility, ArrowDown, CalendarDays, CalendarPlus, ChevronRight, Clock, Map as MapIcon, MapPin, Navigation, Share2, ShieldAlert, Users } from "lucide-react";
 import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">)
   const { slug } = await params;
   const e = await db.event.findFirst({
     where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] }, organization: { status: "APPROVED" } },
-    select: { title: true, summary: true, coverImageUrl: true, city: { select: { name: true, state: true } } },
+    select: { title: true, summary: true, coverImageUrl: true, isUnlisted: true, city: { select: { name: true, state: true } } },
   });
   if (!e) return { title: "Evento não encontrado" };
   const where = e.city ? ` em ${e.city.name} – ${e.city.state}` : "";
@@ -40,6 +40,8 @@ export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">)
     description: e.summary ?? `Ingressos para ${e.title}${where}.`,
     alternates: { canonical: `/eventos/${slug}` },
     openGraph: { title: e.title, description: e.summary ?? undefined, images: [e.coverImageUrl ?? DEFAULT_OG_IMAGE] },
+    // Evento privado: abre pelo link, mas não entra em buscadores.
+    ...(e.isUnlisted ? { robots: { index: false, follow: false } } : {}),
   };
 }
 
@@ -97,6 +99,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
     id: t.id,
     name: t.name,
     description: t.description,
+    sector: t.sector,
     kind: t.kind,
     priceCents: t.priceCents,
     serviceFeeCents: prices[t.id].serviceFeeCents,
@@ -258,6 +261,19 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+
+          {event.mapImageUrl && (
+            <section aria-labelledby="event-map-title">
+              <h2 id="event-map-title" className="mb-3 flex items-center gap-2 font-display text-xl font-bold">
+                <MapIcon className="size-5 text-secondary" aria-hidden /> Mapa do evento
+              </h2>
+              <a href={event.mapImageUrl} target="_blank" rel="noopener" className="block overflow-hidden rounded-2xl border border-border bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="event-map">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={event.mapImageUrl} alt={`Mapa do evento ${event.title}: setores e acessos`} loading="lazy" decoding="async" className="h-auto w-full" />
+              </a>
+              <p className="mt-1 text-xs text-muted-foreground">Toque na imagem para ampliar.</p>
             </section>
           )}
 
