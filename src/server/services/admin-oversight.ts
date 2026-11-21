@@ -6,6 +6,7 @@ import "server-only";
 import type { CancellationRequestStatus, OrderStatus, Prisma, TicketTransferStatus } from "@/generated/prisma/client";
 import type { Db } from "../db";
 import { assertPlatformAdmin, type Actor, assertAdminPermission } from "../auth/permissions";
+import type { AdminPermission } from "../auth/admin-roles";
 import { notFound } from "../errors";
 import { checkFinancialInvariants } from "./reconciliation";
 import { AWAITING_REFUND_WHERE, openChangeRefundWindow, refundEligibility } from "./refunds";
@@ -371,6 +372,27 @@ export async function listAuditLogs(db: Db, admin: Actor, opts: AuditFilters & {
   const where = auditWhere(opts);
   const total = await db.auditLog.count({ where });
   const p = paging(opts.page ?? 1, total);
+  const items = await db.auditLog.findMany({ where, include: AUDIT_INCLUDE, orderBy: AUDIT_ORDER, skip: p.skip, take: p.take });
+  return { items, total, page: p.page, pageCount: p.pageCount };
+}
+
+/** Entidades com página de detalhe no admin e a permissão que dá acesso ao histórico delas. */
+export const ENTITY_HISTORY_PERMISSION = {
+  Event: "events:moderate",
+  Organization: "organizers:review",
+  User: "users:manage",
+} as const satisfies Record<string, AdminPermission>;
+
+/**
+ * Histórico de UMA entidade (registros da auditoria com aquele tipo e id), para a página
+ * de detalhe. Exige a permissão da própria entidade, não `audit:read`: quem modera o
+ * evento vê o que aconteceu com ele, mas a auditoria completa continua restrita.
+ */
+export async function entityHistory(db: Db, admin: Actor, entityType: keyof typeof ENTITY_HISTORY_PERMISSION, entityId: string, page = 1) {
+  assertAdminPermission(admin, ENTITY_HISTORY_PERMISSION[entityType]);
+  const where: Prisma.AuditLogWhereInput = { entityType, entityId };
+  const total = await db.auditLog.count({ where });
+  const p = paging(page, total);
   const items = await db.auditLog.findMany({ where, include: AUDIT_INCLUDE, orderBy: AUDIT_ORDER, skip: p.skip, take: p.take });
   return { items, total, page: p.page, pageCount: p.pageCount };
 }
