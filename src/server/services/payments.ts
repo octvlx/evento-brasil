@@ -405,7 +405,13 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
         return "payment_expired";
       }
       case "REFUNDED": {
-        if (payment.status === "REFUNDED" || payment.status === "CHARGED_BACK") return "no_change";
+        if (payment.status === "CHARGED_BACK") return "no_change";
+        // Já estornado aqui (ex.: pelo nosso reembolso): só acompanha a tarifa que o
+        // provedor devolveu no estorno (o lançamento é por diferença, sem duplicar).
+        if (payment.status === "REFUNDED") {
+          await syncProcessingFee();
+          return "no_change";
+        }
         // Estorno total no provedor: conclui o reembolso em aberto (integral ou parcial)
         // e, se ainda sobrarem ingressos, um integral pelo restante.
         const open = await tx.refund.findFirst({ where: { orderId: order.id, status: { in: OPEN_REFUND_STATUSES } } });
@@ -426,6 +432,7 @@ export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapt
           });
           await confirmRefundTx(tx, refund.id, now);
         }
+        await syncProcessingFee();
         return "refunded";
       }
       case "CHARGED_BACK": {

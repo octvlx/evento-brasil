@@ -261,6 +261,31 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     }
   });
 
+  it("processing fee is what Mercado Pago kept: charged minus the fee it gave back in refunds, never the commission", async () => {
+    // Como o pagamento real 190779304814 depois do estorno integral (R$ 1,00, comissão 0,07, tarifa 0,01).
+    const refundedPayment = (mpFeeRefunded: number) => paymentResponse({
+      status: "refunded",
+      status_detail: "refunded",
+      transaction_amount: 1,
+      transaction_amount_refunded: 1,
+      fee_details: [{ amount: 0.01, type: "mercadopago_fee" }, { amount: 0.07, type: "application_fee" }],
+      charges_details: [
+        { type: "fee", name: "third_payment", accounts: { from: "collector", to: "marketplace_owner" }, amounts: { original: 0.07, refunded: 0.07 } },
+        { type: "fee", name: "mercadopago_fee", accounts: { from: "collector", to: "mp" }, amounts: { original: 0.01, refunded: mpFeeRefunded } },
+      ],
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(refundedPayment(0.01)));
+    expect(await adapter().getPayment("190", { organizationId: "org-1" })).toMatchObject({ status: "REFUNDED", processingFeeCents: 0, refundedCents: 100 });
+
+    // Tarifa ainda não devolvida: continua cobrada; a comissão nunca conta como tarifa.
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(refundedPayment(0)));
+    expect(await adapter().getPayment("190", { organizationId: "org-1" })).toMatchObject({ processingFeeCents: 1 });
+
+    // Sem charges_details (provedor não informa): a tarifa cobrada, como antes.
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse()));
+    expect(await adapter().getPayment("987", { organizationId: "org-1" })).toMatchObject({ processingFeeCents: 250 });
+  });
+
   it("maps an authoritative payment response and uses the seller account from a verified webhook", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
       point_of_interaction: {
