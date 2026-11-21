@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { connection } from "next/server";
-import { Accessibility, ArrowDown, CalendarDays, ChevronRight, Clock, MapPin, Share2, ShieldAlert, Users } from "lucide-react";
+import { Accessibility, ArrowDown, CalendarDays, CalendarPlus, ChevronRight, Clock, MapPin, Navigation, Share2, ShieldAlert, Users } from "lucide-react";
 import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { EventCover } from "@/components/site/event-cover";
@@ -20,6 +20,7 @@ import { getPublicEvent, relatedEvents, trackingLinkCouponCode } from "@/server/
 import { EventGrid } from "@/components/site/event-card";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { formatAddress } from "@/lib/br";
+import { eventAddress, googleCalendarUrl, mapLinks } from "@/lib/event-links";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
 import { formatReleaseAt } from "@/features/half-price/quota";
 import { AVAILABILITY } from "@/lib/labels";
@@ -80,6 +81,17 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   // Menor total por ingresso à venda (com a taxa do comprador): só para o atalho "Ver ingressos".
   const onSaleTotals = event.ticketTypes.filter((t) => t.available).map((t) => prices[t.id].totalCents);
   const minTotal = onSaleTotals.length ? Math.min(...onSaleTotals) : null;
+  const place = eventAddress(event);
+  const maps = place?.mappable ? mapLinks(place.address) : null;
+  const googleCalendar = googleCalendarUrl({
+    id: event.id,
+    title: event.title,
+    description: event.summary,
+    location: event.locationType === "ONLINE" ? "Evento online" : (place?.full ?? null),
+    url,
+    startsAt: event.startsAt,
+    endsAt: event.endsAt,
+  });
 
   const tickets = event.ticketTypes.map((t) => ({
     id: t.id,
@@ -197,6 +209,16 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
                   : city
                     ? formatAddress({ addressLine: event.venue?.addressLine, district: event.venue?.district, city: city.name, state: city.state, postalCode: event.venue?.postalCode })
                     : null}
+              {maps && (
+                <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1" data-testid="map-links">
+                  <a href={maps.googleMaps} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-secondary hover:underline">
+                    <MapPin className="size-3.5" aria-hidden /> Abrir no Google Maps
+                  </a>
+                  <a href={maps.waze} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-secondary hover:underline">
+                    <Navigation className="size-3.5" aria-hidden /> Ir com o Waze
+                  </a>
+                </span>
+              )}
             </Info>
             <Info icon={Users} title={`Organizado por ${event.organization.name}`}>
               {organizer ? (
@@ -279,9 +301,22 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
             )}
           </section>
 
-          <a href={whatsappShareUrl(`Bora? ${event.title}`, url)} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline" })}>
-            <Share2 aria-hidden /> Compartilhar no WhatsApp
-          </a>
+          <div className="flex flex-wrap gap-3">
+            <a href={whatsappShareUrl(`Bora? ${event.title}`, url)} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline" })}>
+              <Share2 aria-hidden /> Compartilhar no WhatsApp
+            </a>
+            {!ended && (
+              <>
+                {/* .ics: Apple, Outlook e a maioria dos apps de agenda; Google Agenda abre direto. */}
+                <a href={`/eventos/${event.slug}/agenda`} download className={buttonVariants({ variant: "outline" })} data-testid="calendar-ics">
+                  <CalendarPlus aria-hidden /> Adicionar à agenda
+                </a>
+                <a href={googleCalendar} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline" })}>
+                  <CalendarDays aria-hidden /> Google Agenda
+                </a>
+              </>
+            )}
+          </div>
         </div>
 
         <aside id="ingressos" className="scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
