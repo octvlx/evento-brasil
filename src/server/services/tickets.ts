@@ -2,7 +2,7 @@ import "server-only";
 import type { OrderItem } from "@/generated/prisma/client";
 import type { Tx } from "../db";
 import { enqueueOrderEmailsTx } from "../email/events";
-import { deriveQrToken, qrTokenHash, randomCode } from "../crypto";
+import { deriveQrToken, deriveTicketSigningKey, qrTokenHash, randomCode } from "../crypto";
 import { qrPayload as formatQrPayload } from "@/lib/qr-payload";
 
 // Formato do QR compartilhado com o leitor offline da portaria.
@@ -22,6 +22,21 @@ export interface QrTokenSource {
 export function ticketQrToken(t: QrTokenSource): string | null {
   if (t.tokenVersion > 0) return deriveQrToken(t.code, t.tokenVersion);
   return t.legacyValidationToken;
+}
+
+/** Chave pública do QR dinâmico (portaria e lista offline): não permite gerar QR. */
+export function ticketPublicKey(t: { code: string; tokenVersion: number }) {
+  const { x, y } = deriveTicketSigningKey(t.code, t.tokenVersion);
+  return { x, y };
+}
+
+/**
+ * Chave privada (JWK) para o celular do TITULAR gerar o QR dinâmico. Só na página do
+ * próprio ingresso, nunca em PDF, carteira, e-mail ou lista da portaria.
+ */
+export function ticketSigningJwk(t: { code: string; tokenVersion: number }) {
+  const { d, x, y } = deriveTicketSigningKey(t.code, t.tokenVersion);
+  return { kty: "EC" as const, crv: "P-256" as const, d, x, y };
 }
 
 /** Colunas de uma versão nova do QR (a anterior deixa de valer). */

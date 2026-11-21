@@ -8,7 +8,9 @@ import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
 import { hashToken, qrTokenHash } from "../crypto";
 import { AppError, forbidden, notFound } from "../errors";
-import { parseQrPayload } from "@/lib/qr-payload";
+import { parseDynamicQrPayload, parseQrPayload, qrStepFresh, verifyDynamicQrSignature } from "@/lib/qr-payload";
+import { env } from "../env";
+import { ticketPublicKey } from "./tickets";
 
 export interface CheckinResponse {
   result: CheckinResult;
@@ -26,6 +28,17 @@ export interface CheckinResponse {
   /** Só em leitura offline sincronizada: o aparelho e o servidor discordaram. */
   divergence?: OfflineDivergence;
 }
+
+/** Motivo de um INVALID que a portaria precisa entender (o QR é do ingresso, mas não vale). */
+type InvalidNote = "STALE" | "STATIC_REFUSED";
+const INVALID_NOTES: Record<InvalidNote, string> = {
+  STALE: "QR EXPIRADO (print ou foto) — peça para abrir o ingresso no celular",
+  STATIC_REFUSED: "QR FIXO (PDF, carteira ou print) não vale — peça para abrir o ingresso no celular",
+};
+
+/** QR fixo (EB1) ainda aceito? Só para transição (QR_STATIC_ACCEPTED=true); o padrão é recusar. */
+// Lido a cada chamada (não do env() em cache): os testes ligam e desligam a transição.
+export const staticQrAccepted = () => (process.env.QR_STATIC_ACCEPTED ?? (env().QR_STATIC_ACCEPTED ? "true" : "false")) === "true";
 
 const MESSAGES: Record<CheckinResult, string> = {
   ADMITTED: "Entrada liberada",
@@ -94,6 +107,17 @@ async function replacedByTransfer(tx: Tx, eventId: string, organizationId: strin
 }
 
 /**
+ * Versão da chave que assinou o QR dinâmico: a atual ou uma anterior (QR de antes de uma
+ * transferência). null = assinatura que nenhuma versão do ingresso produziu.
+ */
+async function signingVersion(ticket: { code: string; tokenVersion: number }, qr: { code: string; step: number; signature: string }): Promise<number | null> {
+  for (let v = ticket.tokenVersion; v >= 0; v--) {
+    if (await verifyDynamicQrSignature(ticketPublicKey({ code: ticket.code, tokenVersion: v }), qr.code, qr.step, qr.signature)) return v;
+  }
+  return null;
+}
+
+/**
  * Validação 100% online e atômica: só uma leitura pode transicionar VALID → CHECKED_IN,
  * e a transição e o registro da leitura (TicketCheckin) são gravados na mesma transação.
  */
@@ -111,7 +135,7 @@ export async function checkInTicket(
   let divergence: OfflineDivergence | undefined;
 
   const outcome = await db.$transaction(
-    async (tx): Promise<{ result: CheckinResult; ticket?: CheckinResponse["ticket"]; opensAt?: Date; timezone?: string }> => {
+    async (tx): Promise<{ result: CheckinResult; ticket?: CheckinResponse["ticket"]; opensAt?: Date; timezone?: string; note?: InvalidNote }> => {
       const record = (result: CheckinResult, ticketId: string | null, refusedButValid = false) => {
         divergence = refusedButValid ? "REFUSED_BUT_VALID" : local === "ADMITTED" && result !== "ADMITTED" ? "ADMITTED_BUT_REJECTED" : undefined;
         return tx.ticketCheckin.create({
@@ -133,12 +157,40 @@ export async function checkInTicket(
         return checkinNotYetOpen(event, now) ? { result: "EVENT_NOT_ACTIVE", opensAt: checkinOpensAt(event), timezone: event.timezone } : { result: "EVENT_NOT_ACTIVE" };
       }
 
-      // 2. QR → ingresso (busca pelo token; o código precisa bater).
-      const parsed = parseQrPayload(rawPayload);
-      const ticket = parsed
-        ? await tx.issuedTicket.findUnique({ where: { validationTokenHash: qrTokenHash(parsed.token) }, include: ticketForView })
-        : null;
-      if (!parsed || !ticket || ticket.code !== parsed.code) {
+      // 2. QR → ingresso. Dinâmico (EB2): pelo código, com a assinatura conferida pela chave
+      // pública da versão atual e o passo dentro da tolerância. Fixo (EB1): só na transição.
+      const dynamic = parseDynamicQrPayload(rawPayload);
+      if (dynamic) {
+        const found = await tx.issuedTicket.findUnique({ where: { code: dynamic.code }, include: ticketForView });
+        const signedBy = found ? await signingVersion(found, dynamic) : null;
+        if (!found || signedBy === null) {
+          await record("INVALID", null);
+          return { result: "INVALID" };
+        }
+        if (signedBy !== found.tokenVersion) {
+          // Assinado com a chave anterior a uma transferência: o QR foi substituído.
+          const same = found.event.organizationId === event.organizationId && found.eventId === eventId;
+          await record("INVALID", same ? found.id : null);
+          if (!same) return { result: "INVALID" };
+          return { result: "INVALID", ticket: { code: found.code, holderName: found.holderName, ticketTypeName: found.ticketType.name, ticketKind: found.ticketType.kind, checkedInAt: found.checkedInAt, transferred: true, qrReplaced: true } };
+        }
+        if (!qrStepFresh(dynamic.step, now.getTime())) {
+          // Assinatura certa, mas de outro momento: print, foto ou vídeo do QR.
+          await record("INVALID", found.eventId === eventId ? found.id : null);
+          return { result: "INVALID", note: "STALE" };
+        }
+      }
+      const parsed = dynamic ? null : parseQrPayload(rawPayload);
+      if (parsed && !staticQrAccepted()) {
+        await record("INVALID", null);
+        return { result: "INVALID", note: "STATIC_REFUSED" };
+      }
+      const ticket = dynamic
+        ? await tx.issuedTicket.findUnique({ where: { code: dynamic.code }, include: ticketForView })
+        : parsed
+          ? await tx.issuedTicket.findUnique({ where: { validationTokenHash: qrTokenHash(parsed.token) }, include: ticketForView })
+          : null;
+      if (!ticket || (!dynamic && ticket.code !== parsed?.code)) {
         // QR antigo de ingresso transferido: continua INVALID, mas a portaria do
         // organizador vê que foi substituído e quem é o titular atual.
         const replaced = parsed && !ticket ? await replacedByTransfer(tx, eventId, event.organizationId, parsed) : null;
@@ -208,7 +260,9 @@ export async function checkInTicket(
       ? "Recusado sem internet, mas o ingresso é válido: continua sem entrada"
       : outcome.ticket?.qrReplaced
         ? "QR SUBSTITUÍDO — ingresso transferido"
-        : outcome.opensAt
+        : outcome.note
+          ? INVALID_NOTES[outcome.note]
+          : outcome.opensAt
           ? `Check-in ainda não abriu: abre ${formatDateTimeShort(outcome.opensAt, outcome.timezone)}`
           : MESSAGES[outcome.result];
   return {
@@ -241,7 +295,13 @@ export interface OfflinePackage {
   validUntil: string;
   /** Abertura da portaria (ISO): antes disso o aparelho também recusa. Ausente em listas antigas. */
   opensAt?: string;
-  tickets: { h: string; code: string; status: "VALID" | "CHECKED_IN" | "REVOKED"; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; sim?: boolean }[];
+  /** Aceita o QR fixo (EB1)? Ausente/false: só o QR dinâmico (EB2). */
+  staticAccepted?: boolean;
+  /**
+   * `h`: hash do token fixo (identifica o ingresso na lista e no "já liberado" do aparelho).
+   * `k`: chave PÚBLICA do QR dinâmico (confere a assinatura; não permite gerar QR).
+   */
+  tickets: { h: string; k?: { x: string; y: string }; code: string; status: "VALID" | "CHECKED_IN" | "REVOKED"; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; sim?: boolean }[];
 }
 
 /**
@@ -262,15 +322,18 @@ export async function checkinOfflinePackage(db: Db, actor: Actor, eventId: strin
   }
   const rows = await db.issuedTicket.findMany({
     where: { eventId },
-    select: { code: true, validationTokenHash: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } }, order: { select: { isSimulated: true } } },
+    select: { code: true, tokenVersion: true, validationTokenHash: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } }, order: { select: { isSimulated: true } } },
   });
   return {
     eventId,
     generatedAt: now.toISOString(),
     validUntil: new Date(now.getTime() + OFFLINE_PACKAGE_TTL_MS).toISOString(),
     opensAt: opensAt!.toISOString(),
+    staticAccepted: staticQrAccepted(),
     tickets: rows.map((t) => ({
       h: t.validationTokenHash,
+      // Só ingressos que ainda podem entrar precisam da chave (os demais são recusados pela situação).
+      ...(t.status === "VALID" ? { k: ticketPublicKey(t) } : {}),
       code: t.code,
       status: t.status,
       holderName: t.holderName,

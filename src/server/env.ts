@@ -19,6 +19,8 @@ const schema = z.object({
   CRON_SECRET: z.string().min(8),
   // Chave dos tokens do QR dos ingressos (HMAC). Trocar invalida todos os QRs emitidos.
   QR_TOKEN_SECRET: z.string().min(16).default("dev-only-qr-token-secret-0123456789"),
+  // Transição para o QR dinâmico: "true" ainda aceita o QR fixo (EB1) do PDF/carteira na portaria.
+  QR_STATIC_ACCEPTED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
   PAYMENT_PROVIDER: z.enum(["simulated", "mercadopago"]).default("simulated"),
   SIMULATED_WEBHOOK_SECRET: z
     .string()

@@ -90,7 +90,10 @@ describe("Google Wallet", () => {
     expect(JSON.parse(posts[0].body).id).toBe(`${cfg.issuerId}.evento-cevento1`);
     const objects = posts.filter((c) => c.url.endsWith("/eventTicketObject")).map((c) => JSON.parse(c.body));
     expect(objects).toHaveLength(10);
-    expect(objects[0]).toMatchObject({ id: `${cfg.issuerId}.ingresso-ABCD1234E0-v1`, state: "ACTIVE", barcode: { type: "QR_CODE", value: `EB1:ABCD1234E0:${"t".repeat(43)}` } });
+    // Sem código de barras: a entrada é pelo QR dinâmico da tela; o passe explica isso.
+    expect(objects[0]).toMatchObject({ id: `${cfg.issuerId}.ingresso-ABCD1234E0-v1`, state: "ACTIVE" });
+    expect(objects[0]).not.toHaveProperty("barcode");
+    expect(JSON.stringify(objects[0].textModulesData)).toMatch(/QR de entrada/);
     expect(objects[0].ticketType.defaultValue.value).toMatch(/meia-entrada/);
   });
 
@@ -137,15 +140,15 @@ describe("Google Wallet", () => {
 describe("Apple Wallet", () => {
   const cfg = { passTypeIdentifier: "pass.br.eventobrasil.teste", teamIdentifier: "TEAM123456", signerCert: TEST_SIGNER_CERT, signerKey: TEST_SIGNER_KEY, wwdr: TEST_WWDR_CERT };
 
-  it("pass.json de evento com QR, data relevante e avisos", () => {
+  it("pass.json de evento sem QR (comprovante), com data relevante e avisos", () => {
     const json = applePassJson(ticket({ kind: "HALF_PRICE" }), cfg);
     expect(json).toMatchObject({
       passTypeIdentifier: cfg.passTypeIdentifier,
       teamIdentifier: cfg.teamIdentifier,
       serialNumber: "ABCD1234EF-v1",
       relevantDate: "2026-12-05T21:00:00.000Z",
-      barcodes: [{ format: "PKBarcodeFormatQR", message: `EB1:ABCD1234EF:${"t".repeat(43)}` }],
     });
+    expect(json).not.toHaveProperty("barcodes");
     expect(json).not.toHaveProperty("webServiceURL");
     expect(json).not.toHaveProperty("voided");
     expect(JSON.stringify(json.eventTicket.backFields)).toMatch(/documento comprobatório/);

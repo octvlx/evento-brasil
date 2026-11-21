@@ -10,8 +10,7 @@ import { handlePaymentWebhook } from "@/server/services/payments";
 import { checkFinancialInvariants } from "@/server/services/reconciliation";
 import { adminRefundOrder, adminRestoreAfterFailedRefund, listFailedRefunds, requestCustomerRefund, retryFailedRefunds } from "@/server/services/refunds";
 import { organizerFinancials, salesReport } from "@/server/services/reports";
-import { qrPayload } from "@/server/services/tickets";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb, ticketType } from "../support/fixtures";
+import { adapter, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb, ticketType } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -87,7 +86,7 @@ describe("reembolso parcial", () => {
 
   it("ingresso usado fica de fora: os outros podem ser reembolsados, ele não", async () => {
     const { owner, buyer, order, tickets, event } = await setup();
-    await checkInTicket(db, owner, event.id, qrPayload(tickets[0]));
+    await checkInTicket(db, owner, event.id, gateQr(tickets[0]));
     await expect(requestCustomerRefund(db, adapter, buyer, order.id)).rejects.toThrow(/utilizados/);
     await expect(requestCustomerRefund(db, adapter, buyer, order.id, new Date(), [tickets[0].id])).rejects.toThrow(/utilizado/);
     const refund = await requestCustomerRefund(db, adapter, buyer, order.id, new Date(), [tickets[1].id, tickets[2].id]);

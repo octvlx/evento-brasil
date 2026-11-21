@@ -7,7 +7,7 @@ import { ArrowLeftRight, Camera, CameraOff, CloudDownload, CloudUpload, FlaskCon
 import { Button } from "@/components/ui/button";
 import { Alert, Input } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
-import { parseQrPayload } from "@/lib/qr-payload";
+import { parseDynamicQrPayload, parseQrPayload, qrStepFresh, verifyDynamicQrSignature } from "@/lib/qr-payload";
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { CheckinResponse, OfflinePackage, OfflineSyncItem } from "@/server/services/checkin";
 import { checkInAction, offlinePackageAction, syncOfflineAction } from "./actions";
@@ -283,9 +283,23 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
           message: `Check-in ainda não abriu: abre ${new Date(current.opensAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`,
         };
       }
-      const parsed = parseQrPayload(payload);
-      const hash = parsed ? await tokenHash(parsed.token) : null;
-      const t = hash ? current.tickets.find((x) => x.h === hash && x.code === parsed!.code) : undefined;
+      // QR dinâmico: assinatura conferida com a chave pública da lista e passo recente
+      // (relógio deste aparelho). QR fixo: só se a lista disser que ainda vale.
+      const dynamic = parseDynamicQrPayload(payload);
+      const parsed = dynamic ? null : parseQrPayload(payload);
+      let t: (typeof current.tickets)[number] | undefined;
+      let stale = false;
+      if (dynamic) {
+        const entry = current.tickets.find((x) => x.code === dynamic.code);
+        if (entry && entry.status !== "VALID") t = entry; // situação decide (já usado/cancelado)
+        else if (entry?.k && (await verifyDynamicQrSignature(entry.k, dynamic.code, dynamic.step, dynamic.signature))) {
+          if (qrStepFresh(dynamic.step, Date.now())) t = entry;
+          else stale = true;
+        }
+      } else if (parsed && current.staticAccepted) {
+        const hash = await tokenHash(parsed.token);
+        t = current.tickets.find((x) => x.h === hash && x.code === parsed.code);
+      }
       let r: CheckinResult;
       const used = await offlineStore.getUsed(eventId);
       if (!t) r = "INVALID";
@@ -300,7 +314,10 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
       const next = await offlineStore.appendToQueue(eventId, { payload: payload.slice(0, 200), scannedAt: new Date().toISOString(), localResult: r, by: userId });
       setQueue(next);
       if (r === "ADMITTED") setCounters((c) => ({ ...c, admitted: c.admitted + 1 }));
-      return show(r, t, r === "ADMITTED" ? new Date() : null);
+      const shown = show(r, t, r === "ADMITTED" ? new Date() : null);
+      if (stale) return { ...shown, message: "QR EXPIRADO (print ou foto) — peça para abrir o ingresso no celular" };
+      if (parsed && !current.staticAccepted) return { ...shown, message: "QR FIXO (PDF, carteira ou print) não vale — peça para abrir o ingresso no celular" };
+      return shown;
     },
     [counters, eventId, pkg, userId],
   );
@@ -329,11 +346,15 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
           setCounters(r.data.counters);
           display(r.data);
           // Liberado online: marca neste aparelho, para a lista offline já saber.
-          const parsed = r.data.result === "ADMITTED" ? parseQrPayload(payload) : null;
-          if (parsed && storeOk && pkg) {
-            const used = await offlineStore.getUsed(eventId);
-            used.add(await tokenHash(parsed.token));
-            await offlineStore.setUsed(eventId, used);
+          if (r.data.result === "ADMITTED" && storeOk && pkg) {
+            // Marca pelo hash da lista (o QR dinâmico não traz o token; acha pelo código).
+            const code = r.data.ticket?.code;
+            const entry = code ? pkg.tickets.find((x) => x.code === code) : undefined;
+            if (entry) {
+              const used = await offlineStore.getUsed(eventId);
+              used.add(entry.h);
+              await offlineStore.setUsed(eventId, used);
+            }
           }
         } else {
           setError(r.error);
@@ -578,7 +599,7 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
         <label className="sr-only" htmlFor="manual">
           Conteúdo do QR code
         </label>
-        <Input id="manual" value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Colar conteúdo do QR (EB1:…)" autoComplete="off" />
+        <Input id="manual" value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Colar conteúdo do QR (EB2:…)" autoComplete="off" />
         <Button type="submit" variant="outline">
           <Keyboard aria-hidden /> Validar
         </Button>

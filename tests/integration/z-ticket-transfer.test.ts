@@ -4,12 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkInTicket } from "@/server/services/checkin";
 import { loadPdfTickets } from "@/server/services/notifications";
 import { requestCustomerRefund } from "@/server/services/refunds";
-import { qrPayload, ticketQrToken } from "@/server/services/tickets";
+import { ticketQrToken } from "@/server/services/tickets";
 import { acceptTransfer, cancelTransfer, declineTransfer, expireTicketTransfers, findTransferByToken, listMyTransfers, requestTransfer, TRANSFER_POLICY } from "@/server/services/transfers";
 import { ticketsHeldByAccount } from "@/server/services/orders";
 import { DEFAULT_TRANSFER_POLICY, transferCutoff, type TransferPolicy } from "@/lib/transfer-policy";
 import { hashToken } from "@/server/crypto";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -61,7 +61,7 @@ describe("T-TRANSF — pedido", () => {
     await request(buyer, ticket.id, recipient);
     await expect(request(buyer, ticket.id, owner)).rejects.toMatchObject({ code: "CONFLICT" });
 
-    await checkInTicket(db, owner, event.id, qrPayload(tickets[1]));
+    await checkInTicket(db, owner, event.id, gateQr(tickets[1]));
     await expect(request(buyer, tickets[1].id, recipient)).rejects.toMatchObject({ code: "INVALID_STATE" });
   });
 
@@ -97,7 +97,7 @@ describe("T-TRANSF — pedido", () => {
 describe("T-TRANSF — aceite", () => {
   it("muda o titular, troca o QR (o antigo não admite) e registra o histórico", async () => {
     const { owner, buyer, recipient, ticket, event, order } = await setup();
-    const oldPayload = qrPayload(ticket);
+    const oldPayload = gateQr(ticket);
     const { token, transferId } = await request(buyer, ticket.id, recipient);
     expect((await findTransferByToken(db, token))?.id).toBe(transferId);
 
@@ -116,7 +116,7 @@ describe("T-TRANSF — aceite", () => {
 
     // QR antigo: inválido. Novo: admite uma vez.
     expect((await checkInTicket(db, owner, event.id, oldPayload)).result).toBe("INVALID");
-    expect((await checkInTicket(db, owner, event.id, qrPayload(after))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(after))).result).toBe("ADMITTED");
     expect((await checkInTicket(db, owner, event.id, oldPayload)).result).toBe("INVALID");
 
     // "Meus ingressos"/PDF pelo titular: o comprador não baixa mais o QR novo.
@@ -209,7 +209,7 @@ describe("T-TRANSF — aceite", () => {
 describe("T-TRANSF — portaria (Fase 4)", () => {
   it("mesma organização vê 'transferido' com o titular atual; QR antigo é INVALID com aviso de substituição", async () => {
     const { owner, buyer, recipient, ticket, tickets, event } = await setup({ quantity: 2 });
-    const oldPayload = qrPayload(ticket);
+    const oldPayload = gateQr(ticket);
     const { token } = await request(buyer, ticket.id, recipient);
     await acceptTransfer(db, recipient, token);
     const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
@@ -221,19 +221,19 @@ describe("T-TRANSF — portaria (Fase 4)", () => {
     // A leitura do QR antigo fica vinculada ao ingresso no histórico da organização.
     expect(await db.ticketCheckin.count({ where: { ticketId: ticket.id, result: "INVALID" } })).toBe(1);
 
-    const ok = await checkInTicket(db, owner, event.id, qrPayload(after));
+    const ok = await checkInTicket(db, owner, event.id, gateQr(after));
     expect(ok.result).toBe("ADMITTED");
     expect(ok.ticket).toMatchObject({ holderName: `Nome ${recipient.name}`, transferred: true });
     expect(ok.ticket?.qrReplaced).toBeUndefined();
-    expect((await checkInTicket(db, owner, event.id, qrPayload(after))).ticket).toMatchObject({ transferred: true });
+    expect((await checkInTicket(db, owner, event.id, gateQr(after))).ticket).toMatchObject({ transferred: true });
 
     // Ingresso nunca transferido.
-    expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[1]))).ticket).toMatchObject({ transferred: false });
+    expect((await checkInTicket(db, owner, event.id, gateQr(tickets[1]))).ticket).toMatchObject({ transferred: false });
   });
 
   it("outra organização não vê titular nem a transferência (privacidade do PR #18)", async () => {
     const { buyer, recipient, ticket } = await setup();
-    const oldPayload = qrPayload(ticket);
+    const oldPayload = gateQr(ticket);
     const { token } = await request(buyer, ticket.id, recipient);
     await acceptTransfer(db, recipient, token);
     const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
@@ -243,7 +243,7 @@ describe("T-TRANSF — portaria (Fase 4)", () => {
     const stale = await checkInTicket(db, otherOwner, otherEvent.id, oldPayload);
     expect(stale).toMatchObject({ result: "INVALID", message: "QR code inválido" });
     expect(stale.ticket).toBeUndefined();
-    const fresh = await checkInTicket(db, otherOwner, otherEvent.id, qrPayload(after));
+    const fresh = await checkInTicket(db, otherOwner, otherEvent.id, gateQr(after));
     expect(fresh.result).toBe("WRONG_EVENT");
     expect(fresh.ticket).toBeUndefined();
     expect(await db.ticketCheckin.count({ where: { eventId: otherEvent.id, ticketId: { not: null } } })).toBe(0);
@@ -255,11 +255,11 @@ describe("T-TRANSF — concorrência", () => {
     for (let round = 0; round < 6; round++) {
       await resetDb();
       const { owner, buyer, recipient, ticket, event } = await setup();
-      const oldPayload = qrPayload(ticket);
+      const oldPayload = gateQr(ticket);
       const { token } = await request(buyer, ticket.id, recipient);
       const [scan, accept] = await Promise.allSettled([checkInTicket(db, owner, event.id, oldPayload), acceptTransfer(db, recipient, token)]);
       const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } });
-      const newScan = await checkInTicket(db, owner, event.id, qrPayload(after));
+      const newScan = await checkInTicket(db, owner, event.id, gateQr(after));
       const admitted = [scan.status === "fulfilled" && scan.value.result === "ADMITTED", newScan.result === "ADMITTED"].filter(Boolean);
       expect(admitted).toHaveLength(1);
       if (accept.status === "fulfilled") {
@@ -293,7 +293,7 @@ describe("T-TRANSF — concorrência", () => {
         expect(finalOrder.status).toBe("PAID");
       }
       if (accept.status === "rejected") expect(after.holderUserId).toBe(buyer.id);
-      for (const payload of [qrPayload(ticket), qrPayload(after)]) {
+      for (const payload of [gateQr(ticket), gateQr(after)]) {
         const r = await checkInTicket(db, owner, event.id, payload);
         if (after.status === "REVOKED") expect(r.result).not.toBe("ADMITTED");
       }

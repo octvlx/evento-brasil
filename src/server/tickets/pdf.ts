@@ -1,9 +1,8 @@
 import "server-only";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import QRCode from "qrcode";
 import type { TicketKind } from "@/generated/prisma/client";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
-import { qrPayload } from "../services/tickets";
+import { env } from "../env";
 import { organizerIdentityLine, type OrganizerIdentity } from "./organizer-identity";
 import { BRAND } from "@/lib/brand";
 
@@ -99,15 +98,29 @@ export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array
       y -= 12 + lines * 14 + 2;
     }
 
-    const png = await QRCode.toBuffer(qrPayload(t), { errorCorrectionLevel: "M", margin: 1, width: 360 });
-    const img = await pdf.embedPng(png);
-    const size = 160;
-    page.drawImage(img, { x: (width - size) / 2, y: 70, width: size, height: size });
+    // Comprovante: sem QR de entrada. O QR vale só na tela do celular (muda a cada 30 s),
+    // para que PDF, print ou foto não sirvam de ingresso na portaria.
+    const boxW = width - 56;
+    page.drawRectangle({ x: 28, y: 78, width: boxW, height: 150, borderColor: PINK, borderWidth: 1.2, opacity: 0 });
+    const ticketUrl = `${new URL(env().APP_URL).origin}/ingressos/${t.code}`;
+    const lines: [string, number, typeof bold][] = [
+      ["COMPROVANTE — NÃO VALE NA ENTRADA", 12, bold],
+      ["A entrada é pelo QR na tela do celular, que muda a cada 30 segundos.", 9.5, regular],
+      ["Print, foto e este PDF não são aceitos na portaria.", 9.5, regular],
+      ["Abra o ingresso no celular, logado na sua conta:", 9.5, regular],
+      [ticketUrl, 9.5, bold],
+    ];
+    let ly = 200;
+    for (const [text, size, font] of lines) {
+      const fitted = font.widthOfTextAtSize(text, size) > boxW - 16 ? text.slice(0, Math.floor(text.length * ((boxW - 16) / font.widthOfTextAtSize(text, size)))) : text;
+      page.drawText(fitted, { x: (width - font.widthOfTextAtSize(fitted, size)) / 2, y: ly, size, font, color: font === bold && size === 12 ? PINK : rgb(0.1, 0.1, 0.1) });
+      ly -= size === 12 ? 26 : 20;
+    }
     const codeText = `Código ${t.code}  ·  Pedido ${t.orderCode}`;
     page.drawText(codeText, { x: (width - regular.widthOfTextAtSize(codeText, 9)) / 2, y: 55, size: 9, font: regular, color: GRAY });
     const note = t.isSimulated ? "TESTE — pagamento simulado, ingresso sem valor" : `Organização: ${t.event.organizer}`;
     page.drawText(note, { x: (width - bold.widthOfTextAtSize(note, 8)) / 2, y: 38, size: 8, font: bold, color: t.isSimulated ? rgb(0.71, 0.07, 0.23) : PINK });
-    const warn = "Não compartilhe este QR code. Ele é validado uma única vez na entrada.";
+    const warn = "Não compartilhe o acesso à sua conta: o QR de entrada é validado uma única vez.";
     page.drawText(warn, { x: (width - regular.widthOfTextAtSize(warn, 7.5)) / 2, y: 22, size: 7.5, font: regular, color: GRAY });
   }
   return pdf.save();

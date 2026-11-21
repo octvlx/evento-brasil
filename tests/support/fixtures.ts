@@ -1,10 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createPrivateKey, randomUUID, sign as cryptoSign } from "node:crypto";
 import { afterAll } from "vitest";
 import type { HalfPriceRegime, OrgRole, TicketKind } from "@/generated/prisma/client";
 import { createPrismaClient } from "@/server/db";
 import { SimulatedPaymentAdapter } from "@/server/payments/simulated";
 import { createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
+import { ticketSigningJwk } from "@/server/services/tickets";
+import { dynamicQrMessage, dynamicQrPayload, qrStep } from "@/lib/qr-payload";
 
 export const db = createPrismaClient();
 afterAll(async () => { await db.$disconnect(); });
@@ -153,4 +155,15 @@ export async function buyAndPay(user: Parameters<typeof buy>[0], eventId: string
 
 export async function ticketType(id: string) {
   return db.ticketType.findUniqueOrThrow({ where: { id } });
+}
+
+/**
+ * QR dinâmico (EB2) do ingresso no instante `at`, assinado como o celular do titular faz
+ * (mesma chave de ticketSigningJwk). É o que a portaria lê na câmera.
+ */
+export function gateQr(t: { code: string; tokenVersion: number }, at: Date = new Date()) {
+  const key = createPrivateKey({ key: ticketSigningJwk(t), format: "jwk" });
+  const step = qrStep(at.getTime());
+  const sig = cryptoSign("sha256", Buffer.from(dynamicQrMessage(t.code, step)), { key, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  return dynamicQrPayload(t.code, step, sig);
 }

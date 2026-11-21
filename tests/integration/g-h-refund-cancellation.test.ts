@@ -6,8 +6,7 @@ import { checkInTicket } from "@/server/services/checkin";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { requestCustomerRefund } from "@/server/services/refunds";
 import { organizerFinancials, organizerOverview } from "@/server/services/reports";
-import { qrPayload } from "@/server/services/tickets";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb, ticketType } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb, ticketType } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -28,7 +27,7 @@ describe("G — reembolso", () => {
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("REFUNDED");
     expect(await db.issuedTicket.count({ where: { orderId: order.id, status: "REVOKED", revocationReason: "REFUNDED" } })).toBe(2);
     expect(await ticketType(event.ticketTypes[0].id)).toMatchObject({ quantitySold: 2, quantityRefunded: 2 });
-    expect((await checkInTicket(db, owner, event.id, qrPayload(ticket))).result).toBe("REVOKED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(ticket))).result).toBe("REVOKED");
 
     // Repetir não duplica nada.
     await expect(requestCustomerRefund(db, adapter, customer, order.id)).rejects.toThrow();
@@ -46,7 +45,7 @@ describe("G — reembolso", () => {
     const customer = await makeUser();
     const { order } = await buyAndPay(customer, event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 1 }]);
     const t = await db.issuedTicket.findFirstOrThrow({ where: { orderId: order.id } });
-    await checkInTicket(db, owner, event.id, qrPayload(t));
+    await checkInTicket(db, owner, event.id, gateQr(t));
     await expect(requestCustomerRefund(db, adapter, customer, order.id)).rejects.toThrow(/utilizados/);
   });
 

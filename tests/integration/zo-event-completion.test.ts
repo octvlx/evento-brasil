@@ -15,8 +15,7 @@ import { checkFinancialInvariants } from "@/server/services/reconciliation";
 import { organizerDashboard } from "@/server/services/reports";
 import { suggestSearch } from "@/server/services/search";
 import { rankPublicEvents } from "@/server/services/search-ranking";
-import { qrPayload } from "@/server/services/tickets";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, orderInput, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeVerifiedUser as makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 afterEach(async () => {
@@ -214,7 +213,7 @@ describe("job de encerramento (cron)", () => {
   it("preserva ingressos, QR Codes, check-ins, pedidos, pagamentos, razão e reembolsos", async () => {
     const { owner, event, order } = await paidEvent({ quantity: 3 });
     const [first] = await db.issuedTicket.findMany({ where: { orderId: order.id }, orderBy: { sequence: "asc" } });
-    expect((await checkInTicket(db, owner, event.id, qrPayload(first))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(first))).result).toBe("ADMITTED");
     await endEvent(event.id, 2 * HOUR);
     const before = await history(event.id);
     expect(before.ledger.length).toBeGreaterThan(0);
@@ -234,8 +233,8 @@ describe("portaria depois do término (fechamento operacional)", () => {
       const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id }, orderBy: { sequence: "asc" } });
       await endEvent(event.id, 2 * HOUR);
       if (runJob) await completeEndedEvents(db);
-      expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[0]))).result).toBe("ADMITTED");
-      expect((await checkInTicket(db, owner, event.id, qrPayload(tickets[0]))).result).toBe("DUPLICATE");
+      expect((await checkInTicket(db, owner, event.id, gateQr(tickets[0]))).result).toBe("ADMITTED");
+      expect((await checkInTicket(db, owner, event.id, gateQr(tickets[0]))).result).toBe("DUPLICATE");
     }
   });
 
@@ -243,7 +242,7 @@ describe("portaria depois do término (fechamento operacional)", () => {
     const { owner, event, order } = await paidEvent();
     const [ticket] = await db.issuedTicket.findMany({ where: { orderId: order.id } });
     await endEvent(event.id, 13 * HOUR);
-    expect((await checkInTicket(db, owner, event.id, qrPayload(ticket))).result).toBe("EVENT_NOT_ACTIVE");
+    expect((await checkInTicket(db, owner, event.id, gateQr(ticket))).result).toBe("EVENT_NOT_ACTIVE");
     expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: ticket.id } })).status).toBe("VALID");
   });
 });

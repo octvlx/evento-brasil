@@ -3,10 +3,9 @@ import { checkInTicket, checkinHistory } from "@/server/services/checkin";
 import { createOrder } from "@/server/services/orders";
 import { applyPaymentSnapshot, startPayment } from "@/server/services/payments";
 import { reconcilePayments } from "@/server/services/reconciliation";
-import { qrPayload } from "@/server/services/tickets";
 import { MercadoPagoAdapter } from "@/server/payments/mercadopago";
 import type { PaymentProviderAdapter } from "@/server/payments/types";
-import { adapter, buy, buyAndPay, db, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
+import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -116,7 +115,7 @@ describe("regressões da revisão independente", () => {
     const ticket = await db.issuedTicket.findFirstOrThrow({ where: { orderId: order.id } });
     await db.organization.update({ where: { id: org.id }, data: { status: "SUSPENDED" } });
     for (const actor of [owner, staff]) {
-      await expect(checkInTicket(db, actor, event.id, qrPayload(ticket))).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(checkInTicket(db, actor, event.id, gateQr(ticket))).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(checkinHistory(db, actor, event.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
     expect(await db.ticketCheckin.count()).toBe(0);
