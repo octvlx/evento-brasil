@@ -13,6 +13,7 @@ import { encryptPII, hashToken, randomToken } from "../crypto";
 import { verifyPassword } from "../auth/password";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { imageDimensions, MAX_IMAGE_BYTES, storeEventImage } from "../storage";
+import { resolveCityFromIbge } from "./cities";
 
 async function uniqueOrgSlug(client: Db | Tx, name: string): Promise<string> {
   const base = slugify(name) || "organizador";
@@ -21,6 +22,12 @@ async function uniqueOrgSlug(client: Db | Tx, name: string): Promise<string> {
     if (!(await client.organization.findUnique({ where: { slug }, select: { id: true } }))) return slug;
   }
   return `${base}-${randomToken(4).toLowerCase()}`;
+}
+
+/** Cidade-sede do cadastro: município do IBGE (cria a cidade se preciso) ou cidade antiga já cadastrada. */
+async function applicationCityId(tx: Tx, input: ReturnType<typeof organizerApplicationSchema.parse>) {
+  if (input.cityIbgeCode) return (await resolveCityFromIbge(tx, input.cityIbgeCode, input.cityUf)).id;
+  return input.cityId || null;
 }
 
 function verificationData(input: ReturnType<typeof organizerApplicationSchema.parse>, actorId: string) {
@@ -69,7 +76,7 @@ export async function submitOrganizerApplication(db: Db, actor: Actor, raw: Orga
         description: input.description,
         contactEmail: input.contactEmail,
         contactPhone: input.contactPhone ? onlyDigits(input.contactPhone) : null,
-        cityId: input.cityId || null,
+        cityId: await applicationCityId(tx, input),
         websiteUrl: input.websiteUrl || null,
         instagramHandle: input.instagramHandle?.replace(/^@/, "") || null,
         status: "PENDING_REVIEW",
@@ -136,7 +143,7 @@ export async function resubmitOrganizerApplication(db: Db, actor: Actor, organiz
         description: input.description,
         contactEmail: input.contactEmail,
         contactPhone: input.contactPhone ? onlyDigits(input.contactPhone) : null,
-        cityId: input.cityId || null,
+        cityId: await applicationCityId(tx, input),
         status: "PENDING_REVIEW",
         statusReason: null,
         verifications: { create: verificationData(input, actor.id) },

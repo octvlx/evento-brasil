@@ -10,4 +10,9 @@ describe("buyer order pagination", () => {
     expect(ordersPagination("2147483648", 31)).toEqual({ page: 3, pageCount: 3, skip: 30, take: 15 });
     expect(ordersPagination("2", 0)).toEqual({ page: 1, pageCount: 1, skip: 0, take: 15 });
   });
+  it("accepts a custom page size (past events in Meus ingressos use 10)", () => {
+    expect(ordersPagination("2", 25, 10)).toEqual({ page: 2, pageCount: 3, skip: 10, take: 10 });
+    expect(ordersPagination("9", 25, 10)).toEqual({ page: 3, pageCount: 3, skip: 20, take: 10 });
+    expect(ordersPagination(undefined, 0, 10)).toEqual({ page: 1, pageCount: 1, skip: 0, take: 10 });
+  });
 });
