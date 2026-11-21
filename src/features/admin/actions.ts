@@ -57,8 +57,8 @@ export const featureEventAction = async (id: string, featured: boolean) => run((
 export const assignCancellationAction = async (id: string, assignee: string | null) =>
   run((a) => assignCancellationRequest(db, a, id, assignee === "me" ? a.id : assignee ? String(assignee) : null));
 export const suspendEventAction = async (id: string, suspended: boolean, reason?: string) => run((a) => setEventSuspended(db, a, id, suspended, reason));
-export const decideEventReportsAction = async (eventId: string, decision: "RESOLVED" | "DISMISSED", note?: string) =>
-  run((a) => decideEventReports(db, a, String(eventId), { decision, note }));
+export const decideEventReportsAction = async (eventId: string, decision: "RESOLVED" | "DISMISSED", reportIds: string[], note?: string) =>
+  run((a) => decideEventReports(db, a, String(eventId), { decision, reportIds, note }));
 export const adminCancelEventAction = async (id: string, reason?: string) =>
   run((a) => cancelEvent(db, getPaymentAdapter(), a, id, reason ?? "", { asAdmin: true }));
 export const suspendUserAction = async (id: string, suspended: boolean, reason?: string) => run((a) => setUserSuspended(db, a, id, suspended, reason));

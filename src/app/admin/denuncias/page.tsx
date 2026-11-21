@@ -33,7 +33,7 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
     <>
       <PageTitle
         title="Denúncias de eventos"
-        subtitle="Eventos com denúncias abertas, os mais denunciados primeiro. A decisão vale para todas as denúncias abertas do evento; suspender ou cancelar continua nas ações do evento."
+        subtitle="Eventos com denúncias abertas, os mais denunciados primeiro. A decisão vale para as denúncias mostradas aqui (as que chegarem depois continuam abertas); suspender ou cancelar continua nas ações do evento."
       />
       {queue.items.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground" data-testid="reports-empty">
@@ -65,9 +65,9 @@ async function Content({ searchParams }: { searchParams: Promise<Search> }) {
                       variant="secondary"
                       askReason="O que foi feito (obrigatório)"
                       reasonRequired
-                      action={decideEventReportsAction.bind(null, event.id, "RESOLVED")}
+                      action={decideEventReportsAction.bind(null, event.id, "RESOLVED", reports.map((r) => r.id))}
                     />
-                    <AdminActionButton label="Descartar" askReason="Motivo (opcional)" action={decideEventReportsAction.bind(null, event.id, "DISMISSED")} />
+                    <AdminActionButton label="Descartar" askReason="Motivo (opcional)" action={decideEventReportsAction.bind(null, event.id, "DISMISSED", reports.map((r) => r.id))} />
                     {event.status === "PUBLISHED" && !event.suspendedAt && (
                       <AdminActionButton
                         label="Suspender evento"

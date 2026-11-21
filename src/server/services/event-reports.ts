@@ -49,6 +49,9 @@ export async function reportEvent(db: Db, actor: Actor, eventId: string, raw: Ev
   if (!event) throw notFound("Evento não encontrado.");
   const member = await db.organizationMember.findUnique({ where: { organizationId_userId: { organizationId: event.organizationId, userId: actor.id } }, select: { userId: true } });
   if (member) throw new AppError("FORBIDDEN", "Você faz parte da organização deste evento.");
+  // Repetida não gasta o limite por hora (a corrida continua coberta pelo índice parcial).
+  const open = await db.eventReport.findFirst({ where: { eventId: event.id, reporterId: actor.id, status: "OPEN" }, select: { id: true } });
+  if (open) throw duplicateReport();
   await rateLimit(`event-report:${actor.id}`, REPORTS_PER_HOUR, 3_600_000, db);
   try {
     return await db.$transaction(async (tx) => {
@@ -58,11 +61,13 @@ export async function reportEvent(db: Db, actor: Actor, eventId: string, raw: Ev
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      throw new AppError("CONFLICT", "Você já denunciou este evento. A equipe está analisando.");
+      throw duplicateReport();
     }
     throw err;
   }
 }
+
+const duplicateReport = () => new AppError("CONFLICT", "Você já denunciou este evento. A equipe está analisando.");
 
 export const REPORT_QUEUE_PAGE_SIZE = 20;
 
@@ -108,6 +113,8 @@ export async function listOpenEventReports(db: Db, admin: Actor, page = 1) {
 export const decideEventReportsSchema = z
   .object({
     decision: z.enum(["RESOLVED", "DISMISSED"]),
+    /** As denúncias que a moderação viu na fila: só elas mudam. */
+    reportIds: z.array(z.string().min(1)).min(1, "Nenhuma denúncia selecionada.").max(500),
     note: z
       .string()
       .trim()
@@ -120,24 +127,25 @@ export const decideEventReportsSchema = z
   });
 
 /**
- * Decide todas as denúncias abertas do evento de uma vez. Só as que estavam abertas
- * mudam (updateMany com status OPEN): duas decisões simultâneas não se sobrepõem, e a
- * segunda responde CONFLICT. Denúncias abertas depois da decisão ficam para a próxima.
+ * Decide de uma vez as denúncias abertas do evento que a moderação viu (`reportIds`).
+ * Só as que ainda estavam abertas mudam (updateMany com status OPEN): duas decisões
+ * simultâneas não se sobrepõem, e a segunda responde CONFLICT. Denúncia que chegou depois
+ * de a fila ser aberta continua aberta, para ninguém descartar o que não leu.
  */
 export async function decideEventReports(db: Db, admin: Actor, eventId: string, raw: z.input<typeof decideEventReportsSchema>) {
   assertAdminPermission(admin, "events:moderate");
   const parsed = decideEventReportsSchema.safeParse(raw);
   if (!parsed.success) throw new AppError("VALIDATION", parsed.error.issues[0]?.message ?? "Dados inválidos.");
-  const { decision, note } = parsed.data;
+  const { decision, note, reportIds } = parsed.data;
   return db.$transaction(async (tx) => {
     const event = await tx.event.findUnique({ where: { id: eventId }, select: { id: true, organizationId: true } });
     if (!event) throw notFound("Evento não encontrado.");
     const now = new Date();
     const { count } = await tx.eventReport.updateMany({
-      where: { eventId, status: "OPEN" },
+      where: { eventId, status: "OPEN", id: { in: reportIds } },
       data: { status: decision, decidedById: admin.id, decidedAt: now, decisionNote: note ?? null },
     });
-    if (!count) throw new AppError("CONFLICT", "Não há denúncias abertas para este evento (outra pessoa pode ter decidido agora).");
+    if (!count) throw new AppError("CONFLICT", "Essas denúncias já foram decididas (outra pessoa pode ter decidido agora). Recarregue a fila.");
     await audit(tx, {
       actorUserId: admin.id,
       organizationId: event.organizationId,

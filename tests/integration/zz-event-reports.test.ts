@@ -55,27 +55,44 @@ describe("moderação", () => {
     ]);
     expect(queue.items[0].reports.map((r) => r.reporter.name)).toEqual([u1.name, u2.name]);
 
+    const seenB = queue.items[0].reports.map((r) => r.id);
     // Procedente exige nota.
-    await expect(decideEventReports(db, admin, b.id, { decision: "RESOLVED" })).rejects.toMatchObject({ code: "VALIDATION" });
-    expect(await decideEventReports(db, admin, b.id, { decision: "RESOLVED", note: "Capa trocada pelo organizador" })).toEqual({ count: 2 });
+    await expect(decideEventReports(db, admin, b.id, { decision: "RESOLVED", reportIds: seenB })).rejects.toMatchObject({ code: "VALIDATION" });
+    expect(await decideEventReports(db, admin, b.id, { decision: "RESOLVED", reportIds: seenB, note: "Capa trocada pelo organizador" })).toEqual({ count: 2 });
     const decided = await db.eventReport.findMany({ where: { eventId: b.id } });
     expect(decided.every((r) => r.status === "RESOLVED" && r.decidedById === admin.id && r.decisionNote === "Capa trocada pelo organizador")).toBe(true);
     // Nada mais aberto: segunda decisão (outra aba) é CONFLICT.
-    await expect(decideEventReports(db, admin, b.id, { decision: "DISMISSED" })).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(decideEventReports(db, admin, b.id, { decision: "DISMISSED", reportIds: seenB })).rejects.toMatchObject({ code: "CONFLICT" });
     // Depois da decisão, a mesma pessoa pode denunciar de novo (índice parcial só nas abertas).
     await reportEvent(db, u1, b.id, { reason: "MISLEADING" });
 
-    await decideEventReports(db, admin, a.id, { decision: "DISMISSED" });
+    await decideEventReports(db, admin, a.id, { decision: "DISMISSED", reportIds: queue.items[1].reports.map((r) => r.id) });
     expect((await db.eventReport.findFirstOrThrow({ where: { eventId: a.id } })).status).toBe("DISMISSED");
     expect(await db.auditLog.count({ where: { action: { in: ["event.reports_resolved", "event.reports_dismissed"] } } })).toBe(2);
   });
 
+  it("a decisão só alcança as denúncias que a moderação viu; a que chegou depois continua aberta", async () => {
+    const admin = await makeUser({ admin: true });
+    const { event } = await setup();
+    await reportEvent(db, await makeUser(), event.id, { reason: "INAPPROPRIATE" });
+    const seen = (await listOpenEventReports(db, admin)).items[0].reports.map((r) => r.id);
+    // Enquanto a fila está aberta na tela, chega uma denúncia de fraude.
+    const late = await reportEvent(db, await makeUser(), event.id, { reason: "FRAUD", details: "Pediram PIX por fora" });
+    expect(await decideEventReports(db, admin, event.id, { decision: "DISMISSED", reportIds: seen })).toEqual({ count: 1 });
+    expect((await db.eventReport.findUniqueOrThrow({ where: { id: late.id } })).status).toBe("OPEN");
+    expect((await listOpenEventReports(db, admin)).items.map((i) => i.count)).toEqual([1]);
+    // ID de outro evento não decide nada aqui.
+    const other = (await setup()).event;
+    await expect(decideEventReports(db, admin, other.id, { decision: "DISMISSED", reportIds: [late.id] })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect((await db.eventReport.findUniqueOrThrow({ where: { id: late.id } })).status).toBe("OPEN");
+  });
+
   it("só quem tem events:moderate vê a fila e decide", async () => {
     const { event } = await setup();
-    await reportEvent(db, await makeUser(), event.id, { reason: "FRAUD" });
+    const report = await reportEvent(db, await makeUser(), event.id, { reason: "FRAUD" });
     const support = await db.user.update({ where: { id: (await makeUser({ admin: true })).id }, data: { adminRoles: ["SUPPORT"] } });
     await expect(listOpenEventReports(db, support)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(decideEventReports(db, support, event.id, { decision: "DISMISSED" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(decideEventReports(db, support, event.id, { decision: "DISMISSED", reportIds: [report.id] })).rejects.toMatchObject({ code: "FORBIDDEN" });
     const moderator = await db.user.update({ where: { id: (await makeUser({ admin: true })).id }, data: { adminRoles: ["MODERATION"] } });
     expect((await listOpenEventReports(db, moderator)).total).toBe(1);
   });
