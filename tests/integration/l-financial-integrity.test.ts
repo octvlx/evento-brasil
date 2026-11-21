@@ -312,6 +312,27 @@ describe("reconciliação", () => {
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PAID");
   });
 
+  it("encerra como ignorado o webhook preso de conta alheia; o de pagamento nosso segue no erro", async () => {
+    const mk = (id: string) =>
+      db.paymentWebhookEvent.create({
+        data: { provider: adapter.id, externalEventId: `foreign-${randomUUID()}`, eventType: "payment.created", providerPaymentId: id, payload: {}, receivedAt: minutesFromNow(-5), error: "sem token" },
+      });
+    const foreign = await mk(`ext-${randomUUID()}`);
+    const ours = await mk(`ours-${randomUUID()}`);
+    const failing = Object.assign(Object.create(adapter), {
+      getPayment: async () => { throw new Error("sem token para a conta"); },
+      isForeignWebhook: async ({ providerPaymentId }: { providerPaymentId: string }) => providerPaymentId === foreign.providerPaymentId,
+    });
+    const report = await reconcilePayments(db, failing);
+    expect(report.webhooksReprocessed).toBe(0);
+    expect(report.errors.map((e) => e.id)).toContain(ours.id);
+    expect(report.errors.map((e) => e.id)).not.toContain(foreign.id);
+    const after = await db.paymentWebhookEvent.findUniqueOrThrow({ where: { id: foreign.id } });
+    expect(after).toMatchObject({ processingResult: "ignored_unknown_account", error: null });
+    expect(after.processedAt).not.toBeNull();
+    expect((await db.paymentWebhookEvent.findUniqueOrThrow({ where: { id: ours.id } })).processedAt).toBeNull();
+  });
+
   it("vincula pagamento criado no provedor cujo id não foi salvo; encerra o que nunca existiu", async () => {
     const { event, tt } = await setup();
     const customer = await makeUser();

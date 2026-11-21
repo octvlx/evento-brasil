@@ -593,6 +593,20 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
     };
   }
 
+  /**
+   * Conta nunca conectada (nem revogada) e pagamento desconhecido: nenhum pedido nosso
+   * depende desse aviso. Vendedor desconectado ou pagamento nosso continuam no alerta.
+   */
+  async isForeignWebhook({ providerPaymentId, payload }: { providerPaymentId: string; payload: unknown }) {
+    const userId = (payload as { user_id?: unknown } | null)?.user_id;
+    if (typeof userId !== "string" && typeof userId !== "number") return false;
+    const [account, payment] = await Promise.all([
+      this.db.mercadoPagoAccount.findFirst({ where: { mercadoPagoUserId: String(userId) }, select: { id: true } }),
+      this.db.payment.findFirst({ where: { provider: this.id, providerPaymentId }, select: { id: true } }),
+    ]);
+    return !account && !payment;
+  }
+
   private async accessTokenForPayment(providerPaymentId: string) {
     const payment = await this.db.payment.findFirst({
       where: { provider: this.id, providerPaymentId },

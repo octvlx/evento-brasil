@@ -27,6 +27,7 @@ import { PaymentNotStartedError, ProviderRejectedError } from "@/server/payments
 
 const db = {
   payment: { findUnique: vi.fn(), findFirst: vi.fn() },
+  mercadoPagoAccount: { findFirst: vi.fn() },
 } as unknown as Db;
 
 function adapter(secret = "webhook-secret") {
@@ -348,5 +349,27 @@ describe("Mercado Pago Checkout Pro adapter", () => {
 
   it("does not enable payments without a webhook signing secret", () => {
     expect(adapter("").supportedMethods).toEqual([]);
+  });
+});
+
+describe("MercadoPagoAdapter.isForeignWebhook", () => {
+  const account = (db as unknown as { mercadoPagoAccount: { findFirst: ReturnType<typeof vi.fn> } }).mercadoPagoAccount.findFirst;
+  const payment = (db as unknown as { payment: { findFirst: ReturnType<typeof vi.fn> } }).payment.findFirst;
+  it.each([
+    { name: "conta nunca conectada e pagamento desconhecido", acc: null, pay: null, payload: { user_id: 1608601443 }, expected: true },
+    { name: "conta conectada (ou revogada) continua no alerta", acc: { id: "a" }, pay: null, payload: { user_id: 5619907 }, expected: false },
+    { name: "pagamento nosso continua no alerta", acc: null, pay: { id: "p" }, payload: { user_id: 1608601443 }, expected: false },
+    { name: "sem user_id não é tratado como alheio", acc: null, pay: null, payload: {}, expected: false },
+  ])("$name", async ({ acc, pay, payload, expected }) => {
+    account.mockResolvedValueOnce(acc);
+    payment.mockResolvedValueOnce(pay);
+    expect(await adapter().isForeignWebhook({ providerPaymentId: "189772176307", payload })).toBe(expected);
+  });
+
+  it("procura a conta sem filtrar revogadas", async () => {
+    account.mockResolvedValueOnce(null);
+    payment.mockResolvedValueOnce(null);
+    await adapter().isForeignWebhook({ providerPaymentId: "1", payload: { user_id: "42" } });
+    expect(account).toHaveBeenLastCalledWith({ where: { mercadoPagoUserId: "42" }, select: { id: true } });
   });
 });

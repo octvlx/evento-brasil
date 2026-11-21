@@ -8,7 +8,7 @@ import "server-only";
 import type { Db } from "../db";
 import type { PaymentProviderAdapter } from "../payments/types";
 import { financeLog } from "./finance-log";
-import { applyPaymentSnapshot, syncPaymentFromProvider, type ApplyOutcome } from "./payments";
+import { applyPaymentSnapshot, isForeignWebhook, syncPaymentFromProvider, type ApplyOutcome } from "./payments";
 import { resumeRefund, retryFailedRefunds } from "./refunds";
 
 export interface ReconciliationReport {
@@ -67,6 +67,10 @@ export async function reconcilePayments(
       await db.paymentWebhookEvent.update({ where: { id: h.id }, data: { processedAt: new Date(), processingResult: `reconciled:${outcome}`, error: null } });
       report.webhooksReprocessed++;
     } catch (err) {
+      if (await isForeignWebhook(adapter, h.providerPaymentId!, h.payload)) {
+        await db.paymentWebhookEvent.update({ where: { id: h.id }, data: { processedAt: new Date(), processingResult: "ignored_unknown_account", error: null } });
+        continue;
+      }
       fail("webhook", h.id, err);
     }
   }
