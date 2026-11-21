@@ -13,6 +13,7 @@ export interface ManagedTicketType {
   id: string;
   name: string;
   description: string | null;
+  sector?: string | null;
   kind: string;
   priceCents: number;
   quantityTotal: number;
@@ -27,7 +28,7 @@ export interface ManagedTicketType {
   isHidden: boolean;
 }
 
-const empty = { name: "", description: "", kind: "GENERAL", price: "", quantityTotal: "100", minPerOrder: "1", maxPerOrder: "10", salesStartLocal: "", salesEndLocal: "", requiresAttendeeInfo: false, isHidden: false };
+const empty = { name: "", description: "", sector: "", kind: "GENERAL", price: "", quantityTotal: "100", minPerOrder: "1", maxPerOrder: "10", salesStartLocal: "", salesEndLocal: "", requiresAttendeeInfo: false, isHidden: false };
 
 /** Estimativa por ingresso calculada no servidor com a regra de comissão vigente. */
 export interface TicketEstimate {
@@ -59,6 +60,7 @@ export function TicketTypesManager({
     setF({
       name: copy ? `${t.name} (cópia)` : t.name,
       description: t.description ?? "",
+      sector: t.sector ?? "",
       kind: t.kind,
       price: centsToInput(t.priceCents),
       quantityTotal: String(t.quantityTotal),
@@ -78,6 +80,7 @@ export function TicketTypesManager({
       id: editing && editing !== "new" ? editing : undefined,
       name: f.name,
       description: f.description || undefined,
+      sector: f.sector || undefined,
       kind: f.kind as TicketTypeInput["kind"],
       priceCents,
       quantityTotal: Number(f.quantityTotal),
@@ -111,7 +114,7 @@ export function TicketTypesManager({
           <li key={t.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border p-4">
             <div>
               <p className="font-semibold">
-                {t.name} {t.isHidden && <span className="text-xs text-muted-foreground">(oculto)</span>}
+                {t.name} {t.sector && <span className="text-xs font-normal text-muted-foreground">· {t.sector}</span>} {t.isHidden && <span className="text-xs text-muted-foreground">(oculto)</span>}
               </p>
               <p className="text-xs text-muted-foreground">
                 {TICKET_KIND[t.kind]} · {t.priceCents ? formatBRL(t.priceCents) : "Gratuito"} · vendidos {t.quantitySold} · reservados {t.quantityReserved} · reembolsados {t.quantityRefunded} · total {t.quantityTotal}
@@ -195,9 +198,14 @@ export function TicketTypesManager({
                 <input type="checkbox" checked={f.isHidden} onChange={(e) => setF({ ...f, isHidden: e.target.checked })} /> Ocultar da venda
               </label>
             </div>
-            <div className="sm:col-span-3">
+            <div className="sm:col-span-2">
               <Label htmlFor="tt-desc">Descrição (opcional)</Label>
               <Input id="tt-desc" className="mt-1.5" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
+            </div>
+            <div>
+              <Label htmlFor="tt-sector">Setor (opcional)</Label>
+              <Input id="tt-sector" className="mt-1.5" maxLength={60} value={f.sector} onChange={(e) => setF({ ...f, sector: e.target.value })} placeholder="Ex.: Pista, Camarote" aria-describedby="tt-sector-help" />
+              <p id="tt-sector-help" className="mt-1 text-xs text-muted-foreground">Ingressos com o mesmo setor aparecem juntos na página do evento.</p>
             </div>
             <div className="flex gap-2 sm:col-span-3">
               <Button onClick={save} disabled={pending}>

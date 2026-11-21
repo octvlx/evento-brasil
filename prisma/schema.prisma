@@ -450,6 +450,8 @@ model Event {
   description                String
   categoryId                 String
   coverImageUrl              String?
+  /// Mapa do evento (imagem enviada pelo organizador), exibido na página pública.
+  mapImageUrl                String?
   locationType               LocationType    @default(VENUE)
   venueId                    String?
   onlineUrl                  String?
@@ -477,6 +479,8 @@ model Event {
   maxTicketsPerAccount       Int?
   status                     EventStatus     @default(DRAFT)
   isFeatured                 Boolean         @default(false)
+  /// Evento privado: fora da busca, vitrines, cidade, perfil e sitemap; acessível pelo link.
+  isUnlisted                 Boolean         @default(false)
   refundPolicy               String
   // Reembolso a pedido do comprador: até N dias após a compra E até N horas antes do
   // início. Definido pelo organizador; com vendas, só pode ficar mais generoso.
@@ -577,6 +581,8 @@ model TicketType {
   eventId              String
   name                 String
   description          String?
+  /// Setor (ex.: Pista, Camarote, Backstage): agrupa os ingressos na página do evento.
+  sector               String?
   kind                 TicketKind @default(GENERAL)
   priceCents           Int
   quantityTotal        Int

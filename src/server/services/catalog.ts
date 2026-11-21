@@ -11,7 +11,7 @@ import {
   type HalfPriceTypeInput,
   type TicketUnavailableReason,
 } from "@/features/half-price/quota";
-import { localDayRange, weekendRange } from "@/lib/datetime";
+import { localDayRange, weekendRange, zonedLocalToUtc } from "@/lib/datetime";
 import { hasEventEnded } from "@/lib/event-lifecycle";
 import type { PriceQuote } from "@/lib/price-display";
 import type { Db } from "../db";
@@ -20,13 +20,20 @@ import { halfPriceEventInput } from "./half-price";
 import { rankPublicEventPage, type RankOptions } from "./search-ranking";
 import { publicExternalWhere } from "./external-visibility";
 
-export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
+/** À venda e acessível pelo link (inclui evento privado). */
+export const reachableEventWhere = (now = new Date()): Prisma.EventWhereInput => ({
   status: "PUBLISHED",
   // Suspenso pela plataforma: fora da vitrine (os ingressos vendidos continuam valendo).
   suspendedAt: null,
   endsAt: { gt: now },
   organization: { status: "APPROVED" },
 });
+
+/**
+ * Listagens públicas (busca, vitrines, cidade, perfil, sitemap): como `reachableEventWhere`,
+ * sem eventos privados. A página do evento continua abrindo pelo link (getPublicEvent).
+ */
+export const publicEventWhere = (now = new Date()): Prisma.EventWhereInput => ({ ...reachableEventWhere(now), isUnlisted: false });
 
 // Cards do not need full descriptions, policies, or organizer-only event fields.
 const cardSelect = {
@@ -190,6 +197,8 @@ export interface SearchParams {
   citySlug?: string;
   categorySlug?: string;
   date?: DateFilter;
+  /** Período livre (customDateRange); tem prioridade sobre `date`. */
+  dateRange?: { from: Date; to: Date };
   price?: PriceFilter;
   sort?: SortOrder;
   page?: number;
@@ -228,6 +237,29 @@ export function dateFilterRange(date: DateFilter, now = new Date()) {
         : localDayRange(now, tz, 0, date === "7-dias" ? 7 : 30);
 }
 
+/** Maior período livre aceito, em dias. */
+export const MAX_DATE_RANGE_DAYS = 366;
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const validDateKey = (s: unknown): s is string => typeof s === "string" && DATE_KEY.test(s) && new Date(`${s}T12:00:00Z`).toISOString().slice(0, 10) === s;
+
+/**
+ * Período livre da busca (`?de=AAAA-MM-DD&ate=AAAA-MM-DD`), em dias inteiros no fuso de
+ * Brasília, com o dia final incluído. Só "de": até MAX_DATE_RANGE_DAYS depois; só "ate":
+ * de hoje até lá. Datas inválidas, fim antes do início ou período maior que o limite →
+ * null (a busca ignora o período).
+ */
+export function customDateRange(de: unknown, ate: unknown, now = new Date()): { from: Date; to: Date } | null {
+  const tz = "America/Sao_Paulo";
+  const hasFrom = validDateKey(de);
+  const hasTo = validDateKey(ate);
+  if (!hasFrom && !hasTo) return null;
+  if ((de && !hasFrom) || (ate && !hasTo)) return null;
+  const from = hasFrom ? zonedLocalToUtc(`${de}T00:00`, tz) : localDayRange(now, tz).from;
+  const to = hasTo ? localDayRange(zonedLocalToUtc(`${ate}T12:00`, tz), tz).to : localDayRange(from, tz, 0, MAX_DATE_RANGE_DAYS).to;
+  if (to <= from || to.getTime() - from.getTime() > (MAX_DATE_RANGE_DAYS + 1) * 86_400_000) return null;
+  return { from, to };
+}
+
 export async function searchEvents(db: Db, params: SearchParams, now = new Date()) {
   const and: Prisma.EventWhereInput[] = [publicEventWhere(now)];
   // Texto: relevância e acentos no banco (search-ranking.ts); a ordem vem do ranking.
@@ -235,8 +267,8 @@ export async function searchEvents(db: Db, params: SearchParams, now = new Date(
   const rankFilters: RankOptions = { citySlug: params.citySlug, categorySlug: params.categorySlug, categoryId: params.matchCategoryId, now };
   if (params.citySlug) and.push({ OR: [{ city: { slug: params.citySlug } }, { venue: { city: { slug: params.citySlug } } }] });
   if (params.categorySlug) and.push({ category: { slug: params.categorySlug } });
-  if (params.date) {
-    const range = dateFilterRange(params.date, now);
+  if (params.dateRange || params.date) {
+    const range = params.dateRange ?? dateFilterRange(params.date!, now);
     // Eventos que acontecem (ao menos em parte) dentro da janela.
     and.push({ startsAt: { lt: range.to }, endsAt: { gt: range.from } });
     rankFilters.dateRange = range;
@@ -492,7 +524,7 @@ export async function relatedEvents(db: Db, event: { id: string; categoryId: str
 /** Eventos já realizados de um organizador (perfil público), mais recentes primeiro. */
 export async function pastOrganizerEvents(db: Db, organizationId: string, limit = 12, now = new Date()) {
   const rows = await db.event.findMany({
-    where: { organizationId, status: { in: ["PUBLISHED", "COMPLETED"] }, endsAt: { lte: now }, organization: { status: "APPROVED" } },
+    where: { organizationId, status: { in: ["PUBLISHED", "COMPLETED"] }, endsAt: { lte: now }, isUnlisted: false, organization: { status: "APPROVED" } },
     select: cardSelect,
     orderBy: [{ startsAt: "desc" }, { id: "desc" }],
     take: limit,
@@ -584,7 +616,8 @@ const TRACKING_CODE = /^[A-Za-z0-9]{6,16}$/;
 export async function recordTrackingClick(db: Db, code: string, now = new Date()) {
   if (!TRACKING_CODE.test(code)) return null;
   const link = await db.trackingLink.findFirst({
-    where: { code, archivedAt: null, event: publicEventWhere(now) },
+    // Link rastreado também funciona para evento privado: é um jeito de divulgar o link.
+    where: { code, archivedAt: null, event: reachableEventWhere(now) },
     select: { id: true, utmSource: true, utmMedium: true, utmCampaign: true, utmContent: true, utmTerm: true, event: { select: { slug: true } } },
   });
   if (!link) return null;

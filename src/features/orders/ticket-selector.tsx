@@ -17,6 +17,8 @@ export interface SelectorTicket {
   id: string;
   name: string;
   description: string | null;
+  /** Setor (Pista, Camarote…): com algum setor, os ingressos aparecem agrupados. */
+  sector?: string | null;
   kind: string;
   priceCents: number;
   /** Taxa de serviço por unidade calculada no servidor (a mesma do pedido). */
@@ -116,8 +118,11 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
   return (
     <div className="space-y-4">
       {!paymentsAvailable && <Alert variant="warning">A compra de ingressos pagos está temporariamente indisponível. Ingressos gratuitos continuam disponíveis.</Alert>}
+      {groupBySector(tickets).map((section) => (
+      <section key={section.sector ?? ""} aria-label={section.sector ?? undefined} data-testid={section.sector ? "ticket-sector" : undefined}>
+      {section.sector && <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">{section.sector}</h3>}
       <ul className="space-y-3" aria-live="polite">
-        {tickets.map((t) => {
+        {section.tickets.map((t) => {
           const n = qty[t.id] ?? 0;
           const soldOut = t.available <= 0;
           const reason = soldOut ? t.unavailableReason : null;
@@ -181,6 +186,8 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
           );
         })}
       </ul>
+      </section>
+      ))}
 
       {hasHalf && (
         <label className="flex items-start gap-2 rounded-xl bg-muted p-3 text-sm">
@@ -295,4 +302,20 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
       </p>
     </div>
   );
+}
+
+/**
+ * Setores na ordem do primeiro ingresso de cada um (a ordem dos tipos vem do organizador).
+ * Sem nenhum setor: uma seção sem título (lista como antes). Ingressos sem setor num
+ * evento com setores ficam em "Outros ingressos", no fim.
+ */
+export function groupBySector<T extends { sector?: string | null }>(tickets: T[]): { sector: string | null; tickets: T[] }[] {
+  if (!tickets.some((t) => t.sector)) return [{ sector: null, tickets }];
+  const sections = new Map<string, T[]>();
+  const rest: T[] = [];
+  for (const t of tickets) {
+    if (!t.sector) rest.push(t);
+    else sections.set(t.sector, [...(sections.get(t.sector) ?? []), t]);
+  }
+  return [...[...sections].map(([sector, list]) => ({ sector, tickets: list })), ...(rest.length ? [{ sector: "Outros ingressos", tickets: rest }] : [])];
 }

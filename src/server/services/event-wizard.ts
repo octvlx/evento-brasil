@@ -254,6 +254,8 @@ export async function saveEventWizardStep(db: Db, actor: Actor, eventId: string,
           coverImageUrl: input.coverImageUrl || null,
           ageRestriction: input.ageRestriction,
           accessibilityInfo: input.accessibilityInfo ?? null,
+          mapImageUrl: input.mapImageUrl || null,
+          isUnlisted: input.isUnlisted,
         };
         break;
       }

@@ -760,6 +760,8 @@ function Review(
         <Row k="Descrição">{v.description ? `${v.description.trim().slice(0, 160)}${v.description.trim().length > 160 ? "…" : ""}` : ""}</Row>
         <Row k="Classificação">{v.ageRestriction === "0" ? "Livre" : `${v.ageRestriction} anos`}</Row>
         <Row k="Acessibilidade">{v.accessibilityInfo}</Row>
+        <Row k="Mapa">{v.mapImageUrl ? "Enviado" : "Sem mapa"}</Row>
+        <Row k="Visibilidade">{v.isUnlisted ? "Privado: só pelo link, fora da busca" : "Público: aparece na busca"}</Row>
       </Section>
       <Section title="Configurações" n={5} onEdit={props.onEdit}>
         <Row k="Reembolso">

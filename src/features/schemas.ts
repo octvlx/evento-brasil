@@ -62,7 +62,12 @@ export const organizerApplicationSchema = z
     document: z.string().trim(),
     contactEmail: email,
     contactPhone: mobile.optional(),
-    cityId: z.string().optional(),
+    // Cidade-sede (opcional): município do IBGE pelo autocomplete. `cityId` fica só por
+    // compatibilidade com formulários antigos; `cityName` é só a exibição do campo.
+    cityUf: emptyToUndefined(z.enum(UF_CODES, { message: "Selecione a UF" }).optional()),
+    cityIbgeCode: emptyToUndefined(z.string().trim().regex(/^\d{7}$/, "Selecione a cidade na lista").optional()),
+    cityName: z.string().optional(),
+    cityId: emptyToUndefined(z.string().optional()),
     description: optionalText(2000),
     websiteUrl: z
       .string()
@@ -78,6 +83,7 @@ export const organizerApplicationSchema = z
   .superRefine((v, ctx) => {
     const ok = v.legalType === "INDIVIDUAL" ? isValidCPF(v.document) : isValidCNPJ(v.document);
     if (!ok) ctx.addIssue({ code: "custom", path: ["document"], message: v.legalType === "INDIVIDUAL" ? "CPF inválido" : "CNPJ inválido" });
+    if (v.cityUf && !v.cityIbgeCode) ctx.addIssue({ code: "custom", path: ["cityIbgeCode"], message: "Selecione a cidade na lista" });
   });
 export type OrganizerApplicationInput = z.input<typeof organizerApplicationSchema>;
 
@@ -184,6 +190,14 @@ export const eventInputSchema = z
       .default(48),
     accessibilityInfo: optionalText(2000),
     coverImageUrl: z.string().trim().optional(),
+    // Mapa do evento: imagem enviada pelo organizador (upload local ou armazenamento https).
+    mapImageUrl: z
+      .string()
+      .trim()
+      .optional()
+      .refine((v) => !v || /^(\/(?!\/)|https:\/\/)\S+$/.test(v), "Envie a imagem do mapa novamente"),
+    // Evento privado: fora da busca e das vitrines; só quem tem o link chega à página.
+    isUnlisted: z.boolean().default(false),
   })
   .superRefine((v, ctx) => {
     validateTransferPolicySettings(v, ctx);
@@ -207,6 +221,8 @@ export const ticketTypeInputSchema = z
     id: z.string().optional(),
     name: trimmed(2, 80, "Informe o nome do ingresso"),
     description: optionalText(300),
+    // Setor (Pista, Camarote, Backstage…): agrupa os ingressos na página do evento.
+    sector: optionalText(60),
     kind: z.enum(TICKET_KINDS),
     priceCents: z.coerce.number().int().min(0).max(100_000_00),
     quantityTotal: z.coerce.number().int().min(1).max(1_000_000),

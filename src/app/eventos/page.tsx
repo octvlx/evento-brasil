@@ -12,7 +12,8 @@ import { db } from "@/server/db";
 import { BackButton } from "@/components/site/back-button";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { cityLabel } from "@/lib/search-query";
-import { listCategories, listCities, searchEvents, type DateFilter, type PriceFilter, type SortOrder } from "@/server/services/catalog";
+import { customDateRange, listCategories, listCities, searchEvents, type DateFilter, type PriceFilter, type SortOrder } from "@/server/services/catalog";
+import { CUSTOM_PERIOD, DateFilterField } from "@/components/site/date-filter-field";
 import { planSearch, type SearchPlan } from "@/server/services/search";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { UFS } from "@/lib/br";
@@ -53,7 +54,7 @@ const SORT_OPTIONS: [SortOrder, string][] = [
   ["preco-maior", "Maior preço"],
 ];
 
-type Search = { q?: string; cidade?: string; categoria?: string; data?: string; preco?: string; ordem?: string; pagina?: string; externos?: string };
+type Search = { q?: string; cidade?: string; categoria?: string; data?: string; de?: string; ate?: string; preco?: string; ordem?: string; pagina?: string; externos?: string };
 
 export default function EventsPage({ searchParams }: PageProps<"/eventos">) {
   return (
@@ -110,14 +111,12 @@ async function Filters({ searchParams }: { searchParams: Promise<Search> }) {
           </option>
         ))}
       </Select>
-      <Select name="data" defaultValue={sp.data ?? ""} aria-label="Data">
-        <option value="">Qualquer data</option>
-        {DATE_OPTIONS.map(([k, l]) => (
-          <option key={k} value={k}>
-            {l}
-          </option>
-        ))}
-      </Select>
+      <DateFilterField
+        options={DATE_OPTIONS}
+        defaultValue={customDateRange(sp.de, sp.ate) ? CUSTOM_PERIOD : (pick(sp.data, DATE_OPTIONS) ?? "")}
+        de={sp.de}
+        ate={sp.ate}
+      />
       <Select name="preco" defaultValue={sp.preco ?? ""} aria-label="Preço">
         <option value="">Qualquer preço</option>
         {PRICE_OPTIONS.map(([k, l]) => (
@@ -145,13 +144,16 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
   await connection();
   const page = Math.max(1, Number(sp.pagina) || 1);
   const plan = await planSearch(db, sp.q, sp.cidade || undefined);
+  // Período livre válido tem prioridade sobre o atalho de data.
+  const period = customDateRange(sp.de, sp.ate) ?? undefined;
   const res = await searchEvents(db, {
     q: plan.text,
     matchCategoryId: plan.category?.id,
     // Homônimos sem UF (plan.candidates): nenhuma cidade é aplicada em silêncio.
     citySlug: plan.city?.slug ?? (plan.candidates.length ? undefined : sp.cidade || undefined),
     categorySlug: sp.categoria || undefined,
-    date: pick(sp.data, DATE_OPTIONS),
+    date: period ? undefined : pick(sp.data, DATE_OPTIONS),
+    dateRange: period,
     price: pick(sp.preco, PRICE_OPTIONS),
     sort: pick(sp.ordem, SORT_OPTIONS),
     page,
@@ -171,7 +173,8 @@ async function Results({ searchParams }: { searchParams: Promise<Search> }) {
       q: plan.text || undefined,
       cityId: plan.city?.id ?? (sp.cidade ? (await db.city.findUnique({ where: { slug: sp.cidade }, select: { id: true } }))?.id ?? "__nenhuma__" : undefined),
       categorySlug: sp.categoria || undefined,
-      date: pick(sp.data, DATE_OPTIONS),
+      date: period ? undefined : pick(sp.data, DATE_OPTIONS),
+      dateRange: period,
       price: pick(sp.preco, PRICE_OPTIONS),
     },
     Number(sp.externos) || 1,
