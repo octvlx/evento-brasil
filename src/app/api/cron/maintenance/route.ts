@@ -5,14 +5,14 @@
 // expurga dados pessoais vencidos (prazos provisórios em src/server/retention.ts).
 // Por último verifica a saúde operacional e enfileira alertas (ops-health.ts) antes
 // do envio de e-mails, para o alerta sair na mesma passada.
-// Protegido por segredo no header x-cron-secret.
+// Protegido pelo CRON_SECRET: header x-cron-secret ou Authorization: Bearer (Vercel
+// Schedules, vercel.json); ver src/server/cron-auth.ts.
 // Cada etapa é idempotente e isolada: a falha de uma é registrada e não impede as
 // demais; a resposta sai com 500 para o agendador alertar. Nada aqui é a única
 // proteção: o término do evento já é reconhecido pelo relógio em todo o backend.
 import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { db } from "@/server/db";
-import { env } from "@/server/env";
-import { safeEqual } from "@/server/crypto";
+import { isCronAuthorized } from "@/server/cron-auth";
 import { getPaymentAdapter } from "@/server/payments";
 import { completeEndedEvents } from "@/server/services/events";
 import { recordHalfPriceReleases } from "@/server/services/half-price";
@@ -27,8 +27,7 @@ import { runExternalSyncIfDue } from "@/server/services/external-events";
 import { syncWalletPasses } from "@/server/tickets/wallet/passes";
 
 export async function POST(req: Request) {
-  const secret = req.headers.get("x-cron-secret") ?? "";
-  if (!safeEqual(secret, env().CRON_SECRET)) return new Response("forbidden", { status: 403 });
+  if (!isCronAuthorized(req)) return new Response("forbidden", { status: 403 });
   const failed: string[] = [];
   // Só o nome da etapa e a mensagem do erro vão para o log (nunca headers ou segredos).
   const step = async <T,>(name: string, run: () => Promise<T>): Promise<T | null> => {
