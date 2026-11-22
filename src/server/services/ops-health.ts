@@ -34,6 +34,8 @@ export const HEALTH_THRESHOLDS = {
   emailFailureWindowHours: 24,
   /** Reembolso aguardando aprovação (ingressos bloqueados) sem decisão há mais que isto. */
   refundApprovalStuckHours: 48,
+  /** Denúncia de evento sem análise há mais que isto. */
+  eventReportPendingHours: 24,
 } as const;
 
 export const ALERT_REPEAT_HOURS = 6;
@@ -43,7 +45,7 @@ const minutesAgo = (now: Date, m: number) => new Date(now.getTime() - m * 60_000
 /** Problemas abertos agora. Lista vazia = tudo certo. `invariantViolations` vem do cron. */
 export async function operationalHealth(db: Db, now = new Date(), invariantViolations: { code: string; ids: string[] }[] = []): Promise<HealthCheck[]> {
   const T = HEALTH_THRESHOLDS;
-  const [webhooks, failedRefunds, processing, flagged, unlinked, emails, approvals] = await Promise.all([
+  const [webhooks, failedRefunds, processing, flagged, unlinked, emails, approvals, reports] = await Promise.all([
     db.paymentWebhookEvent.aggregate({
       where: { processedAt: null, receivedAt: { lte: minutesAgo(now, T.webhookStuckMinutes) } },
       _count: { _all: true },
@@ -76,6 +78,11 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
     }),
     db.refund.aggregate({
       where: { status: "AWAITING_APPROVAL", createdAt: { lte: minutesAgo(now, T.refundApprovalStuckHours * 60) } },
+      _count: { _all: true },
+      _min: { createdAt: true },
+    }),
+    db.eventReport.aggregate({
+      where: { status: "OPEN", createdAt: { lte: minutesAgo(now, T.eventReportPendingHours * 60) } },
       _count: { _all: true },
       _min: { createdAt: true },
     }),
@@ -132,6 +139,14 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
     count: approvals._count._all,
     oldestAt: approvals._min.createdAt,
     href: "/admin/pagamentos#aguardando-aprovacao",
+  });
+  add({
+    code: "EVENT_REPORTS_PENDING",
+    severity: "warning",
+    title: `Denúncias de eventos sem análise há mais de ${T.eventReportPendingHours} h`,
+    count: reports._count._all,
+    oldestAt: reports._min.createdAt,
+    href: "/admin/denuncias",
   });
   add({
     code: "REFUND_STUCK_PROCESSING",

@@ -12,6 +12,7 @@ import { TransferRules } from "@/features/transfers/transfer-controls";
 import { normalizeTransferPolicy } from "@/lib/transfer-policy";
 import { TicketSelector } from "@/features/orders/ticket-selector";
 import { UtmCapture } from "@/features/orders/utm-capture";
+import { ReportEventButton } from "@/features/event-reports/report-button";
 import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
 import { getPaymentAdapter } from "@/server/payments";
 import { db } from "@/server/db";
@@ -339,6 +340,10 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
                 </a>
               </>
             )}
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <ReportEventButton eventId={event.id} loggedIn={!!user} loginHref={`/entrar?next=${encodeURIComponent(`/eventos/${event.slug}`)}`} />
           </div>
         </div>
 
