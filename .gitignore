@@ -51,3 +51,4 @@ next-env.d.ts
 # Claude: compartilha só os agentes; configurações locais ficam na máquina
 /.claude/launch.json
 /.claude/settings.local.json
+.neon
