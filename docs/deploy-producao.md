@@ -26,7 +26,8 @@ desenvolvimento por conta própria.
   se a sessão não estiver em UTC.
 - ☐ **Hospedagem Node 20.19+ com HTTPS** (Vercel, Render, Fly.io, Railway ou
   container próprio). O app lê o IP do cliente do fim do `x-forwarded-for`; ajuste
-  `TRUSTED_PROXY_HOPS` aos proxies da hospedagem. Cloud Run: `docs/deploy-cloud-run.md`.
+  `TRUSTED_PROXY_HOPS` aos proxies da hospedagem. Vercel: `docs/deploy-vercel.md`;
+  Cloud Run: `docs/deploy-cloud-run.md`.
 - ☐ **Bucket compatível com S3** com URL pública HTTPS (CDN ou bucket público) para as
   imagens. Disco local não serve: as imagens somem a cada deploy.
 - ☐ **Resend** com o domínio do remetente verificado (SPF, DKIM e DMARC no DNS).

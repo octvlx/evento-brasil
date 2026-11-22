@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Resend } from "resend";
-import { env } from "../env";
+import { env, isPreviewDeployment } from "../env";
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -33,6 +33,12 @@ export class EmailDeliveryError extends Error {
 export class ConsoleEmailAdapter implements EmailAdapter {
   readonly id = "console";
   async send(msg: EmailMessage, options?: { idempotencyKey?: string }) {
+    if (isPreviewDeployment()) {
+      // Preview (homologação): sem disco gravável; o texto (com os links) vai só para o log.
+      const id = randomUUID();
+      console.info("[email:preview] " + id + " → " + msg.subject + "\n" + msg.text);
+      return { id: "preview:" + id };
+    }
     if (env().NODE_ENV === "production")
       throw new EmailDeliveryError("CONSOLE_FORBIDDEN", false);
     // turbopackIgnore: pasta de dados locais, não um recurso do app (o build não a rastreia).

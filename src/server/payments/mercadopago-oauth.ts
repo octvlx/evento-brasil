@@ -5,7 +5,7 @@ import type { Db, Tx } from "../db";
 import type { Actor } from "../auth/permissions";
 import { assertOrgPermission } from "../auth/permissions";
 import { hashToken, randomToken, safeEqual } from "../crypto";
-import { env } from "../env";
+import { env, isLiveProduction } from "../env";
 import { AppError } from "../errors";
 
 export const MP_COOKIE = "eb_mp_oauth";
@@ -53,7 +53,7 @@ export async function beginConnection(db: Db, actor: Actor, organizationId: stri
   return { url: url.href, cookie: seal(JSON.stringify({ state, verifier, actorId: actor.id, organizationId, redirectUri: cfg.redirectUri, expires })) };
 }
 /** Credenciais de sandbox na conexão OAuth: só com MERCADO_PAGO_OAUTH_TEST_TOKEN e nunca em produção. */
-export const sandboxTokens = () => env().MERCADO_PAGO_OAUTH_TEST_TOKEN && env().NODE_ENV !== "production";
+export const sandboxTokens = () => env().MERCADO_PAGO_OAUTH_TEST_TOKEN && !isLiveProduction();
 async function requestTokens(fields: Record<string, string>) {
   const cfg = oauthConfig();
   let response: Response;
