@@ -45,6 +45,9 @@ const schema = z.object({
   // Cadastros por IP por hora (anti-abuso). A suíte e2e isolada cria muitas contas do
   // mesmo endereço e sobe o valor; em produção fica o padrão.
   SIGNUP_RATE_LIMIT_PER_HOUR: int(5),
+  // Proxies próprios entre a borda da hospedagem e o app (src/server/client-ip.ts).
+  // 0 na Vercel e no Cloud Run direto; 1 com Load Balancer externo do Google na frente.
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   EMAIL_VERIFICATION_EXPIRATION_MINUTES: int(30),
   PASSWORD_RESET_EXPIRATION_MINUTES: int(30),
   // Consulta de senhas vazadas (Pwned Passwords, k-anonimato). Ligada por padrão, exceto

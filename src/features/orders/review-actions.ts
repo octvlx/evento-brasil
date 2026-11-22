@@ -8,12 +8,13 @@ import { getCurrentUser, requireUser } from "@/server/auth/current";
 import { env } from "@/server/env";
 import { AppError, toActionResult } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 import { createCheckoutDraft, prepareCheckoutReview, updateCheckoutDraft, confirmCheckoutReview } from "@/server/services/checkout-review";
 import type { CreateOrderInput } from "@/features/schemas";
 import { ATTR_COOKIE, decodeAttribution } from "./attribution";
 
 const draftIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
-async function requestClient() { const h = await headers(); return { ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local", userAgent: h.get("user-agent") ?? undefined }; }
+async function requestClient() { const h = await headers(); return { ip: (await clientIp(h)) ?? "local", userAgent: h.get("user-agent") ?? undefined }; }
 async function draftToken(draftId: string) {
   if (!draftIdSchema.safeParse(draftId).success) throw new AppError("VALIDATION", "Checkout inválido.");
   return (await cookies()).get(`eb_checkout_${draftId}`)?.value;

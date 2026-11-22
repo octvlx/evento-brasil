@@ -25,7 +25,8 @@ desenvolvimento por conta própria.
   `ALTER DATABASE <banco> SET timezone TO 'UTC'`. O `npm run deploy:check` bloqueia
   se a sessão não estiver em UTC.
 - ☐ **Hospedagem Node 20.19+ com HTTPS** (Vercel, Render, Fly.io, Railway ou
-  container próprio). O proxy deve sobrescrever `x-forwarded-for`/`x-real-ip`.
+  container próprio). O app lê o IP do cliente do fim do `x-forwarded-for`; ajuste
+  `TRUSTED_PROXY_HOPS` aos proxies da hospedagem. Cloud Run: `docs/deploy-cloud-run.md`.
 - ☐ **Bucket compatível com S3** com URL pública HTTPS (CDN ou bucket público) para as
   imagens. Disco local não serve: as imagens somem a cada deploy.
 - ☐ **Resend** com o domínio do remetente verificado (SPF, DKIM e DMARC no DNS).
@@ -58,6 +59,7 @@ segredos repetidos.
 | `EMAIL_PROVIDER` / `RESEND_API_KEY` | `resend` e a chave |
 | `EMAIL_FROM` | remetente do domínio verificado, ex.: `QQPega <nao-responda@seudominio.com.br>` |
 | `STORAGE_PROVIDER` e `OBJECT_STORAGE_*` | `s3`, bucket, chaves e URL pública HTTPS |
+| `TRUSTED_PROXY_HOPS` | `0` na Vercel e no Cloud Run direto; `1` com Load Balancer do Google na frente (`docs/deploy-cloud-run.md`) |
 | `MFA_REQUIRED` | vazio ou `true` (2FA obrigatório para admins e donos de organização) |
 | `PASSWORD_BREACH_CHECK` | vazio (ligado) |
 | `ALERT_EMAILS` | e-mail(s) da equipe para alertas operacionais, separados por vírgula |

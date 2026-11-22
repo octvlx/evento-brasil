@@ -15,6 +15,7 @@ import { cancelPendingOrder } from "@/server/services/orders";
 import { confirmReturnedPayment, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { reconcileOrderPayments, type OrderPaymentCheck } from "@/server/services/reconciliation";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 import {
   adminRestoreAfterFailedRefund,
   adminRetryRefund,
@@ -29,11 +30,10 @@ import { assertCanCreateOrder, assertCanStartPayment } from "./limits";
 import { checkoutTermsGate, recordAcceptance } from "@/server/services/terms";
 import type { TermsKind } from "@/generated/prisma/client";
 
-// Mesmo critério das ações de autenticação. O primeiro x-forwarded-for só é
-// confiável atrás de um proxy que o sobrescreve; o limite por conta vale sempre.
+// Mesmo critério das ações de autenticação (src/server/client-ip.ts); o limite por
+// conta vale sempre.
 async function clientKey() {
-  const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local";
+  return (await clientIp()) ?? "local";
 }
 
 // Aceite dos termos na compra (R10): com versão vigente não aceita, as ações recusam

@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import { db } from "@/server/db";
 import { AppError, type ActionResult } from "@/server/errors";
 import {
@@ -10,14 +9,10 @@ import {
 } from "@/server/services/password-reset";
 import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp as requestIp } from "@/server/client-ip";
 
 async function clientIp() {
-  const h = await headers();
-  return (
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    h.get("x-real-ip") ||
-    "local"
-  );
+  return (await requestIp()) ?? "local";
 }
 
 export async function requestPasswordResetAction(

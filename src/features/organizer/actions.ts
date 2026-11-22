@@ -11,6 +11,7 @@ import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { ACTIVE_ORG_COOKIE, getActiveMembership, requireUser } from "@/server/auth/current";
 import { assertOrgPermission } from "@/server/auth/permissions";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 import { getPaymentAdapter } from "@/server/payments";
 import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { storeEventImage } from "@/server/storage";
@@ -59,7 +60,7 @@ async function setActiveOrg(organizationId: string) {
 /** Aceite dos termos do organizador pela organização (R10; agente paginas-publicas). */
 async function recordOrganizerTerms(userId: string, organizationId: string) {
   const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || null;
+  const ip = await clientIp(h);
   await recordAcceptance(db, userId, ["ORGANIZER"], { context: "ORGANIZER_SIGNUP", organizationId, ip, userAgent: h.get("user-agent") });
 }
 
@@ -154,7 +155,7 @@ export async function lookupVenuePostalCodeAction(postalCode: string) {
   const user = await requireUser("/organizador/eventos/novo");
   return toActionResult(async () => {
     await assertOrgPermission(db, user, await activeOrgId(user.id), "event:write");
-    const client = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    const client = (await clientIp()) ?? "local";
     await rateLimit(`organizer-cep:${user.id}:${client}`, 30, 60_000);
     return lookupPostalAddress(postalCode);
   });

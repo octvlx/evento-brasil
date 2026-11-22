@@ -1,0 +1,39 @@
+# Cloud Build: monta a imagem e publica no Artifact Registry (docs/deploy-cloud-run.md).
+#   gcloud builds submit --config cloudbuild.yaml --region southamerica-east1
+# As variáveis de produção do build ficam no Secret Manager ("ticket24-buildenv",
+# conteúdo do .env.production) e entram só como segredo do BuildKit.
+substitutions:
+  _REGION: southamerica-east1
+  _REPO: ticket24
+  _IMAGE: site
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    env:
+      - DOCKER_BUILDKIT=1
+    secretEnv: [BUILDENV]
+    args:
+      - -c
+      - |
+        umask 077
+        printf '%s' "$$BUILDENV" > /tmp/buildenv
+        docker build --secret id=buildenv,src=/tmp/buildenv \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$BUILD_ID \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:latest .
+        status=$$?
+        rm -f /tmp/buildenv
+        exit $$status
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$BUILD_ID
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:latest
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/ticket24-buildenv/versions/latest
+      env: BUILDENV
+
+options:
+  logging: CLOUD_LOGGING_ONLY

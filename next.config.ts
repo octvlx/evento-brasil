@@ -37,6 +37,10 @@ export const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Pasta .next/standalone para a imagem Docker (Dockerfile, docs/deploy-cloud-run.md).
+  // Só no build do container: no Windows o standalone pode exigir symlinks, e a
+  // Vercel não precisa dele.
+  ...(process.env.NEXT_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   // Túneis de desenvolvimento: os rápidos da Cloudflare mudam de nome a cada execução e o
   // domínio fixo gratuito do ngrok fica em *.ngrok-free.dev; o coringa cobre todos.
   // Só o hostname é comparado (sem esquema nem porta); localhost já é permitido por padrão.

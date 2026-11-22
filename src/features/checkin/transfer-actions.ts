@@ -6,6 +6,7 @@ import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
 import { toActionResult, type ActionResult } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 import {
   acceptTransfer,
   cancelTransfer,
@@ -21,7 +22,7 @@ import {
 // Mesmo critério de IP das ações de autenticação e pedidos; guardado no histórico.
 async function requestMeta(): Promise<RequestMeta> {
   const h = await headers();
-  return { ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || null, userAgent: h.get("user-agent") };
+  return { ip: await clientIp(h), userAgent: h.get("user-agent") };
 }
 
 const UNAUTHENTICATED = { ok: false as const, error: "Entre na sua conta para continuar.", code: "UNAUTHENTICATED" as const };

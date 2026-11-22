@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
 import { AppError } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 import { exportUserDataAudited } from "@/server/services/data-export";
 
 // "Baixar meus dados" (LGPD, R9): JSON só com os dados da conta da sessão.
@@ -10,7 +11,7 @@ export async function GET() {
   const user = await getCurrentUser();
   if (!user) return new Response("Não autenticado", { status: 401 });
   const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || null;
+  const ip = await clientIp(h);
   try {
     await rateLimit(`data-export:${user.id}`, 5, 60 * 60_000);
     const data = await exportUserDataAudited(db, user, { ip });

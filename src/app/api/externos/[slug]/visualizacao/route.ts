@@ -1,12 +1,13 @@
 import { db } from "@/server/db";
 import { recordExternalView } from "@/server/services/external-events";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 
 // Visualização da página de um evento externo (contador agregado, sem cookie nem dado
 // pessoal). Enviada pelo navegador uma vez por abertura; robôs sem JavaScript não contam.
 export async function POST(req: Request, ctx: RouteContext<"/api/externos/[slug]/visualizacao">) {
   const { slug } = await ctx.params;
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = (await clientIp(req.headers)) ?? "local";
   try {
     await rateLimit(`external-view:${ip}:${slug.slice(0, 80)}`, 5, 10 * 60_000);
   } catch {

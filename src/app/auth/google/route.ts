@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { beginGoogleLogin, GOOGLE_FLOW_COOKIE } from "@/server/auth/google";
 import { authAppUrl } from "@/server/services/email-verification";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 /**
  * Endereço que o navegador usou. Atrás de um túnel (ngrok, Cloudflare) o Next normaliza
  * `nextUrl` para localhost; o host real vem em X-Forwarded-Host / Host.
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest) {
     return response;
   }
   try {
-    await rateLimit(`google-start:${req.headers.get("x-forwarded-for")?.split(",")[0] ?? "local"}`, 20, 60_000);
+    await rateLimit(`google-start:${(await clientIp(req.headers)) ?? "local"}`, 20, 60_000);
     const start = beginGoogleLogin(req.nextUrl.searchParams.get("next"));
     response = NextResponse.redirect(start.url);
     response.cookies.set(GOOGLE_FLOW_COOKIE, start.cookie, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/auth/google", maxAge: 600 });
