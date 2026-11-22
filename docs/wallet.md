@@ -167,3 +167,19 @@ para `oauth2.googleapis.com` e `walletobjects.googleapis.com`.
   receber atualização (continuam com o QR, que a portaria valida online).
 - Saída de rede necessária: `api.push.apple.com:443` (HTTP/2, certificado do Pass
   Type ID) para os avisos da Apple, além das do Google acima.
+
+## QR rotativo no Google Wallet (opcional)
+
+Com o QR dinâmico, os passes são só comprovante. O Google Wallet aceita um **código rotativo** dentro do passe. Com `GOOGLE_WALLET_ROTATING_QR=true`:
+- **No passe:** o objeto ganha `rotatingBarcode` (`walletRotatingBarcode` em `wallet/google.ts`).
+  - O Google gera `EB3:<código>:<segundos>:<TOTP>` a cada 30 s (TOTP do RFC 6238, SHA-1, 8 dígitos).
+  - O segredo é por ingresso e versão (`deriveWalletTotpKey`) e só o servidor e o Google o têm.
+- **Na portaria:** `checkInTicket` confere o TOTP. As regras são as mesmas do QR do celular: passo dentro da tolerância, "QR EXPIRADO" para print antigo e "QR SUBSTITUÍDO" depois de uma transferência.
+- **Só online:** o segredo não vai para a lista offline, para que um aparelho perdido não gere códigos. Sem internet, o leitor mostra "QR da carteira do Google precisa de internet".
+- **Apple Wallet:** não tem código rotativo, então continua comprovante.
+
+**Para ligar:**
+1. **Pedir a aprovação:** os códigos rotativos são um recurso que o Google libera por emissor. Peça a habilitação de *rotating barcodes* para o Issuer ID no Google Pay & Wallet Console / suporte do Google Wallet, conforme a documentação atual do Google. Sem a aprovação, a API pode recusar ou ignorar o campo.
+2. **Configurar:** depois da aprovação, defina `GOOGLE_WALLET_ROTATING_QR=true` e reinicie.
+3. **Passes antigos:** o cron de passes só muda a situação (ativo/inativo). Para o QR aparecer num passe já salvo, o titular toca de novo em "Salvar no Google Wallet": o objeto é regravado com os dados atuais.
+4. **Testar:** salve um passe num Android, confira que o QR muda e leia na portaria com internet.

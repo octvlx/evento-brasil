@@ -75,6 +75,9 @@ const schema = z.object({
   GOOGLE_WALLET_ISSUER_ID: z.string().optional(),
   GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL: z.string().optional(),
   GOOGLE_WALLET_PRIVATE_KEY: z.string().optional(),
+  // QR rotativo (TOTP) no passe do Google Wallet: só depois que o Google aprovar o recurso
+  // para o emissor (docs/wallet.md). Desligado: o passe é comprovante, sem QR.
+  GOOGLE_WALLET_ROTATING_QR: bool,
 });
 
 export type Env = z.infer<typeof schema>;

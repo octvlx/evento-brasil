@@ -6,9 +6,9 @@ import { audit } from "../audit";
 import { assertEventPermission, roleHas } from "../auth/permissions";
 import { TX_OPTIONS, type Db, type Tx } from "../db";
 import { resolveCheckinAccess, type Actor } from "../auth/permissions";
-import { hashToken, qrTokenHash } from "../crypto";
+import { deriveWalletTotpKey, hashToken, qrTokenHash, safeEqual, totpCode } from "../crypto";
 import { AppError, forbidden, notFound } from "../errors";
-import { parseDynamicQrPayload, parseQrPayload, qrStepFresh, verifyDynamicQrSignature } from "@/lib/qr-payload";
+import { parseDynamicQrPayload, parseQrPayload, parseWalletQrPayload, qrStepFresh, verifyDynamicQrSignature, WALLET_TOTP_DIGITS } from "@/lib/qr-payload";
 import { env } from "../env";
 import { ticketPublicKey } from "./tickets";
 
@@ -110,10 +110,22 @@ async function replacedByTransfer(tx: Tx, eventId: string, organizationId: strin
  * Versão da chave que assinou o QR dinâmico: a atual ou uma anterior (QR de antes de uma
  * transferência). null = assinatura que nenhuma versão do ingresso produziu.
  */
-async function signingVersion(ticket: { code: string; tokenVersion: number }, qr: { code: string; step: number; signature: string }): Promise<number | null> {
+async function signingVersion(ticket: { code: string; tokenVersion: number }, verify: (version: number) => Promise<boolean> | boolean): Promise<number | null> {
   for (let v = ticket.tokenVersion; v >= 0; v--) {
-    if (await verifyDynamicQrSignature(ticketPublicKey({ code: ticket.code, tokenVersion: v }), qr.code, qr.step, qr.signature)) return v;
+    if (await verify(v)) return v;
   }
+  return null;
+}
+
+/**
+ * QR rotativo lido na portaria: do celular (EB2, assinatura ECDSA) ou do Google Wallet (EB3,
+ * TOTP). Os dois viram { código, passo, verificação por versão da chave }.
+ */
+function parseRotatingQr(raw: string): { code: string; step: number; verify: (version: number) => Promise<boolean> | boolean } | null {
+  const phone = parseDynamicQrPayload(raw);
+  if (phone) return { code: phone.code, step: phone.step, verify: (v) => verifyDynamicQrSignature(ticketPublicKey({ code: phone.code, tokenVersion: v }), phone.code, phone.step, phone.signature) };
+  const wallet = parseWalletQrPayload(raw);
+  if (wallet) return { code: wallet.code, step: wallet.step, verify: (v) => safeEqual(totpCode(deriveWalletTotpKey(wallet.code, v), wallet.step, WALLET_TOTP_DIGITS), wallet.totp) };
   return null;
 }
 
@@ -159,10 +171,10 @@ export async function checkInTicket(
 
       // 2. QR → ingresso. Dinâmico (EB2): pelo código, com a assinatura conferida pela chave
       // pública da versão atual e o passo dentro da tolerância. Fixo (EB1): só na transição.
-      const dynamic = parseDynamicQrPayload(rawPayload);
+      const dynamic = parseRotatingQr(rawPayload);
       if (dynamic) {
         const found = await tx.issuedTicket.findUnique({ where: { code: dynamic.code }, include: ticketForView });
-        const signedBy = found ? await signingVersion(found, dynamic) : null;
+        const signedBy = found ? await signingVersion(found, dynamic.verify) : null;
         if (!found || signedBy === null) {
           await record("INVALID", null);
           return { result: "INVALID" };

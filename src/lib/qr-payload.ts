@@ -74,3 +74,14 @@ export async function verifyDynamicQrSignature(key: TicketPublicKey, code: strin
     return false;
   }
 }
+
+// EB3 (Google Wallet, QR rotativo): `EB3:<código>:<segundos>:<TOTP>`. O Google gera o código
+// dentro do passe (TOTP RFC 6238, SHA-1, 8 dígitos, período QR_STEP_MS) a partir de um segredo
+// por ingresso que só o servidor e o Google conhecem. Por isso a portaria valida EB3 só online.
+export const WALLET_QR_PREFIX = "EB3";
+export const WALLET_TOTP_DIGITS = 8;
+
+export function parseWalletQrPayload(raw: string): { code: string; step: number; totp: string } | null {
+  const m = new RegExp(`^EB3:(${CODE}):(\\d{9,11}):(\\d{${WALLET_TOTP_DIGITS}})$`).exec(raw.trim());
+  return m ? { code: m[1], step: qrStep(Number(m[2]) * 1000), totp: m[3] } : null;
+}
