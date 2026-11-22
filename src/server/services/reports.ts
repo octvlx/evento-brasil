@@ -197,6 +197,90 @@ async function ledgerBalances(db: Db, where: { organizationId?: string; order?: 
   };
 }
 
+export const PAYOUTS_PAGE_SIZE = 20;
+
+export type PayoutState = "RELEASED" | "PENDING" | "REFUNDED" | "UNKNOWN";
+
+/**
+ * Repasses do provedor ao organizador (split): por pagamento, quando o dinheiro fica
+ * disponível na conta dele e o líquido recebido, como o provedor informa (gravado na
+ * sincronização do pagamento). A plataforma não guarda nem transfere valores: isto é só
+ * acompanhamento. Sem dado do provedor (ex.: pagamento simulado), o líquido é estimado
+ * pelo pedido (total − comissão − custo de processamento) e a situação fica "UNKNOWN".
+ */
+export async function organizerPayouts(db: Db, actor: Actor, organizationId: string, page = 1, now = new Date()) {
+  await assertOrgPermission(db, actor, organizationId, "finance:read");
+  const where: Prisma.PaymentWhereInput = { order: { organizationId }, status: { in: ["PAID", "DISPUTED", "REFUNDED", "CHARGED_BACK"] }, amountCents: { gt: 0 } };
+  const [total, rows, all] = await Promise.all([
+    db.payment.count({ where }),
+    db.payment.findMany({
+      where,
+      select: {
+        id: true,
+        status: true,
+        method: true,
+        isSimulated: true,
+        amountCents: true,
+        processingFeeCents: true,
+        paidAt: true,
+        createdAt: true,
+        providerReleaseAt: true,
+        providerReleaseStatus: true,
+        providerNetCents: true,
+        order: { select: { id: true, publicCode: true, totalCents: true, commissionCents: true, event: { select: { title: true } } } },
+      },
+      orderBy: [{ paidAt: "desc" }, { createdAt: "desc" }],
+      skip: (Math.max(1, Math.trunc(page) || 1) - 1) * PAYOUTS_PAGE_SIZE,
+      take: PAYOUTS_PAGE_SIZE,
+    }),
+    db.payment.findMany({
+      where,
+      select: { status: true, providerReleaseAt: true, providerReleaseStatus: true, providerNetCents: true, amountCents: true, processingFeeCents: true, order: { select: { totalCents: true, commissionCents: true } } },
+    }),
+  ]);
+  const estimate = (p: { providerNetCents: number | null; processingFeeCents: number | null; order: { totalCents: number; commissionCents: number } }) =>
+    p.providerNetCents ?? p.order.totalCents - p.order.commissionCents - (p.processingFeeCents ?? 0);
+  const stateOf = (p: { status: string; providerReleaseAt: Date | null; providerReleaseStatus: string | null }): PayoutState => {
+    if (p.status === "REFUNDED" || p.status === "CHARGED_BACK") return "REFUNDED";
+    if (p.providerReleaseStatus === "released" || (p.providerReleaseAt && p.providerReleaseAt <= now && p.providerReleaseStatus !== "pending")) return "RELEASED";
+    if (p.providerReleaseAt || p.providerReleaseStatus === "pending") return "PENDING";
+    return "UNKNOWN";
+  };
+  let releasedCents = 0;
+  let pendingCents = 0;
+  let nextReleaseAt: Date | null = null;
+  for (const p of all) {
+    const st = stateOf(p);
+    if (st === "RELEASED") releasedCents += estimate(p);
+    if (st === "PENDING") {
+      pendingCents += estimate(p);
+      if (p.providerReleaseAt && (!nextReleaseAt || p.providerReleaseAt < nextReleaseAt)) nextReleaseAt = p.providerReleaseAt;
+    }
+  }
+  return {
+    total,
+    page: Math.min(Math.max(1, Math.trunc(page) || 1), Math.max(1, Math.ceil(total / PAYOUTS_PAGE_SIZE))),
+    pageCount: Math.max(1, Math.ceil(total / PAYOUTS_PAGE_SIZE)),
+    releasedCents,
+    pendingCents,
+    nextReleaseAt,
+    items: rows.map((p) => ({
+      id: p.id,
+      orderId: p.order.id,
+      orderCode: p.order.publicCode,
+      eventTitle: p.order.event.title,
+      method: p.method,
+      paidAt: p.paidAt ?? p.createdAt,
+      amountCents: p.amountCents,
+      netCents: stateOf(p) === "REFUNDED" ? 0 : estimate(p),
+      netFromProvider: p.providerNetCents !== null,
+      releaseAt: p.providerReleaseAt,
+      state: stateOf(p),
+      isSimulated: p.isSimulated,
+    })),
+  };
+}
+
 export async function organizerFinancials(db: Db, actor: Actor, organizationId: string) {
   await assertOrgPermission(db, actor, organizationId, "finance:read");
   const [balances, settlements, org] = await Promise.all([

@@ -119,6 +119,10 @@ const paymentSchema = z.object({
   transaction_amount: z.number().nonnegative(),
   transaction_amount_refunded: z.number().nonnegative().nullish(),
   date_of_expiration: z.string().nullish(),
+  // Repasse ao vendedor (split): quando o dinheiro é liberado na conta dele e quanto chegou.
+  money_release_date: z.string().nullish(),
+  money_release_status: z.string().nullish(),
+  transaction_details: z.object({ net_received_amount: z.number().nullish() }).nullish(),
   fee_details: z.array(z.object({ amount: z.number().nonnegative(), type: z.string().nullish() })).nullish(),
   // Movimentações de taxa; `amounts.refunded` mostra quanto o provedor devolveu num estorno.
   charges_details: z.array(z.object({
@@ -263,6 +267,11 @@ function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
     amountCents: cents(payment.transaction_amount),
     processingFeeCents: netProcessingFeeCents(payment),
     refundedCents: payment.transaction_amount_refunded == null ? null : cents(payment.transaction_amount_refunded),
+    release: {
+      at: providerDate(payment.money_release_date) ?? null,
+      status: payment.money_release_status?.slice(0, 32) ?? null,
+      netCents: payment.transaction_details?.net_received_amount == null ? null : cents(payment.transaction_details.net_received_amount),
+    },
     pixCopyPaste: payment.point_of_interaction?.transaction_data?.qr_code ?? undefined,
     pixQrCodeBase64: payment.point_of_interaction?.transaction_data?.qr_code_base64 ?? undefined,
     expiresAt: providerDate(expiration),

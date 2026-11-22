@@ -315,6 +315,21 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(await adapter().getPayment("987", { organizationId: "org-1" })).toMatchObject({ processingFeeCents: 3 });
   });
 
+  it("reads the seller payout (release date, status and net received) from the payment", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
+      money_release_date: "2026-12-10T12:00:00.000-03:00",
+      money_release_status: "pending",
+      transaction_details: { net_received_amount: 0.89 },
+    })));
+    expect((await adapter().getPayment("987", { organizationId: "org-1" })).release).toEqual({
+      at: new Date("2026-12-10T15:00:00.000Z"),
+      status: "pending",
+      netCents: 89,
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse()));
+    expect((await adapter().getPayment("987", { organizationId: "org-1" })).release).toEqual({ at: null, status: null, netCents: null });
+  });
+
   it("maps an authoritative payment response and uses the seller account from a verified webhook", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
       point_of_interaction: {

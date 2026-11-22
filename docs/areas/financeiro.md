@@ -169,6 +169,14 @@ transição condicional), migração `20261120180000_refund_approval`, testes em
 - Excluir a vigente reativa a anterior do mesmo alvo (a que ela encerrou). A plataforma nunca fica sem regra vigente.
 - O número da próxima versão é o maior já usado + 1, sem repetir número de versão excluída.
 
+## Repasses do provedor (acompanhamento)
+
+Com o split do Mercado Pago, o dinheiro de cada venda cai direto na conta do organizador: a plataforma não guarda nem transfere valores.
+- **O que é gravado:** a cada sincronização do pagamento (webhook, retorno do checkout e a reconciliação periódica dos pagos), `recordProviderRelease` guarda o que o provedor informa em `Payment.providerReleaseAt`, `providerReleaseStatus` e `providerNetCents` (`money_release_date`, `money_release_status`, `transaction_details.net_received_amount`). Só grava quando muda, e não mexe em pedido, ingressos nem razão.
+- **O relatório:** `organizerPayouts` (permissão `finance:read`) resume liberado, a liberar (com a próxima data) e estornado. Sem dado do provedor (ex.: simulado), estima o líquido pelo pedido e mostra "Sem informação".
+- **Onde aparece:** "Repasses do Mercado Pago" em `/organizador/vendas`, no lugar do aviso de liquidação desligada.
+- **`OrganizerSettlement` / `SETTLEMENT_ENABLED`:** continuam reservados para um provedor sem split.
+
 ## Cupons e atribuição (ADR 0002, passo 2)
 
 Preço:
