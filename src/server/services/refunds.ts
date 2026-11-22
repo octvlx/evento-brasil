@@ -178,20 +178,20 @@ export const ARREPENDIMENTO_DAYS = 7;
 
 /**
  * Valor fixo retido num reembolso: só quando o comprador pede (CUSTOMER_REQUEST), a regra
- * da compra diz que o fixo não é reembolsável, o pagamento tem mais de ARREPENDIMENTO_DAYS
- * dias e o provedor permite reter (hoje só o simulado: o estorno parcial com split do
- * Mercado Pago ainda não foi validado; ver commissionReturnedOnRefund). Alteração ou
- * cancelamento do evento, admin e chargeback devolvem tudo. Nunca zera o reembolso.
+ * da compra diz que o fixo não é reembolsável e o pagamento tem mais de ARREPENDIMENTO_DAYS
+ * dias. Alteração ou cancelamento do evento, admin e chargeback devolvem tudo. Nunca zera
+ * o reembolso. Com o split do Mercado Pago, a parte do fixo que o estorno tira da conta da
+ * plataforma vira saldo devedor do organizador (ledger.postSplitTrueUp).
  */
 export function retainedFixedFeeCents(input: {
   reason: RefundReason;
-  order: { fixedFeeRefundable: boolean; isSimulated: boolean; paidAt: Date | null };
+  order: { fixedFeeRefundable: boolean; paidAt: Date | null };
   fixedFeeCents: number;
   coveredCents: number;
   now: Date;
 }) {
   const { reason, order, fixedFeeCents, coveredCents, now } = input;
-  if (reason !== "CUSTOMER_REQUEST" || order.fixedFeeRefundable || !order.isSimulated || !order.paidAt) return 0;
+  if (reason !== "CUSTOMER_REQUEST" || order.fixedFeeRefundable || !order.paidAt) return 0;
   if (now.getTime() - order.paidAt.getTime() <= ARREPENDIMENTO_DAYS * 86_400_000) return 0;
   if (fixedFeeCents <= 0 || fixedFeeCents >= coveredCents) return 0;
   return fixedFeeCents;
@@ -1065,11 +1065,16 @@ export async function confirmRefundTx(tx: Tx, refundId: string, now = new Date()
     if (refund.paymentId) await tx.payment.update({ where: { id: refund.paymentId }, data: { status: "REFUNDED" } });
     await tx.order.update({ where: { id: order.id }, data: { status: "REFUNDED" } });
   }
+  // Pagamento real: o estorno passa pelo split do provedor (comissão devolvida proporcionalmente).
+  const splitPayment = !order.isSimulated && refund.paymentId
+    ? await tx.payment.findUnique({ where: { id: refund.paymentId }, select: { amountCents: true, feeRecoveryCents: true } })
+    : null;
   await postReversal(tx, "REFUND", { ...order, ...amounts }, {
     refundId,
     paymentId: refund.paymentId ?? undefined,
     returnCommission: commissionReturnedOnRefund(order.commissionRule, order.isSimulated),
     retainedCents: refund.retainedFeeCents,
+    split: splitPayment ? { amountCents: splitPayment.amountCents, feeCents: order.commissionCents + splitPayment.feeRecoveryCents } : undefined,
   });
   await audit(tx, {
     organizationId: order.organizationId,

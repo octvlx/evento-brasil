@@ -93,8 +93,9 @@ export async function saveCommissionRuleAction(_prev: ActionResult | undefined, 
     processingFeeBearer: formData.get("processingFeeBearer"),
     // Só o provedor simulado retém a comissão; com o Mercado Pago o estorno sempre a devolve.
     refundCommissionOnRefund: !getPaymentAdapter().isSimulated || formData.get("refundCommissionOnRefund") === "on",
-    // Reter o valor fixo também só no simulado (estorno parcial com split ainda não validado no Mercado Pago).
-    fixedFeeRefundable: !getPaymentAdapter().isSimulated || formData.get("fixedFeeNonRefundable") !== "on",
+    // Valor fixo retido: com o split do Mercado Pago, a parte que fica com o organizador
+    // vira saldo devedor dele, compensado nas próximas vendas (ledger.postSplitTrueUp).
+    fixedFeeRefundable: formData.get("fixedFeeNonRefundable") !== "on",
   });
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   const v = parsed.data;
@@ -121,7 +122,7 @@ function ruleValuesFrom(formData: FormData) {
     bearer: formData.get("bearer"),
     processingFeeBearer: formData.get("processingFeeBearer"),
     refundCommissionOnRefund: !simulated || formData.get("refundCommissionOnRefund") === "on",
-    fixedFeeRefundable: !simulated || formData.get("fixedFeeNonRefundable") !== "on",
+    fixedFeeRefundable: formData.get("fixedFeeNonRefundable") !== "on",
   });
 }
 

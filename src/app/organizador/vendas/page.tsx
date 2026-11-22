@@ -74,6 +74,13 @@ async function Content({ searchParams }: { searchParams: Promise<Params> }) {
         <StatCard label="Custos de processamento" value={formatBRL(fin.processingFeeCents)} />
         <StatCard label="A receber (estimado)" value={formatBRL(fin.organizerNetCents)} />
         <StatCard label="Conta de recebimento" value={PAYMENT_ACCOUNT_STATUS[fin.paymentAccountStatus]} />
+        {fin.organizerDebtCents > 0 && (
+          <StatCard
+            label="Saldo a compensar"
+            value={formatBRL(fin.organizerDebtCents)}
+            hint="Valor fixo não reembolsável que o estorno do Mercado Pago deixou na sua conta. É descontado das próximas vendas, até metade do seu valor em cada uma."
+          />
+        )}
       </div>
 
       <section className="mt-8" aria-labelledby="relatorio-periodo">

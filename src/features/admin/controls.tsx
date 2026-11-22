@@ -374,12 +374,12 @@ export function CommissionRuleForm({
       </div>
       <div className="text-sm sm:col-span-3">
         <label className="flex items-center gap-2">
-          <input type="checkbox" name="fixedFeeNonRefundable" disabled={!commissionRetentionAvailable} aria-describedby="fixed-fee-note" /> Valor fixo por ingresso não reembolsável
+          <input type="checkbox" name="fixedFeeNonRefundable" aria-describedby="fixed-fee-note" /> Valor fixo por ingresso não reembolsável
         </label>
         <p id="fixed-fee-note" className="mt-1 text-xs text-muted-foreground">
-          {commissionRetentionAvailable
-            ? `Em reembolso pedido pelo comprador depois de ${ARREPENDIMENTO_DAYS_LABEL} da compra, o valor fixo não é devolvido. Arrependimento (até ${ARREPENDIMENTO_DAYS_LABEL}), alteração ou cancelamento do evento devolvem tudo.`
-            : "Com o Mercado Pago, o estorno parcial com split ainda não foi validado (a parte da plataforma pode voltar proporcionalmente). Por isso o valor fixo continua reembolsável."}
+          {`Em reembolso pedido pelo comprador depois de ${ARREPENDIMENTO_DAYS_LABEL} da compra, o valor fixo não é devolvido. Arrependimento (até ${ARREPENDIMENTO_DAYS_LABEL}), alteração ou cancelamento do evento devolvem tudo.`}
+          {!commissionRetentionAvailable &&
+            " Com o Mercado Pago, o estorno devolve a comissão proporcionalmente; a parte do valor fixo que fica com o organizador vira saldo devedor dele e é descontada das próximas vendas."}
         </p>
       </div>
       <section aria-labelledby="commission-preview-title" className="rounded-2xl border border-border bg-muted/40 p-4 sm:col-span-3">
@@ -603,7 +603,6 @@ function EditCommissionRuleForm({
           type="checkbox"
           name="fixedFeeNonRefundable"
           defaultChecked={!rule.fixedFeeRefundable}
-          disabled={!commissionRetentionAvailable}
         />{" "}
         Valor fixo por ingresso não reembolsável
       </label>

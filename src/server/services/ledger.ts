@@ -5,6 +5,10 @@
 //   PLATFORM_COMMISSION   crédito = receita de comissão
 //   PLATFORM_SERVICE_FEE  crédito = taxa de serviço cobrada do comprador
 //   PROCESSING_FEES       crédito = custo devido ao processador
+//   ORGANIZER_RECEIVABLE  débito = o organizador deve à plataforma (split; ver postSplitTrueUp)
+//
+// Com o split do Mercado Pago, ORGANIZER_PAYABLE segue o que ficou de fato na conta do
+// organizador; o líquido dele é ORGANIZER_PAYABLE − ORGANIZER_RECEIVABLE.
 import "server-only";
 import type { CommissionRule, LedgerAccount, LedgerDirection, LedgerEntryType, Order } from "@/generated/prisma/client";
 import type { Tx } from "../db";
@@ -67,6 +71,11 @@ export async function postLedgerTransaction(tx: Tx, input: PostInput): Promise<v
 type OrderAmounts = Pick<Order, "id" | "organizationId" | "totalCents" | "commissionCents" | "serviceFeeCents" | "feePolicyVersion" | "isSimulated">;
 
 export async function postSale(tx: Tx, order: OrderAmounts, paymentId: string | undefined) {
+  await postSaleEntries(tx, order, paymentId);
+  if (paymentId) await postFeeRecovery(tx, order, paymentId);
+}
+
+async function postSaleEntries(tx: Tx, order: OrderAmounts, paymentId: string | undefined) {
   const commissionOnly = order.commissionCents - order.serviceFeeCents;
   await postLedgerTransaction(tx, {
     idempotencyKey: `sale:${order.id}`,
@@ -122,12 +131,75 @@ export async function postProcessingFee(
   });
 }
 
+/**
+ * Compensação cobrada junto com esta venda (somada ao marketplace_fee): o organizador
+ * recebeu `feeRecoveryCents` a menos, que abatem o saldo devedor dele.
+ */
+async function postFeeRecovery(tx: Tx, order: OrderAmounts, paymentId: string) {
+  const payment = await tx.payment.findUnique({ where: { id: paymentId }, select: { feeRecoveryCents: true } });
+  const recovered = payment?.feeRecoveryCents ?? 0;
+  if (recovered <= 0) return;
+  await postLedgerTransaction(tx, {
+    idempotencyKey: `fee-recovery:${paymentId}`,
+    type: "ADJUSTMENT",
+    organizationId: order.organizationId,
+    orderId: order.id,
+    paymentId,
+    feePolicyVersion: order.feePolicyVersion,
+    isSimulated: order.isSimulated,
+    entries: [
+      { account: "ORGANIZER_PAYABLE", direction: "DEBIT", amountCents: recovered, description: "Compensação de saldo devedor nesta venda" },
+      { account: "ORGANIZER_RECEIVABLE", direction: "CREDIT", amountCents: recovered, description: "Saldo devedor compensado" },
+    ],
+  });
+}
+
+/** Saldo devedor do organizador no razão (positivo = deve à plataforma). */
+export async function organizerReceivableCents(tx: Tx, organizationId: string) {
+  const rows = await tx.financialLedgerEntry.groupBy({ by: ["direction"], where: { organizationId, account: "ORGANIZER_RECEIVABLE" }, _sum: { amountCents: true } });
+  const sum = (d: LedgerDirection) => rows.find((r) => r.direction === d)?._sum.amountCents ?? 0;
+  return sum("DEBIT") - sum("CREDIT");
+}
+
+/**
+ * Compensação a somar ao marketplace_fee de uma nova cobrança do organizador: o saldo
+ * devedor menos o já reservado em cobranças pendentes, até metade da parte dele nesta
+ * venda. A trava por organização impede que duas cobranças simultâneas reservem a mesma
+ * dívida. Cobrança que expira ou falha libera a reserva (deixa de ser PENDING).
+ */
+export async function reserveFeeRecoveryCents(tx: Tx, organizationId: string, order: { totalCents: number; commissionCents: number }) {
+  const cap = Math.floor((order.totalCents - order.commissionCents) / 2);
+  if (cap <= 0) return 0;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fee-recovery:${organizationId}`}))`;
+  const owed = await organizerReceivableCents(tx, organizationId);
+  if (owed <= 0) return 0;
+  const reserved = await tx.payment.aggregate({ where: { status: "PENDING", order: { organizationId } }, _sum: { feeRecoveryCents: true } });
+  return Math.max(0, Math.min(owed - (reserved._sum.feeRecoveryCents ?? 0), cap));
+}
+
+/**
+ * Quanto da comissão o split do Mercado Pago tira da conta da plataforma num estorno:
+ * proporcional ao valor estornado sobre o total da cobrança ("dividido e subtraído da
+ * conta do vendedor e da conta do Marketplace, sendo proporcional para as partes").
+ */
+export function splitPlatformDebitCents(refundCents: number, payment: { amountCents: number; feeCents: number }) {
+  if (payment.amountCents <= 0) return 0;
+  return Math.round((refundCents * payment.feeCents) / payment.amountCents);
+}
+
 /** Estorno integral. Se a comissão não é devolvida, o organizador arca com ela. */
 export async function postReversal(
   tx: Tx,
   kind: "REFUND" | "CHARGEBACK",
   order: OrderAmounts,
-  opts: { refundId?: string; paymentId?: string; returnCommission: boolean; retainedCents?: number },
+  opts: {
+    refundId?: string;
+    paymentId?: string;
+    returnCommission: boolean;
+    retainedCents?: number;
+    /** Cobrança com split (pagamento real): total e marketplace_fee efetivamente enviados. */
+    split?: { amountCents: number; feeCents: number };
+  },
 ) {
   const commissionOnly = order.commissionCents - order.serviceFeeCents;
   // Valor fixo retido (não devolvido ao comprador): fica com a plataforma. Sai primeiro da
@@ -160,5 +232,36 @@ export async function postReversal(
     feePolicyVersion: order.feePolicyVersion,
     isSimulated: order.isSimulated,
     entries,
+  });
+  if (opts.split && opts.refundId) {
+    const platformDue = opts.returnCommission ? commissionOnly - retainedFromCommission + order.serviceFeeCents - retainedFromFee : 0;
+    await postSplitTrueUp(tx, order, opts.refundId, opts.paymentId, splitPlatformDebitCents(refunded, opts.split) - platformDue);
+  }
+}
+
+/**
+ * Acerto do split no estorno: o provedor tirou `deltaCents` a mais (positivo) da conta da
+ * plataforma do que o razão atribui a ela, e a menos da conta do organizador. Ele fica com
+ * esse valor em caixa e passa a devê-lo (ORGANIZER_RECEIVABLE), compensado nas próximas
+ * cobranças (Payment.feeRecoveryCents). Negativo: a plataforma ficou com mais do que devia,
+ * e o saldo devedor diminui.
+ */
+async function postSplitTrueUp(tx: Tx, order: OrderAmounts, refundId: string, paymentId: string | undefined, deltaCents: number) {
+  if (!deltaCents) return;
+  const owes = deltaCents > 0;
+  const amountCents = Math.abs(deltaCents);
+  await postLedgerTransaction(tx, {
+    idempotencyKey: `split-true-up:${refundId}`,
+    type: "ADJUSTMENT",
+    organizationId: order.organizationId,
+    orderId: order.id,
+    paymentId,
+    refundId,
+    feePolicyVersion: order.feePolicyVersion,
+    isSimulated: order.isSimulated,
+    entries: [
+      { account: "ORGANIZER_RECEIVABLE", direction: owes ? "DEBIT" : "CREDIT", amountCents, description: owes ? "Saldo devedor: comissão que o split devolveu da conta da plataforma" : "Saldo devedor reduzido pelo split" },
+      { account: "ORGANIZER_PAYABLE", direction: owes ? "CREDIT" : "DEBIT", amountCents, description: owes ? "Estorno debitado a menos do organizador (split)" : "Estorno debitado a mais do organizador (split)" },
+    ],
   });
 }
