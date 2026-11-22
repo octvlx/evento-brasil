@@ -405,3 +405,17 @@ Os testes `tests/integration/zb-event-transfer-policy-schema.test.ts` verificam
 padrões em eventos novos e na atualização de uma relação antiga isolada,
 faixas e nulabilidade por SQL direto, e preservação do histórico aceito após
 reduzir o limite. Executá-los usa o PostgreSQL descartável da suíte.
+
+## Neon (Lakebase Postgres)
+
+**Projeto:** `wispy-wildflower-44404676` (org `org-odd-cake-49424078`), configurado por `neon.ts`. O `.neon` local diz qual branch está em uso e é ignorado pelo git.
+- **Branches:**
+  - `production`: o banco de produção. Fica **vazia** até o deploy real; migrações nela só no deploy.
+  - `dev`: criada com `neon checkout dev --create` a partir da production e **expira em 7 dias** (política de `neon.ts`). Tem migrações e seed de demonstração para o desenvolvimento.
+- **Variáveis:** `neon checkout <branch>` / `neon env pull` escrevem no `.env`:
+  - `DATABASE_URL` é a conexão **pooled** (`-pooler`, PgBouncer), usada pelo app (`src/server/db.ts`, Prisma + `pg`);
+  - `DATABASE_URL_UNPOOLED` é a **direta**, usada por `prisma.config.ts` nas migrações. O pooler quebra o Prisma Migrate.
+  - Sem Neon, só existe `DATABASE_URL`, e ela vale para os dois.
+- **Driver:** continua `pg` (node-postgres) via `@prisma/adapter-pg`. O app roda como servidor Node de longa duração (Cloud Run), então o driver serverless do Neon não é necessário.
+- **Fuso:** o `options=-c TimeZone=UTC` de `withUtcSession` funciona nas duas conexões (testado: `TimeZone` = UTC).
+- **Voltar para o PostgreSQL local:** restaure o `.env` (a cópia de antes do Neon é `.env.antes-do-neon`, também ignorada pelo git).
