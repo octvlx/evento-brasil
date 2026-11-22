@@ -7,9 +7,8 @@ import { Alert, Badge, Input, Label, Select, Skeleton } from "@/components/ui/pr
 import { buttonVariants } from "@/components/ui/button";
 import { PageTitle, StatCard } from "@/components/site/panel-shell";
 import { db } from "@/server/db";
-import { env } from "@/server/env";
 import { requireOrganizer } from "@/server/auth/organizer-context";
-import { couponUsage, organizerFinancials, organizerHalfPriceSummary, salesBySource, salesReport } from "@/server/services/reports";
+import { couponUsage, organizerFinancials, organizerHalfPriceSummary, organizerPayouts, salesBySource, salesReport, type PayoutState } from "@/server/services/reports";
 import { parseSalesPeriod, periodPresets } from "@/features/reports/period";
 import { SalesReportView } from "@/features/reports/sales-report-view";
 import { formatDateShort, formatDateTimeShort } from "@/lib/datetime";
@@ -26,7 +25,14 @@ export default function SalesPage({ searchParams }: PageProps<"/organizador/vend
   );
 }
 
-type Params = { de?: string; ate?: string; evento?: string };
+type Params = { de?: string; ate?: string; evento?: string; repasses?: string };
+
+const PAYOUT_STATE: Record<PayoutState, { label: string; tone: "success" | "warning" | "danger" | "default" }> = {
+  RELEASED: { label: "Liberado", tone: "success" },
+  PENDING: { label: "A liberar", tone: "warning" },
+  REFUNDED: { label: "Estornado", tone: "danger" },
+  UNKNOWN: { label: "Sem informação", tone: "default" },
+};
 const PATH = "/organizador/vendas";
 
 /** Link com os filtros (sem parâmetros vazios). */
@@ -45,6 +51,7 @@ async function Content({ searchParams }: { searchParams: Promise<Params> }) {
   const report = await salesReport(db, user, org.id, { period, eventId: eventId || null });
   const filters = { de: period.de || undefined, ate: period.ate || undefined, evento: eventId || undefined };
   const fin = await organizerFinancials(db, user, org.id);
+  const payouts = await organizerPayouts(db, user, org.id, Number(sp.repasses) || 1);
   const [orders, halfEvents, sources, coupons] = await Promise.all([
     db.order.findMany({
       where: { organizationId: org.id, status: { notIn: ["PENDING_PAYMENT", "EXPIRED", "CANCELLED"] } },
@@ -118,24 +125,76 @@ async function Content({ searchParams }: { searchParams: Promise<Params> }) {
         <SalesReportView report={report} showEvents={!eventId} />
       </section>
 
-      <section className="mt-8">
-        <h2 className="mb-3 font-display text-lg font-bold">Liquidações</h2>
-        {env().SETTLEMENT_ENABLED && fin.settlements.length ? (
-          <ul className="space-y-2">
-            {fin.settlements.map((s) => (
-              <li key={s.id} className="flex justify-between rounded-xl border border-border p-3 text-sm">
-                <span>
-                  {formatDateShort(s.periodStart)} – {formatDateShort(s.periodEnd)}
-                </span>
-                <span className="tabular-nums">{formatBRL(s.netCents)}</span>
-                <Badge>{s.status}</Badge>
-              </li>
-            ))}
-          </ul>
+      <section className="mt-8" id="repasses" aria-labelledby="payouts-title">
+        <h2 id="payouts-title" className="mb-1 font-display text-lg font-bold">
+          Repasses do Mercado Pago
+        </h2>
+        <p className="mb-3 text-sm text-muted-foreground">
+          O dinheiro de cada venda vai direto para a sua conta do Mercado Pago (split); a plataforma não guarda nem transfere valores. Aqui você acompanha quando cada valor fica disponível lá,
+          como o Mercado Pago informa.
+        </p>
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <StatCard label="Já liberado na sua conta" value={formatBRL(payouts.releasedCents)} />
+          <StatCard
+            label="A liberar"
+            value={formatBRL(payouts.pendingCents)}
+            hint={payouts.nextReleaseAt ? `Próxima liberação: ${formatDateShort(payouts.nextReleaseAt)}` : undefined}
+          />
+        </div>
+        {payouts.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhum pagamento recebido ainda.</p>
         ) : (
-          <Alert>
-            Liquidação automática desabilitada: os repasses serão realizados pelo provedor de pagamento (split) após a integração real ser configurada e verificada. Nenhum valor é custodiado pela plataforma.
-          </Alert>
+          <div className="overflow-x-auto rounded-2xl border border-border">
+            <table className="w-full min-w-[720px] text-sm" data-testid="payouts">
+              <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="p-3">Venda</th>
+                  <th className="p-3">Pedido</th>
+                  <th className="p-3 text-right">Pago</th>
+                  <th className="p-3 text-right">Líquido para você</th>
+                  <th className="p-3">Liberação</th>
+                  <th className="p-3">Situação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payouts.items.map((p) => (
+                  <tr key={p.id} className="border-t border-border">
+                    <td className="p-3">{formatDateTimeShort(p.paidAt)}</td>
+                    <td className="p-3">
+                      <span className="font-mono text-xs">{p.orderCode}</span> · {p.eventTitle}
+                      {p.isSimulated && <span className="ml-1 text-xs text-muted-foreground">(teste)</span>}
+                    </td>
+                    <td className="p-3 text-right tabular-nums">{formatBRL(p.amountCents)}</td>
+                    <td className="p-3 text-right tabular-nums" title={p.netFromProvider ? "Informado pelo Mercado Pago" : "Estimado pelo pedido (o Mercado Pago ainda não informou)"}>
+                      {formatBRL(p.netCents)}
+                      {!p.netFromProvider && p.state !== "REFUNDED" && <span className="text-xs text-muted-foreground"> (estimado)</span>}
+                    </td>
+                    <td className="p-3">{p.releaseAt ? formatDateShort(p.releaseAt) : "—"}</td>
+                    <td className="p-3">
+                      <Badge variant={PAYOUT_STATE[p.state].tone}>{PAYOUT_STATE[p.state].label}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {payouts.pageCount > 1 && (
+          <nav aria-label="Paginação dos repasses" className="mt-3 flex items-center gap-2 text-sm">
+            {payouts.page > 1 && (
+              <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={`${hrefWith(PATH, { ...filters, repasses: String(payouts.page - 1) })}#repasses`}>
+                Anterior
+              </Link>
+            )}
+            <span className="text-muted-foreground">
+              Página {payouts.page} de {payouts.pageCount}
+            </span>
+            {payouts.page < payouts.pageCount && (
+              <Link className={buttonVariants({ variant: "outline", size: "sm" })} href={`${hrefWith(PATH, { ...filters, repasses: String(payouts.page + 1) })}#repasses`}>
+                Próxima
+              </Link>
+            )}
+          </nav>
         )}
       </section>
 

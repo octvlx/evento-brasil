@@ -864,6 +864,11 @@ model Payment {
   status               PaymentStatus @default(PENDING)
   amountCents          Int
   processingFeeCents   Int?
+  /// Repasse do provedor ao vendedor (split): quando o dinheiro fica disponível na conta
+  /// do organizador, a situação ("pending"/"released") e o líquido que chegou lá. Só leitura.
+  providerReleaseAt      DateTime?     @db.Timestamptz(3)
+  providerReleaseStatus  String?       @db.VarChar(32)
+  providerNetCents       Int?
   pixCopyPaste         String?
   pixQrCodeBase64      String?
   checkoutUrl          String?

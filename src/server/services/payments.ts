@@ -191,7 +191,27 @@ export async function syncPaymentFromProvider(
     organizationId: payment?.order.organizationId,
     providerAccountId,
   });
-  return applyPaymentSnapshot(db, adapter, snapshot);
+  const outcome = await applyPaymentSnapshot(db, adapter, snapshot);
+  await recordProviderRelease(db, adapter, snapshot);
+  return outcome;
+}
+
+/**
+ * Guarda o repasse informado pelo provedor (liberação do dinheiro na conta do vendedor e o
+ * líquido recebido). Só informativo: não mexe no pedido, nos ingressos nem no razão. Grava
+ * apenas quando algo mudou, para a reconciliação não reescrever a linha à toa.
+ */
+async function recordProviderRelease(db: Db, adapter: PaymentProviderAdapter, snapshot: ProviderPaymentSnapshot) {
+  const r = snapshot.release;
+  if (!r) return;
+  const current = await db.payment.findFirst({
+    where: { provider: adapter.id, providerPaymentId: snapshot.providerPaymentId },
+    select: { id: true, providerReleaseAt: true, providerReleaseStatus: true, providerNetCents: true },
+  });
+  if (!current) return;
+  const same = (current.providerReleaseAt?.getTime() ?? null) === (r.at?.getTime() ?? null) && current.providerReleaseStatus === r.status && current.providerNetCents === r.netCents;
+  if (same) return;
+  await db.payment.update({ where: { id: current.id }, data: { providerReleaseAt: r.at, providerReleaseStatus: r.status, providerNetCents: r.netCents } });
 }
 
 /**
@@ -209,7 +229,9 @@ export async function confirmReturnedPayment(db: Db, adapter: PaymentProviderAda
   if (!open) return "ignored" as const;
   const snapshot = await adapter.getPayment(providerPaymentId, { organizationId: order.organizationId });
   if (!snapshot.externalReference || !order.payments.some((p) => p.id === snapshot.externalReference)) return "ignored" as const;
-  return applyPaymentSnapshot(db, adapter, snapshot);
+  const outcome = await applyPaymentSnapshot(db, adapter, snapshot);
+  await recordProviderRelease(db, adapter, snapshot);
+  return outcome;
 }
 
 export type ApplyOutcome =

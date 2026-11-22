@@ -84,6 +84,8 @@ export interface ProviderPaymentSnapshot {
   processingFeeCents: number | null;
   /** Total já estornado no provedor (estornos parciais somados); null se o provedor não informa. */
   refundedCents?: number | null;
+  /** Repasse ao vendedor: liberação do dinheiro na conta dele e o líquido recebido (quando o provedor informa). */
+  release?: { at: Date | null; status: string | null; netCents: number | null };
   /** Instruções da cobrança existente, inclusive na recuperação por referência. */
   pixCopyPaste?: string;
   pixQrCodeBase64?: string;
