@@ -41,6 +41,25 @@ export function deriveTicketSigningKey(code: string, version: number): { d: stri
   }
 }
 
+/**
+ * Segredo TOTP do QR rotativo do Google Wallet de um ingresso (20 bytes, como no RFC 6238).
+ * Derivado de QR_TOKEN_SECRET + código + versão: vai para o Google no objeto do passe e é
+ * recalculado na portaria (online). A transferência troca a versão e, com ela, o segredo.
+ */
+export function deriveWalletTotpKey(code: string, version: number): Buffer {
+  return createHmac("sha256", env().QR_TOKEN_SECRET).update(`eb-gw-totp:${code}:${version}`).digest().subarray(0, 20);
+}
+
+/** TOTP/HOTP (RFC 4226/6238) com HMAC-SHA1 para o contador `counter`. */
+export function totpCode(key: Buffer, counter: number, digits: number): string {
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(counter));
+  const mac = createHmac("sha1", key).update(msg).digest();
+  const offset = mac[mac.length - 1] & 0x0f;
+  const bin = ((mac[offset] & 0x7f) << 24) | (mac[offset + 1] << 16) | (mac[offset + 2] << 8) | mac[offset + 3];
+  return String(bin % 10 ** digits).padStart(digits, "0");
+}
+
 export function safeEqual(a: string, b: string): boolean {
   const ba = Buffer.from(a);
   const bb = Buffer.from(b);

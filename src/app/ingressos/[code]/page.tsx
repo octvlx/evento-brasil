@@ -66,7 +66,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
   const canTransfer = !pendingOut && transferBlockedReason(t, now) === null && acceptedCount < t.event.transferMaxTransfers;
   const city = t.event.venue?.city ?? t.event.city;
   // Botões de carteira só quando a conta da Apple/Google estiver configurada (docs/wallet.md).
-  const wallet = t.status === "VALID" ? walletAvailability() : { apple: false, google: false };
+  const wallet = t.status === "VALID" ? walletAvailability() : { apple: false, google: false, googleRotating: false };
   // QR dinâmico: só o titular recebe a chave do próprio ingresso (ver services/tickets.ts).
   const signing = t.status === "VALID" ? ticketSigningJwk(t) : null;
 
@@ -149,8 +149,8 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
             </div>
           )}
           <p className="mt-4 text-xs text-muted-foreground">
-            A entrada é só pelo QR desta tela, que muda a cada 30 segundos: print, foto, PDF e carteira não valem na portaria. Deixe o celular com bateria e abra o ingresso
-            antes de chegar.
+            A entrada é pelo QR desta tela, que muda a cada 30 segundos{wallet.googleRotating ? " (ou pelo QR do Google Wallet, que também muda)" : ""}: print, foto, PDF
+            {wallet.googleRotating ? " e Apple Wallet" : " e carteiras"} não valem na portaria. Deixe o celular com bateria e abra o ingresso antes de chegar.
           </p>
           {organizer && (
             <p className="mt-3 flex items-start justify-center gap-1.5 border-t border-border pt-3 text-xs text-muted-foreground">

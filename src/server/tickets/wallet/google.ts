@@ -2,13 +2,17 @@
 // O link tem limite de ~1800 caracteres, e a classe + o objeto completos de um único
 // ingresso já passam disso. Por isso a classe do evento e os objetos dos ingressos são
 // gravados antes pela API REST (insert; se já existem, update com os dados atuais) e o
-// JWT só referencia os ids dos objetos. O QR é o mesmo do ingresso e do PDF
-// (validação online na portaria). Um objeto por versão do QR: na transferência o novo
+// JWT só referencia os ids dos objetos. Com GOOGLE_WALLET_ROTATING_QR, o objeto leva um QR
+// rotativo (TOTP gerado pelo próprio Google, formato EB3, validação online na portaria);
+// sem ele, o passe é só comprovante. Um objeto por versão do QR: na transferência o novo
 // titular salva outro objeto, e o do titular anterior (QR antigo) vira INACTIVE pelo
 // cron (passes.ts) — nunca recebe o QR novo.
 import "server-only";
 import { createSign } from "node:crypto";
 import type { GoogleWalletConfig } from "./config";
+import { deriveWalletTotpKey } from "../../crypto";
+import { env } from "../../env";
+import { QR_STEP_MS, WALLET_QR_PREFIX, WALLET_TOTP_DIGITS } from "@/lib/qr-payload";
 import type { WalletTicket } from "./types";
 import { BRAND, BRAND_COLORS } from "@/lib/brand";
 
@@ -36,6 +40,25 @@ type Resource = { id: string } & Record<string, unknown>;
 export const googleObjectId = (cfg: Pick<GoogleWalletConfig, "issuerId">, code: string, tokenVersion: number) =>
   `${cfg.issuerId}.ingresso-${suffix(code)}-v${tokenVersion}`;
 
+/**
+ * QR rotativo do passe (recurso do Google que exige aprovação do emissor): o Google gera
+ * `EB3:<código>:<segundos>:<TOTP>` a cada QR_STEP_MS com o segredo do ingresso (hex), e a
+ * portaria confere online (checkin.ts). O segredo muda com a versão do QR (transferência).
+ */
+export function walletRotatingBarcode(code: string, tokenVersion: number) {
+  return {
+    type: "QR_CODE",
+    renderEncoding: "UTF_8",
+    valuePattern: `${WALLET_QR_PREFIX}:${code}:{totp_timestamp_seconds}:{totp_value_0}`,
+    totpDetails: {
+      periodMillis: String(QR_STEP_MS),
+      algorithm: "TOTP_SHA1",
+      parameters: [{ key: deriveWalletTotpKey(code, tokenVersion).toString("hex"), valueLength: WALLET_TOTP_DIGITS }],
+    },
+    alternateText: code,
+  };
+}
+
 /** Classes (uma por evento) e objetos (um por ingresso) gravados na API do Google Wallet. */
 export function googleWalletResources(tickets: WalletTicket[], cfg: GoogleWalletConfig) {
   const classes = new Map<string, Resource>();
@@ -59,9 +82,11 @@ export function googleWalletResources(tickets: WalletTicket[], cfg: GoogleWallet
       ticketHolderName: t.holderName ?? undefined,
       ticketNumber: t.code,
       ticketType: text(t.kind === "HALF_PRICE" ? `${t.ticketTypeName} (meia-entrada: documento na entrada)` : t.ticketTypeName),
-      // Sem código de barras: a entrada é pelo QR dinâmico na tela do ingresso.
+      ...(env().GOOGLE_WALLET_ROTATING_QR ? { rotatingBarcode: walletRotatingBarcode(t.code, t.tokenVersion) } : {}),
       textModulesData: [
-        { id: "entrada", header: "Entrada", body: "Abra o ingresso no app/site para mostrar o QR de entrada (muda a cada 30 s). Este passe é comprovante." },
+        env().GOOGLE_WALLET_ROTATING_QR
+          ? { id: "entrada", header: "Entrada", body: "Mostre o QR deste passe na portaria: ele muda a cada 30 segundos (print não vale). Precisa de internet na portaria." }
+          : { id: "entrada", header: "Entrada", body: "Abra o ingresso no app/site para mostrar o QR de entrada (muda a cada 30 s). Este passe é comprovante." },
         ...(t.isSimulated ? [{ id: "teste", header: "Ingresso de teste", body: "Pagamento simulado: sem validade real." }] : []),
       ],
       hexBackgroundColor: BRAND_HEX,

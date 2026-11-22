@@ -16,7 +16,9 @@ export const googleWallet = () => googleWalletConfig(env());
 
 /** Quais carteiras aparecem para o comprador (sem configuração, nenhuma). */
 export function walletAvailability() {
-  return { apple: appleWallet() !== null, google: googleWallet() !== null };
+  const google = googleWallet() !== null;
+  // QR rotativo do Google Wallet ligado (passe vale na portaria, online).
+  return { apple: appleWallet() !== null, google, googleRotating: google && env().GOOGLE_WALLET_ROTATING_QR };
 }
 
 /**

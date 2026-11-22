@@ -7,7 +7,7 @@ import { ArrowLeftRight, Camera, CameraOff, CloudDownload, CloudUpload, FlaskCon
 import { Button } from "@/components/ui/button";
 import { Alert, Input } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
-import { parseDynamicQrPayload, parseQrPayload, qrStepFresh, verifyDynamicQrSignature } from "@/lib/qr-payload";
+import { parseDynamicQrPayload, parseQrPayload, parseWalletQrPayload, qrStepFresh, verifyDynamicQrSignature } from "@/lib/qr-payload";
 import type { CheckinResult } from "@/generated/prisma/browser";
 import type { CheckinResponse, OfflinePackage, OfflineSyncItem } from "@/server/services/checkin";
 import { checkInAction, offlinePackageAction, syncOfflineAction } from "./actions";
@@ -316,6 +316,8 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
       if (r === "ADMITTED") setCounters((c) => ({ ...c, admitted: c.admitted + 1 }));
       const shown = show(r, t, r === "ADMITTED" ? new Date() : null);
       if (stale) return { ...shown, message: "QR EXPIRADO (print ou foto) — peça para abrir o ingresso no celular" };
+      // Google Wallet (EB3): o segredo do código não fica no aparelho, então só valida online.
+      if (parseWalletQrPayload(payload)) return { ...shown, message: "QR da carteira do Google precisa de internet — peça o QR do app ou reconecte" };
       if (parsed && !current.staticAccepted) return { ...shown, message: "QR FIXO (PDF, carteira ou print) não vale — peça para abrir o ingresso no celular" };
       return shown;
     },
