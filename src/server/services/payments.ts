@@ -11,7 +11,7 @@ import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { DUPLICATE_PAYMENT_FLAG, PaymentNotStartedError, type PaymentProviderAdapter, type ProviderPaymentSnapshot, type WebhookRequest } from "../payments/types";
 import { assertCheckoutReviewed } from "./checkout-review";
 import { financeLog } from "./finance-log";
-import { postProcessingFee, postReversal, postSale } from "./ledger";
+import { postProcessingFee, postReversal, postSale, reserveFeeRecoveryCents } from "./ledger";
 import { acquireLateInventoryTx, finalizePaidOrderTx, lockEvent, lockOrder, releaseOrderTx } from "./orders";
 import { notifyOrderPaid } from "./notifications";
 import { closePendingTransfersTx, confirmRefundTx, OPEN_REFUND_STATUSES, partialRefundCents, processRefund } from "./refunds";
@@ -64,12 +64,16 @@ export async function startPayment(
       );
     }
     const attempts = await tx.payment.count({ where: { orderId } });
+    // Saldo devedor do organizador (valor fixo retido que o split deixou com ele) volta
+    // para a plataforma somado ao marketplace_fee desta cobrança.
+    const feeRecoveryCents = adapter.isSimulated ? 0 : await reserveFeeRecoveryCents(tx, order.organizationId, order);
     const payment = await tx.payment.create({
       data: {
         orderId,
         provider: adapter.id,
         method,
         amountCents: order.totalCents,
+        feeRecoveryCents,
         isSimulated: adapter.isSimulated,
         idempotencyKey: `${orderId}:${method}:${attempts + 1}`,
       },
@@ -95,7 +99,7 @@ export async function startPayment(
       marketplace: {
         organizationId: order.organizationId,
         sellerAccountId: order.organization.paymentAccountExternalId,
-        applicationFeeCents: order.commissionCents,
+        applicationFeeCents: order.commissionCents + payment.feeRecoveryCents,
       },
       simulatedCardOutcome: opts.simulatedCardOutcome,
     });

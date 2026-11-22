@@ -44,6 +44,28 @@ também reconcilia a tarifa, inclusive quando o pagamento já estava estornado
 pelo nosso reembolso, e o reembolso bem-sucedido consulta o provedor logo em
 seguida (melhor esforço; o webhook e a reconciliação refazem).
 
+### Valor fixo não reembolsável com split
+
+A documentação de split diz que, no reembolso, o valor "será dividido e subtraído
+da conta do vendedor e da conta do Marketplace, sendo proporcional". Então, quando o
+comprador não recebe o valor fixo (`retainedFeeCents`), o estorno parcial ainda tira
+da plataforma `marketplace_fee × estornado / total`, e quase todo o fixo fica na
+conta do organizador. Exemplo: R$ 226 com R$ 26 de comissão, R$ 6 retidos; o estorno
+de R$ 220 tira R$ 25,31 da plataforma, que devia perder R$ 20.
+
+- O razão lança essa diferença como saldo devedor do organizador
+  (`ORGANIZER_RECEIVABLE`, transação `split-true-up:<refundId>`). Nessa partida,
+  `ORGANIZER_PAYABLE` acompanha o que ficou de fato com ele.
+- Cada nova cobrança do organizador soma ao `marketplace_fee` uma compensação
+  (`Payment.feeRecoveryCents`). O valor é o saldo menos o que já está reservado em
+  cobranças pendentes, limitado à metade da parte dele na venda. A reserva fica
+  sob trava por organização. Quando a venda é paga, o razão lança
+  `fee-recovery:<paymentId>`.
+- Se essa venda for estornada, o split devolve também a compensação, e a dívida volta
+  pelo mesmo acerto.
+- **A validar com estorno parcial real:** a proporção e o arredondamento (centavo) do
+  Mercado Pago. Se o provedor arredondar diferente, o acerto fica 1 centavo off.
+
 ## O que o sistema já espera de qualquer provedor
 
 Contrato em `src/server/payments/types.ts`:

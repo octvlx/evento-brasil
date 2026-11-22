@@ -863,6 +863,8 @@ model Payment {
   method               PaymentMethod
   status               PaymentStatus @default(PENDING)
   amountCents          Int
+  /// Compensação de saldo devedor do organizador somada ao marketplace_fee desta cobrança (split).
+  feeRecoveryCents     Int             @default(0)
   processingFeeCents   Int?
   /// Repasse do provedor ao vendedor (split): quando o dinheiro fica disponível na conta
   /// do organizador, a situação ("pending"/"released") e o líquido que chegou lá. Só leitura.
@@ -1399,6 +1401,8 @@ enum LedgerAccount {
   PLATFORM_COMMISSION
   PLATFORM_SERVICE_FEE
   PROCESSING_FEES
+  // Débito = o organizador deve à plataforma (split do MP devolveu comissão a mais no estorno).
+  ORGANIZER_RECEIVABLE
 }
 
 enum LedgerDirection {

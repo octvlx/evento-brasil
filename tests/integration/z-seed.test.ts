@@ -24,7 +24,8 @@ async function admin(sql: string) {
   }
 }
 
-const env = { ...process.env, DATABASE_URL: seedUrl.toString() };
+// DATABASE_URL_UNPOOLED também: prisma.config.ts a prefere (Neon) e o .env local a define.
+const env = { ...process.env, DATABASE_URL: seedUrl.toString(), DATABASE_URL_UNPOOLED: seedUrl.toString() };
 const runSeed = () => execSync("npx tsx --conditions=react-server prisma/seed.ts", { env, encoding: "utf8", stdio: "pipe" });
 
 let db: PrismaClient;

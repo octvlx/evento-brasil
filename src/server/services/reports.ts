@@ -192,7 +192,11 @@ async function ledgerBalances(db: Db, where: { organizationId?: string; order?: 
     platformFeeCents:
       sum("PLATFORM_COMMISSION", "CREDIT") - sum("PLATFORM_COMMISSION", "DEBIT") + sum("PLATFORM_SERVICE_FEE", "CREDIT") - sum("PLATFORM_SERVICE_FEE", "DEBIT"),
     processingFeeCents: sum("PROCESSING_FEES", "CREDIT") - sum("PROCESSING_FEES", "DEBIT"),
-    organizerNetCents: sum("ORGANIZER_PAYABLE", "CREDIT") - sum("ORGANIZER_PAYABLE", "DEBIT"),
+    // Líquido do organizador: o que ficou com ele menos o saldo devedor (split; ver ledger.ts).
+    organizerNetCents:
+      sum("ORGANIZER_PAYABLE", "CREDIT") - sum("ORGANIZER_PAYABLE", "DEBIT") - (sum("ORGANIZER_RECEIVABLE", "DEBIT") - sum("ORGANIZER_RECEIVABLE", "CREDIT")),
+    /** Valor fixo retido que o split deixou com o organizador e ainda não foi compensado. */
+    organizerDebtCents: sum("ORGANIZER_RECEIVABLE", "DEBIT") - sum("ORGANIZER_RECEIVABLE", "CREDIT"),
     includesSimulated: simulated > 0,
   };
 }

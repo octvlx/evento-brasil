@@ -19,6 +19,8 @@ export default async function setup() {
     };
     await ensureDatabase({ ...cfg, database: url.pathname.slice(1) });
   }
-  execSync("npx prisma migrate deploy", { stdio: "pipe", env: { ...process.env, DATABASE_URL: url.toString() } });
+  // prisma.config.ts carrega o .env e prefere DATABASE_URL_UNPOOLED (Neon): sem sobrescrevê-la,
+  // as migrações iam para o banco de desenvolvimento em vez do banco de teste.
+  execSync("npx prisma migrate deploy", { stdio: "pipe", env: { ...process.env, DATABASE_URL: url.toString(), DATABASE_URL_UNPOOLED: url.toString() } });
   return () => stop?.();
 }
