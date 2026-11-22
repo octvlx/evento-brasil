@@ -3,20 +3,21 @@ import { BRAND } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
 /**
- * Símbolo QQPega: dois "Q" entrelaçados (limão e pink) sobre a tinta da marca —
- * duas pessoas, dois eventos, conexão. O mesmo desenho vira o favicon (src/app/icon.svg).
+ * Símbolo TICKET24: um ingresso limão com picote nas laterais e o "24" na tinta da
+ * marca. O mesmo desenho vira o favicon e os ícones (src/app/icon.svg, public/icons).
  */
 export function LogoMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" aria-hidden="true" className={cn("size-8 shrink-0", className)}>
       <rect width="32" height="32" rx="9" fill="#16121f" />
-      <circle cx="12.25" cy="15.25" r="5.25" fill="none" stroke="#c6f432" strokeWidth="3" />
-      <circle cx="20" cy="15.25" r="5.25" fill="none" stroke="#ff4f93" strokeWidth="3" />
-      <path d="M23.4 18.65 26.2 21.45" stroke="#ff4f93" strokeWidth="3" strokeLinecap="round" />
-      {/* Entrelaçado: o limão passa por cima do pink na interseção de cima. */}
-      <path d="M14.88 10.7A5.25 5.25 0 0 1 17.01 13.03" fill="none" stroke="#c6f432" strokeWidth="3" />
-      {/* Rabinho do primeiro Q "pegando" o segundo anel. */}
-      <path d="M15.65 18.65 18.3 21.3" stroke="#c6f432" strokeWidth="3" strokeLinecap="round" />
+      <rect x="4" y="8" width="24" height="16" rx="3" fill="#c6f432" />
+      {/* Picote: meia-lua recortada em cada lateral do ingresso. */}
+      <circle cx="4" cy="16" r="2.6" fill="#16121f" />
+      <circle cx="28" cy="16" r="2.6" fill="#16121f" />
+      <g fill="none" stroke="#16121f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9.9 13.7a2.65 2.65 0 0 1 5.3 0c0 1.5-1.1 2.4-2.4 3.5L9.9 20h5.4" />
+        <path d="M21.4 20.3V11.4l-4.3 6.2h6.1" />
+      </g>
     </svg>
   );
 }
@@ -35,11 +36,11 @@ export function Logo({ className, inverted, wordmarkClassName }: { className?: s
   );
 }
 
-/** "QQPega" com o "QQ" em destaque; capitalização oficial preservada. */
+/** "TICKET24" com o "24" em destaque; sempre em maiúsculas. */
 export function Wordmark({ inverted, className }: { inverted?: boolean; className?: string }) {
   return (
     <span className={cn("tracking-[-0.04em]", inverted ? "text-white" : "text-foreground", className)}>
-      <span className={inverted ? "text-lime" : "text-secondary"}>QQ</span>Pega
+      TICKET<span className={inverted ? "text-lime" : "text-secondary"}>24</span>
     </span>
   );
 }

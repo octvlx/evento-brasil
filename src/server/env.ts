@@ -53,7 +53,7 @@ const schema = z.object({
     .enum(["true", "false", ""])
     .optional()
     .transform((v) => (v ? v === "true" : process.env.NODE_ENV !== "test")),
-  EMAIL_FROM: z.string().default("QQPega <nao-responda@example.com>"),
+  EMAIL_FROM: z.string().default("TICKET24 <nao-responda@example.com>"),
   // Alertas operacionais (webhook parado, reembolso com falha, etc.): e-mails separados
   // por vírgula. Vazio = só log e o quadro na home do /admin.
   ALERT_EMAILS: z.string().optional(),

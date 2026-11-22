@@ -7,9 +7,9 @@ export function emailLayout(
 ) {
   const safe = escapeHtml;
   return (
-    // Cabeçalho escuro com o logotipo tipográfico ("QQ" em limão), botão limão com texto escuro
+    // Cabeçalho escuro com o logotipo tipográfico ("24" em limão), botão limão com texto escuro
     // (contraste 14:1) e fundo papel. Estilos inline: clientes de e-mail ignoram <style>.
-    `<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:${C.paper};font-family:Arial,Helvetica,sans-serif;color:${C.night}"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="600" style="width:100%;max-width:600px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid ${C.border}" cellspacing="0" cellpadding="0"><tr><td style="padding:22px 28px;background:${C.night};color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-1px"><span style="color:${C.lime}">QQ</span>Pega</td></tr><tr><td style="padding:28px"><h1 style="margin:0 0 16px;font-size:24px;line-height:1.25;color:${C.night}">` +
+    `<!doctype html><html lang="pt-BR"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:${C.paper};font-family:Arial,Helvetica,sans-serif;color:${C.night}"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="600" style="width:100%;max-width:600px;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid ${C.border}" cellspacing="0" cellpadding="0"><tr><td style="padding:22px 28px;background:${C.night};color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-1px">TICKET<span style="color:${C.lime}">24</span></td></tr><tr><td style="padding:28px"><h1 style="margin:0 0 16px;font-size:24px;line-height:1.25;color:${C.night}">` +
     safe(title) +
     "</h1>" +
     body +

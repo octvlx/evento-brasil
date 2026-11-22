@@ -39,7 +39,7 @@ export interface SafeFetchOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-export const EXTERNAL_USER_AGENT = "QQPegaBot/1.0 (descoberta de eventos; respeita robots.txt)";
+export const EXTERNAL_USER_AGENT = "TICKET24Bot/1.0 (descoberta de eventos; respeita robots.txt)";
 
 const defaults = { timeoutMs: 15_000, maxBytes: 1_500_000, retries: 2, backoffMs: 1_000, maxRedirects: 3 };
 

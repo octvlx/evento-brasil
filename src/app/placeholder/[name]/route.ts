@@ -1,5 +1,5 @@
 // Capas ilustrativas (SVG) para desenvolvimento. Rotuladas como placeholder.
-// Paletas "noite na cidade" da QQPega: base escura + uma luz de cor (limão, pink,
+// Paletas "noite na cidade" da TICKET24: base escura + uma luz de cor (limão, pink,
 // laranja, ciano…), para variar entre eventos sem fugir da identidade.
 const PALETTES = [
   ["#16121f", "#2a1740", "#ff4f93"],

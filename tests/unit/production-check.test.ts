@@ -17,7 +17,7 @@ const good: Record<string, string> = {
   SETTLEMENT_ENABLED: "true",
   EMAIL_PROVIDER: "resend",
   RESEND_API_KEY: "re_chave_resend_0123456789",
-  EMAIL_FROM: "QQPega <nao-responda@exemplo.com.br>",
+  EMAIL_FROM: "TICKET24 <nao-responda@exemplo.com.br>",
   STORAGE_PROVIDER: "s3",
   OBJECT_STORAGE_BUCKET: "b",
   OBJECT_STORAGE_ACCESS_KEY: "k",
@@ -65,7 +65,7 @@ describe("verificação de produção: configuração", () => {
     expect(fails(checkProductionEnv({ ...good, PAYMENT_PROVIDER: "simulated" }))).toContain("PAYMENT_PROVIDER");
     expect(fails(checkProductionEnv({ ...good, ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION: "true" }))).toContain("ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION");
     expect(fails(checkProductionEnv({ ...good, MERCADO_PAGO_WEBHOOK_SECRET: "" }))).toContain("Mercado Pago");
-    expect(fails(checkProductionEnv({ ...good, EMAIL_FROM: "QQPega <a@example.com>" }))).toContain("EMAIL_FROM");
+    expect(fails(checkProductionEnv({ ...good, EMAIL_FROM: "TICKET24 <a@example.com>" }))).toContain("EMAIL_FROM");
     expect(fails(checkProductionEnv({ ...good, EMAIL_PROVIDER: "console" }))).toContain("EMAIL_PROVIDER");
     expect(fails(checkProductionEnv({ ...good, STORAGE_PROVIDER: "local" }))).toContain("STORAGE_PROVIDER");
     expect(fails(checkProductionEnv({ ...good, OBJECT_STORAGE_PUBLIC_URL: "http://cdn.exemplo.com.br" }))).toContain("OBJECT_STORAGE_PUBLIC_URL");

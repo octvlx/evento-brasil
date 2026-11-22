@@ -17,7 +17,7 @@ export async function GET() {
     return new Response(JSON.stringify(data, null, 2), {
       headers: {
         "content-type": "application/json; charset=utf-8",
-        "content-disposition": `attachment; filename="meus-dados-evento-brasil-${data.generatedAt.slice(0, 10)}.json"`,
+        "content-disposition": `attachment; filename="meus-dados-ticket24-${data.generatedAt.slice(0, 10)}.json"`,
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",
       },

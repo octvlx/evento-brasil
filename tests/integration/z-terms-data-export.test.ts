@@ -217,7 +217,7 @@ describe("baixar meus dados (R9)", () => {
     currentUser = me;
     const res = await exportData();
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-disposition")).toMatch(/attachment; filename="meus-dados-evento-brasil-/);
+    expect(res.headers.get("content-disposition")).toMatch(/attachment; filename="meus-dados-ticket24-/);
     expect(res.headers.get("cache-control")).toBe("private, no-store");
     const text = await res.text();
     const data = JSON.parse(text);
