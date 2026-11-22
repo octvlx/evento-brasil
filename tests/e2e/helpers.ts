@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { expect, type Page } from "@playwright/test";
-import { createHmac } from "node:crypto";
+import { createECDH, createHmac, createPrivateKey, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
@@ -42,14 +42,30 @@ export async function acceptSignupTerms(page: Page) {
   await page.getByRole("checkbox", { name: /política de privacidade/ }).check();
 }
 
-/** Lê o conteúdo do QR direto do banco de desenvolvimento (equivale a ler o QR com a câmera). */
+/**
+ * QR que a câmera da portaria leria agora na tela do titular: o dinâmico (EB2), assinado
+ * com a chave do ingresso como o celular faz (mesma derivação de deriveTicketSigningKey).
+ */
 export async function qrPayloadFor(code: string) {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   const { rows } = await client.query('SELECT code, "tokenVersion", "legacyValidationToken", "eventId" FROM "IssuedTicket" WHERE code = $1', [code]);
   await client.end();
   expect(rows[0], `ingresso ${code}`).toBeTruthy();
-  return { payload: `EB1:${rows[0].code}:${qrTokenOf(rows[0])}`, eventId: rows[0].eventId as string };
+  return { payload: dynamicQrOf(rows[0]), staticPayload: `EB1:${rows[0].code}:${qrTokenOf(rows[0])}`, eventId: rows[0].eventId as string };
+}
+
+/** Mesmo cálculo de deriveTicketSigningKey + assinatura do celular (src/features/tickets/dynamic-qr.tsx). */
+function dynamicQrOf(t: { code: string; tokenVersion: number }) {
+  const secret = process.env.QR_TOKEN_SECRET || "dev-only-qr-token-secret-0123456789";
+  const d = createHmac("sha256", secret).update(`eb-qr-key:${t.code}:${t.tokenVersion}:0`).digest();
+  const ecdh = createECDH("prime256v1");
+  ecdh.setPrivateKey(d);
+  const pub = ecdh.getPublicKey();
+  const key = createPrivateKey({ key: { kty: "EC", crv: "P-256", d: d.toString("base64url"), x: pub.subarray(1, 33).toString("base64url"), y: pub.subarray(33, 65).toString("base64url") }, format: "jwk" });
+  const step = Math.floor(Date.now() / 30_000);
+  const signature = sign("sha256", Buffer.from(`eb2:${t.code}:${step}`), { key, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  return `EB2:${t.code}:${step}:${signature}`;
 }
 
 /** Mesmo cálculo de `ticketQrToken` (src/server/services/tickets.ts), com a chave do app. */

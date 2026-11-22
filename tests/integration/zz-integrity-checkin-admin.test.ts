@@ -5,9 +5,8 @@ import { createSession } from "@/server/auth/sessions";
 import { checkInTicket } from "@/server/services/checkin";
 import { setEventFeatured } from "@/server/services/events";
 import { assignStaffToEvent, changeMemberRole, setAutoPublish } from "@/server/services/organizers";
-import { qrPayload } from "@/server/services/tickets";
 import { setUserSuspended } from "@/server/services/users";
-import { buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -45,11 +44,11 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 describe("check-in: permissão na transação da entrada", () => {
   it("leitura que começa durante a retirada da portaria espera e é recusada", async () => {
     const { staff, org, event, tickets } = await setup();
-    expect((await checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, staff, event.id, gateQr(tickets[0]))).result).toBe("ADMITTED");
 
     const hold = holdTeamLock(org.id, (tx) => tx.eventStaffAssignment.deleteMany({ where: { eventId: event.id, userId: staff.id } }));
     await hold.acquired;
-    const scan = checkInTicket(db, staff, event.id, qrPayload(tickets[1]));
+    const scan = checkInTicket(db, staff, event.id, gateQr(tickets[1]));
     const settled = scan.then(() => "done", () => "done");
     await pause(300);
     // Ainda esperando a trava: a retirada não terminou.
@@ -64,16 +63,16 @@ describe("check-in: permissão na transação da entrada", () => {
   it("troca de papel também corta a portaria; atribuir de novo devolve o acesso", async () => {
     const { owner, staff, org, event, tickets } = await setup();
     await changeMemberRole(db, owner, org.id, staff.id, "FINANCE");
-    await expect(checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(checkInTicket(db, staff, event.id, gateQr(tickets[0]))).rejects.toMatchObject({ code: "FORBIDDEN" });
     await changeMemberRole(db, owner, org.id, staff.id, "CHECKIN_STAFF");
     await assignStaffToEvent(db, owner, event.id, staff.id, true);
-    expect((await checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, staff, event.id, gateQr(tickets[0]))).result).toBe("ADMITTED");
     expect(await db.auditLog.count({ where: { entityId: event.id, action: "staff.assigned" } })).toBe(2);
   });
 
   it("leituras simultâneas do mesmo ingresso continuam admitindo uma vez só", async () => {
     const { owner, staff, event, tickets } = await setup();
-    const results = await Promise.all([checkInTicket(db, staff, event.id, qrPayload(tickets[0])), checkInTicket(db, owner, event.id, qrPayload(tickets[0]))]);
+    const results = await Promise.all([checkInTicket(db, staff, event.id, gateQr(tickets[0])), checkInTicket(db, owner, event.id, gateQr(tickets[0]))]);
     expect(results.map((r) => r.result).sort()).toEqual(["ADMITTED", "DUPLICATE"]);
   });
 });

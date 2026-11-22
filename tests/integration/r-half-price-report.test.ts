@@ -7,8 +7,7 @@ import { createOrder } from "@/server/services/orders";
 import { handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { requestCustomerRefund } from "@/server/services/refunds";
 import { halfPriceReport, halfPriceReportToCsv } from "@/server/services/reports";
-import { qrPayload } from "@/server/services/tickets";
-import { adapter, db, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
+import { adapter, db, gateQr, makeEvent, makeOrg, makeUser, orderInput, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -66,7 +65,7 @@ describe("relatório de meia-entrada", () => {
     await requestCustomerRefund(db, adapter, b, refunded.id);
     const checked = await orderAndPay(await makeUser(), event.id, [{ ticketTypeId: half.id, quantity: 1 }]);
     const t = await db.issuedTicket.findFirstOrThrow({ where: { orderId: checked.id } });
-    expect((await checkInTicket(db, owner, event.id, qrPayload(t))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(t))).result).toBe("ADMITTED");
     await order(await makeUser(), event.id, [{ ticketTypeId: half.id, quantity: 2 }]);
 
     const r = await halfPriceReport(db, owner, event.id);

@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { cancelEvent } from "@/server/services/cancellation";
 import { checkInTicket, checkinOfflinePackage, listOfflineDivergences, offlineTokenHash, syncOfflineCheckins } from "@/server/services/checkin";
-import { qrPayload, ticketQrToken } from "@/server/services/tickets";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { ticketQrToken } from "@/server/services/tickets";
+import { adapter, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 
@@ -33,7 +33,7 @@ async function setup() {
 describe("check-in offline: lista baixada", () => {
   it("traz só hashes dos tokens, a situação atual e os dados que a portaria já vê", async () => {
     const { staff, event, tickets } = await setup();
-    await checkInTicket(db, staff, event.id, qrPayload(tickets[0]));
+    await checkInTicket(db, staff, event.id, gateQr(tickets[0]));
     const pkg = await checkinOfflinePackage(db, staff, event.id);
     expect(pkg.tickets).toHaveLength(3);
     const byCode = new Map(pkg.tickets.map((t) => [t.code, t]));
@@ -59,15 +59,17 @@ describe("check-in offline: lista baixada", () => {
 describe("check-in offline: sincronização", () => {
   it("dois aparelhos liberaram o mesmo ingresso offline: uma entrada e um conflito", async () => {
     const { staff, otherStaff, event, tickets } = await setup();
-    const payload = qrPayload(tickets[0]);
     const t1 = new Date(Date.now() - 10 * 60_000).toISOString();
     const t2 = new Date(Date.now() - 9 * 60_000).toISOString();
-    const a = await syncOfflineCheckins(db, staff, event.id, [{ payload, scannedAt: t1, localResult: "ADMITTED" }, { payload: qrPayload(tickets[1]), scannedAt: t1, localResult: "ADMITTED" }]);
+    // O mesmo ingresso lido em dois aparelhos: cada um viu o QR do seu momento.
+    const payload = gateQr(tickets[0], new Date(t1));
+    const payloadLater = gateQr(tickets[0], new Date(t2));
+    const a = await syncOfflineCheckins(db, staff, event.id, [{ payload, scannedAt: t1, localResult: "ADMITTED" }, { payload: gateQr(tickets[1], new Date(t1)), scannedAt: t1, localResult: "ADMITTED" }]);
     expect(a.items.map((i) => [i.result, i.conflict])).toEqual([
       ["ADMITTED", false],
       ["ADMITTED", false],
     ]);
-    const b = await syncOfflineCheckins(db, otherStaff, event.id, [{ payload, scannedAt: t2, localResult: "ADMITTED" }]);
+    const b = await syncOfflineCheckins(db, otherStaff, event.id, [{ payload: payloadLater, scannedAt: t2, localResult: "ADMITTED" }]);
     expect(b.items[0]).toMatchObject({ result: "DUPLICATE", conflict: true, code: tickets[0].code });
     expect(b.counters).toEqual({ admitted: 2, total: 3 });
 
@@ -86,8 +88,8 @@ describe("check-in offline: sincronização", () => {
     await db.issuedTicket.update({ where: { id: tickets[2].id }, data: { status: "REVOKED" } });
     const future = new Date(Date.now() + 3600_000).toISOString();
     const r = await syncOfflineCheckins(db, staff, event.id, [
-      { payload: qrPayload(tickets[2]), scannedAt: new Date().toISOString(), localResult: "ADMITTED" },
-      { payload: qrPayload(tickets[1]), scannedAt: future, localResult: "ADMITTED" },
+      { payload: gateQr(tickets[2]), scannedAt: new Date().toISOString(), localResult: "ADMITTED" },
+      { payload: gateQr(tickets[1]), scannedAt: future, localResult: "ADMITTED" },
       { payload: "lixo", scannedAt: "ontem", localResult: "INVALID" },
     ]);
     expect(r.items.map((i) => [i.result, i.conflict])).toEqual([
@@ -106,8 +108,8 @@ describe("check-in offline: sincronização", () => {
     const at = new Date(Date.now() - 5 * 60_000).toISOString();
     // Ex.: ingresso comprado depois do download (fora da lista) ou lista vencida no aparelho.
     const r = await syncOfflineCheckins(db, staff, event.id, [
-      { payload: qrPayload(tickets[0]), scannedAt: at, localResult: "INVALID" },
-      { payload: qrPayload(tickets[1]), scannedAt: at, localResult: "EVENT_NOT_ACTIVE" },
+      { payload: gateQr(tickets[0], new Date(at)), scannedAt: at, localResult: "INVALID" },
+      { payload: gateQr(tickets[1], new Date(at)), scannedAt: at, localResult: "EVENT_NOT_ACTIVE" },
     ]);
     expect(r.items.map((i) => [i.result, i.conflict, i.divergence])).toEqual([
       ["INVALID", false, "REFUSED_BUT_VALID"],
@@ -116,7 +118,7 @@ describe("check-in offline: sincronização", () => {
     expect(r.counters).toEqual({ admitted: 0, total: 3 });
     expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } })).status).toBe("VALID");
     // A pessoa volta com internet: entra normalmente (não vira "JÁ UTILIZADO").
-    expect((await checkInTicket(db, staff, event.id, qrPayload(tickets[0]))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, staff, event.id, gateQr(tickets[0]))).result).toBe("ADMITTED");
   });
 
   it("leituras que concordam não geram divergência; recusas corretas também não", async () => {
@@ -124,9 +126,9 @@ describe("check-in offline: sincronização", () => {
     await db.issuedTicket.update({ where: { id: tickets[2].id }, data: { status: "REVOKED" } });
     const now = new Date().toISOString();
     const r = await syncOfflineCheckins(db, staff, event.id, [
-      { payload: qrPayload(tickets[0]), scannedAt: now, localResult: "ADMITTED" },
-      { payload: qrPayload(tickets[0]), scannedAt: now, localResult: "DUPLICATE" },
-      { payload: qrPayload(tickets[2]), scannedAt: now, localResult: "REVOKED" },
+      { payload: gateQr(tickets[0], new Date(now)), scannedAt: now, localResult: "ADMITTED" },
+      { payload: gateQr(tickets[0], new Date(now)), scannedAt: now, localResult: "DUPLICATE" },
+      { payload: gateQr(tickets[2], new Date(now)), scannedAt: now, localResult: "REVOKED" },
       { payload: "lixo", scannedAt: now, localResult: "INVALID" },
     ]);
     expect(r.items.map((i) => i.divergence)).toEqual([undefined, undefined, undefined, undefined]);
@@ -138,13 +140,13 @@ describe("check-in offline: sincronização", () => {
     const { owner, staff, otherStaff, customer, event, tickets } = await setup();
     const t1 = new Date(Date.now() - 10 * 60_000).toISOString();
     const t2 = new Date(Date.now() - 5 * 60_000).toISOString();
-    await syncOfflineCheckins(db, staff, event.id, [{ payload: qrPayload(tickets[0]), scannedAt: t1, localResult: "ADMITTED" }]);
+    await syncOfflineCheckins(db, staff, event.id, [{ payload: gateQr(tickets[0], new Date(t1)), scannedAt: t1, localResult: "ADMITTED" }]);
     await syncOfflineCheckins(db, otherStaff, event.id, [
-      { payload: qrPayload(tickets[0]), scannedAt: t2, localResult: "ADMITTED" },
-      { payload: qrPayload(tickets[1]), scannedAt: t2, localResult: "INVALID" },
+      { payload: gateQr(tickets[0], new Date(t2)), scannedAt: t2, localResult: "ADMITTED" },
+      { payload: gateQr(tickets[1], new Date(t2)), scannedAt: t2, localResult: "INVALID" },
     ]);
     // Leitura online nunca entra na lista.
-    await checkInTicket(db, staff, event.id, qrPayload(tickets[0]));
+    await checkInTicket(db, staff, event.id, gateQr(tickets[0]));
 
     const list = await listOfflineDivergences(db, owner, event.id);
     expect([list.total, list.admittedButRejected, list.pageCount]).toEqual([2, 1, 1]);
@@ -168,7 +170,7 @@ describe("check-in offline: sincronização", () => {
 
   it("recusa sem permissão, vazio ou acima do limite", async () => {
     const { unassigned, staff, event, tickets } = await setup();
-    const one = [{ payload: qrPayload(tickets[0]), scannedAt: new Date().toISOString(), localResult: "ADMITTED" as const }];
+    const one = [{ payload: gateQr(tickets[0], new Date()), scannedAt: new Date().toISOString(), localResult: "ADMITTED" as const }];
     await expect(syncOfflineCheckins(db, unassigned, event.id, one)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(syncOfflineCheckins(db, staff, event.id, [])).rejects.toMatchObject({ code: "VALIDATION" });
     await expect(syncOfflineCheckins(db, staff, event.id, "x")).rejects.toMatchObject({ code: "VALIDATION" });

@@ -1,5 +1,5 @@
 import "server-only";
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createECDH, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { env } from "./env";
 
 export const randomToken = (bytes = 32) => randomBytes(bytes).toString("base64url");
@@ -18,6 +18,27 @@ export const qrTokenHash = (token: string) => createHash("sha256").update(token)
  */
 export function deriveQrToken(code: string, version: number): string {
   return createHmac("sha256", env().QR_TOKEN_SECRET).update(`eb-qr:${code}:${version}`).digest("base64url");
+}
+
+/** Ordem da curva P-256: a chave privada precisa estar em [1, n). */
+const P256_N = BigInt("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+
+/**
+ * Chave de assinatura do QR dinâmico de um ingresso (ECDSA P-256), derivada de
+ * QR_TOKEN_SECRET + código + versão: nada é guardado no banco, e trocar a versão (ex.:
+ * transferência aceita) troca a chave. `d` vai só para o celular do titular; `x`/`y`
+ * (pública) vão para a portaria e não permitem gerar QR.
+ */
+export function deriveTicketSigningKey(code: string, version: number): { d: string; x: string; y: string } {
+  for (let attempt = 0; ; attempt++) {
+    const d = createHmac("sha256", env().QR_TOKEN_SECRET).update(`eb-qr-key:${code}:${version}:${attempt}`).digest();
+    const n = BigInt(`0x${d.toString("hex")}`);
+    if (n === BigInt(0) || n >= P256_N) continue; // probabilidade ~2^-32
+    const ecdh = createECDH("prime256v1");
+    ecdh.setPrivateKey(d);
+    const pub = ecdh.getPublicKey(); // 0x04 ‖ x ‖ y
+    return { d: d.toString("base64url"), x: pub.subarray(1, 33).toString("base64url"), y: pub.subarray(33, 65).toString("base64url") };
+  }
 }
 
 export function safeEqual(a: string, b: string): boolean {

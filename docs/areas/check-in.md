@@ -154,6 +154,32 @@ hash do QR invalidado, datas, IP e agente. Auditoria: `ticket.transfer.requested
 e-mail indicado pode aceitar. Os e-mails da transferência são enviados fora da
 transação e não são reenviados se falharem.
 
+## QR dinâmico (anti-print)
+
+Um site não consegue bloquear print nem captura de tela; em vez disso, o print fica inútil.
+- **Formato EB2** (`src/lib/qr-payload.ts`): `EB2:<código>:<passo>:<assinatura>`.
+  - `passo` = `floor(hora / 30 s)`.
+  - A assinatura é ECDSA P-256 de `eb2:<código>:<passo>` (IEEE P1363, base64url).
+- **Chave por ingresso** (`deriveTicketSigningKey` em `crypto.ts`): derivada de `QR_TOKEN_SECRET` + código + `tokenVersion`, sem nada guardado no banco. A transferência aceita sobe a versão e troca a chave.
+  - **Privada (`d`):** só vai para a página do próprio titular (`ticketSigningJwk`).
+  - **Pública (`x`,`y`):** vai para a portaria e a lista offline. Não permite gerar QR, então um aparelho perdido não forja entradas.
+- **Celular** (`DynamicTicketQr`):
+  - assina com WebCrypto e troca o QR a cada passo, com o relógio corrigido pela hora do servidor no carregamento;
+  - mostra relógio ao vivo, anel animado e contagem para o próximo QR;
+  - borra o QR quando a página perde o foco (inclui a miniatura do alternador de apps);
+  - não imprime o QR.
+- **Portaria online** (`checkInTicket`):
+  - assinatura da versão atual e passo dentro de ±`QR_STEP_TOLERANCE` (2) → segue o fluxo normal;
+  - assinatura certa fora do prazo → INVALID "QR EXPIRADO (print ou foto)";
+  - assinatura de versão anterior → "QR SUBSTITUÍDO".
+- **Portaria offline:** confere com a chave pública da lista e o relógio do aparelho. Na sincronização, o servidor confere o passo contra `scannedAt`.
+- **QR fixo (EB1):** PDF, carteira e prints antigos. Recusado por padrão com "QR FIXO … não vale". Na transição, `QR_STATIC_ACCEPTED=true` volta a aceitá-lo, online e na lista offline (`staticAccepted`).
+- **PDF, Apple Wallet e Google Wallet:** viram comprovantes, sem código de barras, com a explicação. O e-mail de entrega também explica.
+- **Limites:**
+  - um print vale por até ~90 s (tolerância);
+  - o titular pode compartilhar o acesso à conta, que é o mesmo risco de transferir;
+  - um aparelho offline com hora errada pode recusar QRs válidos ou aceitar um print recente.
+
 ## O que falta (por prioridade)
 
 1. ~~**Vazamento entre organizações em WRONG_EVENT.**~~ **Feito.** Ao ler um

@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyPaymentSnapshot } from "@/server/services/payments";
 import { reconcilePayments } from "@/server/services/reconciliation";
 import { checkInTicket } from "@/server/services/checkin";
-import { qrPayload } from "@/server/services/tickets";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 const future = (minutes: number) => new Date(Date.now() + minutes * 60_000);
@@ -25,7 +24,7 @@ describe("reconciliação de pagamentos já confirmados", () => {
     expect(result).toMatchObject({ settledPaymentsSynced: 1, errors: [] });
     expect(await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).toMatchObject({ status: state });
     expect(await db.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: state === "REFUNDED" ? "REFUNDED" : "DISPUTED" });
-    expect(await checkInTicket(db, owner, event.id, qrPayload(ticket))).toMatchObject({ result: "REVOKED" });
+    expect(await checkInTicket(db, owner, event.id, gateQr(ticket))).toMatchObject({ result: "REVOKED" });
     const ledger = await db.financialLedgerEntry.findMany({ where: { orderId: order.id } });
     const counters = await db.ticketType.findUniqueOrThrow({ where: { id: ticket.ticketTypeId } });
     const refundCount = await db.refund.count({ where: { orderId: order.id } });

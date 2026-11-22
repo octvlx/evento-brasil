@@ -6,7 +6,6 @@
 import "server-only";
 import { PKPass } from "passkit-generator";
 import { formatDateLong, formatDateShort, formatTime, timezoneLabel } from "@/lib/datetime";
-import { qrPayload } from "../../services/tickets";
 import type { AppleWalletConfig } from "./config";
 import { APPLE_PASS_IMAGES } from "./images";
 import type { WalletTicket } from "./types";
@@ -44,7 +43,9 @@ export function applePassJson(t: WalletTicket, cfg: Pick<AppleWalletConfig, "pas
     // Aparece na tela de bloqueio perto da hora do evento.
     relevantDate: t.event.startsAt.toISOString(),
     expirationDate: t.event.endsAt.toISOString(),
-    ...(opts.voided ? { voided: true } : { barcodes: [{ format: "PKBarcodeFormatQR", message: qrPayload(t), messageEncoding: "iso-8859-1", altText: t.code }] }),
+    // Sem código de barras: o QR de entrada só vale na tela do ingresso (QR dinâmico). O
+    // passe é comprovante/lembrete; com o evento anulado, marca como inválido.
+    ...(opts.voided ? { voided: true } : {}),
     eventTicket: {
       headerFields: [{ key: "date", label: "DATA", value: formatDateShort(t.event.startsAt, tz), textAlignment: "PKTextAlignmentRight" }],
       primaryFields: [{ key: "event", label: "EVENTO", value: t.event.title }],
@@ -63,7 +64,7 @@ export function applePassJson(t: WalletTicket, cfg: Pick<AppleWalletConfig, "pas
         ...(opts.voided ? [{ key: "voided", label: "Situação", value: "Este passe não vale mais para entrar. Veja o ingresso no site." }] : []),
         ...(t.kind === "HALF_PRICE" ? [{ key: "half", label: "Meia-entrada", value: "Apresente o documento comprobatório na entrada." }] : []),
         ...(t.isSimulated ? [{ key: "test", label: "Ingresso de teste", value: "Pagamento simulado: sem validade real." }] : []),
-        { key: "rules", label: "Atenção", value: "Não compartilhe o QR code: ele é validado uma única vez na entrada." },
+        { key: "rules", label: "Entrada", value: "Este passe é comprovante. Na portaria, abra o ingresso no app/site e mostre o QR da tela (muda a cada 30 s; print não vale)." },
       ],
     },
   };

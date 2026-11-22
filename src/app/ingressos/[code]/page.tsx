@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import QRCode from "qrcode";
 import Link from "next/link";
 import { ArrowLeft, ArrowLeftRight, Building2, Download, MapPin, Receipt, Wallet } from "lucide-react";
 import { Alert, Badge, Skeleton } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
-import { qrPayload } from "@/server/services/tickets";
+import { ticketSigningJwk } from "@/server/services/tickets";
+import { DynamicTicketQr } from "@/features/tickets/dynamic-qr";
 import { transferBlockedReason } from "@/server/services/transfers";
 import { organizerIdentity, organizerIdentityLine } from "@/server/tickets/organizer-identity";
 import { formatDateLong, formatDateTimeShort, formatTime, timezoneLabel } from "@/lib/datetime";
@@ -67,7 +67,8 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
   const city = t.event.venue?.city ?? t.event.city;
   // Botões de carteira só quando a conta da Apple/Google estiver configurada (docs/wallet.md).
   const wallet = t.status === "VALID" ? walletAvailability() : { apple: false, google: false };
-  const svg = t.status === "VALID" ? await QRCode.toString(qrPayload(t), { type: "svg", margin: 1, errorCorrectionLevel: "M" }) : null;
+  // QR dinâmico: só o titular recebe a chave do próprio ingresso (ver services/tickets.ts).
+  const signing = t.status === "VALID" ? ticketSigningJwk(t) : null;
 
   return (
     <>
@@ -92,8 +93,8 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
         </div>
         <div className="relative border-t-2 border-dashed border-border p-6 text-center">
           {t.order.isSimulated && <Alert variant="warning" className="mb-4 text-left">Ingresso de teste (pagamento simulado). Sem validade real.</Alert>}
-          {svg ? (
-            <div className="mx-auto w-64 rounded-2xl bg-white p-3 [&_svg]:h-auto [&_svg]:w-full" role="img" aria-label="QR code do ingresso" dangerouslySetInnerHTML={{ __html: svg }} />
+          {signing ? (
+            <DynamicTicketQr code={t.code} jwk={signing} serverNowMs={now.getTime()} holderName={t.holderName ?? ""} />
           ) : (
             <div className="mx-auto grid size-64 place-items-center rounded-2xl bg-muted text-sm text-muted-foreground">
               {t.status === "CHECKED_IN" ? "Ingresso já utilizado" : revocationText(t.revocationReason)}
@@ -127,7 +128,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
           {t.status !== "REVOKED" && (
             <div className="mt-5 flex flex-wrap justify-center gap-2 print:hidden">
               <a href={`/api/tickets/${t.code}/pdf`} target="_blank" rel="noopener" className={buttonVariants({ variant: "outline" })}>
-                <Download aria-hidden /> Salvar PDF
+                <Download aria-hidden /> Comprovante (PDF)
               </a>
               <PrintButton />
               {canTransfer && (
@@ -147,7 +148,10 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
               )}
             </div>
           )}
-          <p className="mt-4 text-xs text-muted-foreground">Não compartilhe este QR code: ele é validado uma única vez na entrada.</p>
+          <p className="mt-4 text-xs text-muted-foreground">
+            A entrada é só pelo QR desta tela, que muda a cada 30 segundos: print, foto, PDF e carteira não valem na portaria. Deixe o celular com bateria e abra o ingresso
+            antes de chegar.
+          </p>
           {organizer && (
             <p className="mt-3 flex items-start justify-center gap-1.5 border-t border-border pt-3 text-xs text-muted-foreground">
               <Building2 className="mt-0.5 size-3.5 shrink-0" aria-hidden />

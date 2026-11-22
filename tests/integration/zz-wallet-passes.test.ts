@@ -4,7 +4,6 @@ import { generateKeyPairSync } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { checkInTicket } from "@/server/services/checkin";
 import { loadPdfTickets } from "@/server/services/notifications";
-import { qrPayload } from "@/server/services/tickets";
 import { acceptTransfer, requestTransfer } from "@/server/services/transfers";
 import { toWalletTickets } from "@/server/tickets/wallet";
 import type { ApplePushSender } from "@/server/tickets/wallet/apple-push";
@@ -22,7 +21,7 @@ import {
   unregisterAppleDevice,
   WALLET_SYNC_MAX_ATTEMPTS,
 } from "@/server/tickets/wallet/passes";
-import { buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
+import { buyAndPay, db, gateQr, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
 import { TEST_SIGNER_CERT, TEST_SIGNER_KEY, TEST_WWDR_CERT } from "../support/wallet-test-certs";
 
 // Apple ligada e site em HTTPS (web service de atualização), só neste arquivo.
@@ -111,7 +110,7 @@ describe("passes registrados", () => {
 
   it("ingresso usado ou cancelado não gera passe novo", async () => {
     const { owner, event, order, wallet } = await setup();
-    await checkInTicket(db, owner, event.id, qrPayload(wallet[0]));
+    await checkInTicket(db, owner, event.id, gateQr(wallet[0]));
     await db.issuedTicket.update({ where: { id: wallet[1].ticketId }, data: { status: "REVOKED" } });
     expect(await toWalletTickets(db, await loadPdfTickets(db, { orderId: order.id }))).toEqual([]);
   });
@@ -134,7 +133,7 @@ describe("sincronização (cron)", () => {
     const deps = { apple: null, google, fetchImpl: g.fetchImpl, push: fakePush().push };
     expect(await syncWalletPasses(db, deps)).toMatchObject({ google: 0 });
 
-    await checkInTicket(db, owner, event.id, qrPayload(wallet[0]));
+    await checkInTicket(db, owner, event.id, gateQr(wallet[0]));
     await db.issuedTicket.update({ where: { id: wallet[1].ticketId }, data: { status: "REVOKED" } });
     expect(await syncWalletPasses(db, deps)).toMatchObject({ google: 2, failed: 0 });
     expect(g.patches.sort((a, b) => a.state.localeCompare(b.state))).toEqual([
@@ -245,12 +244,12 @@ describe("web service da Apple", () => {
     expect(await db.appleWalletRegistration.count({ where: { passId: p1.id } })).toBe(0);
   });
 
-  it("passe atual: válido com QR; reembolsado ou transferido, anulado, sem QR e sem o novo titular", async () => {
+  it("passe atual: válido (comprovante, sem QR); reembolsado ou transferido, anulado e sem o novo titular", async () => {
     const { buyer, wallet } = await setup(1);
     await applePassForTicket(db, wallet[0], apple);
     const pass = await db.walletPass.findFirstOrThrow();
     const live = passJson(await currentApplePass(db, pass, apple));
-    expect(live.barcodes[0].message).toBe(qrPayload(wallet[0]));
+    expect(live).not.toHaveProperty("barcodes");
     expect(live).not.toHaveProperty("voided");
 
     const recipient = await makeUser();

@@ -186,10 +186,10 @@ export async function buildQueuedOrderEmail(
 ${order.isSimulated ? '<p style="color:#b4123a"><strong>Ambiente de testes:</strong> pagamento simulado, ingressos sem valor.</p>' : ""}
 <p><strong>${title}</strong><br>${escapeHtml(when)}</p>
 <p>Pedido ${order.publicCode} · ${tickets.length} ingresso(s) · Total ${formatBRL(order.totalCents)}</p>
-<p>Os ingressos estão em anexo (PDF) e também em <a href="${url}">Meus ingressos</a>. Apresente o QR code na entrada; ele vale para uma única leitura.</p>
+<p><strong>Na entrada, mostre o QR na tela do celular:</strong> abra <a href="${url}">Meus ingressos</a> logado na sua conta. O QR muda a cada 30 segundos, por isso print, foto e o PDF em anexo (comprovante) não valem na portaria.</p>
 ${walletHtml}
 </body></html>`;
-  const text = `Seus ingressos chegaram!\n${order.event.title}\n${when}\nPedido ${order.publicCode}\nAcesse: ${url}${googleUrl ? `\nGoogle Wallet: ${googleUrl}` : ""}`;
+  const text = `Seus ingressos chegaram!\n${order.event.title}\n${when}\nPedido ${order.publicCode}\nNa entrada, mostre o QR na tela do celular (muda a cada 30 s; print e PDF não valem): ${url}${googleUrl ? `\nGoogle Wallet (comprovante): ${googleUrl}` : ""}`;
   return {
     to: order.buyerEmail,
     subject: `Seus ingressos chegaram | ${BRAND.name}`,

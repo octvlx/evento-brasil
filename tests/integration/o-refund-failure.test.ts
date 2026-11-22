@@ -14,8 +14,7 @@ import {
   REFUND_RETRY_POLICY,
   requestCustomerRefund,
 } from "@/server/services/refunds";
-import { qrPayload } from "@/server/services/tickets";
-import { adapter, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
+import { adapter, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, resetDb } from "../support/fixtures";
 
 beforeEach(resetDb);
 afterEach(async () => {
@@ -88,7 +87,7 @@ describe("recusa do provedor", () => {
     expect(await attemptAudits(refund.id)).toBe(1);
 
     // O ingresso continua sem uso enquanto o estorno está pendente.
-    expect((await checkInTicket(db, owner, event.id, qrPayload(s.tickets[0]))).result).toBe("REVOKED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(s.tickets[0]))).result).toBe("REVOKED");
 
     const [queued] = await listFailedRefunds(db, admin);
     expect(queued).toMatchObject({ refundId: refund.id, attempts: 1, awaitingAdminDecision: false, restoreBlockedReason: null });
@@ -183,7 +182,7 @@ describe("decisão do admin", () => {
     await expect(adminRestoreAfterFailedRefund(db, adapter, admin, refund.id, "de novo")).rejects.toMatchObject({ code: "INVALID_STATE" });
 
     // Os ingressos voltam a valer na portaria.
-    expect((await checkInTicket(db, owner, event.id, qrPayload(s.tickets[0]))).result).toBe("ADMITTED");
+    expect((await checkInTicket(db, owner, event.id, gateQr(s.tickets[0]))).result).toBe("ADMITTED");
   });
 
   it("restaurado sem uso, o comprador pode pedir reembolso de novo (chave nova)", async () => {
@@ -246,7 +245,7 @@ describe("concorrência", () => {
       const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id } });
       const [restore, ...scans] = await Promise.allSettled([
         adminRestoreAfterFailedRefund(db, adapter, admin, refund.id, "restaurar"),
-        ...tickets.map((t) => checkInTicket(db, owner, event.id, qrPayload(t))),
+        ...tickets.map((t) => checkInTicket(db, owner, event.id, gateQr(t))),
       ]);
       expect(restore.status).toBe("fulfilled");
       const s = await state(order.id);
@@ -292,7 +291,7 @@ describe("concorrência", () => {
     const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id } });
     const [, ...scans] = await Promise.all([
       reconcilePayments(db, flaky, minutesFromNow(6)),
-      ...tickets.map((t) => checkInTicket(db, owner, event.id, qrPayload(t))),
+      ...tickets.map((t) => checkInTicket(db, owner, event.id, gateQr(t))),
     ]);
     expect(scans.every((r) => r.result === "REVOKED")).toBe(true);
     expect((await state(order.id)).order.status).toBe("REFUNDED");
