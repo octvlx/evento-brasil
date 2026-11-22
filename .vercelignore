@@ -1,0 +1,18 @@
+# Arquivos que o `vercel deploy` não envia (deploy pela CLI). Segredos ficam só nas
+# variáveis de ambiente do projeto na Vercel, nunca no código enviado.
+.env*
+!.env.example
+.data
+.neon
+.next
+node_modules
+coverage
+test-results
+playwright-report
+my-mercadopago-app
+.codex
+.claude/worktrees
+.devdb*
+*.log
+*.pem
+tsconfig.tsbuildinfo
