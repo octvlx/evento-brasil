@@ -94,7 +94,13 @@ export function checkProductionEnv(vars: Vars): CheckItem[] {
   } else add("fail", "PAYMENT_PROVIDER", "valor desconhecido");
   if (isTrue(vars.ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION)) add("fail", "ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION", "só para homologação; desligue em produção");
   if (isTrue(vars.MERCADO_PAGO_OAUTH_TEST_TOKEN)) add("fail", "MERCADO_PAGO_OAUTH_TEST_TOKEN", "é só para sandbox");
-  if (!isTrue(vars.SETTLEMENT_ENABLED)) add("warn", "SETTLEMENT_ENABLED", "repasse automático aos organizadores desligado; repasses serão manuais");
+  // Com o split do Mercado Pago o dinheiro já vai direto ao organizador (acompanhado em Vendas e
+  // repasses); a liquidação própria só faria sentido com um provedor sem split.
+  if (!isTrue(vars.SETTLEMENT_ENABLED) && vars.PAYMENT_PROVIDER !== "mercadopago") add("warn", "SETTLEMENT_ENABLED", "liquidação própria desligada e provedor sem split: repasses serão manuais");
+
+  // Portaria: só o QR dinâmico do site/app (decisão de negócio). O QR fixo do PDF, da carteira
+  // ou de um print nunca vale em produção.
+  if (isTrue(vars.QR_STATIC_ACCEPTED)) add("fail", "QR_STATIC_ACCEPTED", "a portaria aceitaria o QR fixo (PDF, carteira, print); em produção só vale o QR dinâmico");
 
   // E-mail
   if (vars.EMAIL_PROVIDER !== "resend") add("fail", "EMAIL_PROVIDER", "configure resend (console não envia e-mails)");
