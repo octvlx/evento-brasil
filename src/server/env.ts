@@ -96,6 +96,9 @@ export function env(): Env {
     );
   }
   const e = parsed.data;
+  // Preview da Vercel: sem APP_URL própria, usa a URL estável do branch (cada PR tem a sua).
+  if (previewDeployment(e.NODE_ENV) && !process.env.APP_URL && !e.APP_BASE_URL && process.env.VERCEL_BRANCH_URL)
+    e.APP_URL = `https://${process.env.VERCEL_BRANCH_URL}`;
   if (e.APP_BASE_URL) {
     if (
       process.env.APP_URL &&
@@ -107,15 +110,18 @@ export function env(): Env {
   if (e.EMAIL_PROVIDER === "resend" && !(e.RESEND_API_KEY || e.EMAIL_API_KEY))
     throw new Error("RESEND_API_KEY não configurada.");
   if (e.NODE_ENV === "production") {
-    if (e.MERCADO_PAGO_OAUTH_TEST_TOKEN)
+    // Preview = homologação: aceita sandbox do MP e e-mail no log (ver previewDeployment).
+    const preview = previewDeployment(e.NODE_ENV);
+    if (e.MERCADO_PAGO_OAUTH_TEST_TOKEN && !preview)
       throw new Error("MERCADO_PAGO_OAUTH_TEST_TOKEN é só para sandbox e não pode ser usado em produção.");
-    if (e.EMAIL_PROVIDER !== "resend")
+    if (e.EMAIL_PROVIDER !== "resend" && !preview)
       throw new Error("Configure um provedor real de e-mail em produção.");
     const from = e.EMAIL_FROM.match(/<([^>]+)>/)?.[1] ?? e.EMAIL_FROM;
     const sender = z.string().email().safeParse(from);
     if (
-      !sender.success ||
-      /@(resend\.dev|example\.(com|org)|localhost)$/i.test(from)
+      e.EMAIL_PROVIDER === "resend" &&
+      (!sender.success ||
+        /@(resend\.dev|example\.(com|org)|localhost)$/i.test(from))
     )
       throw new Error(
         "EMAIL_FROM exige remetente de domínio próprio verificado em produção.",
@@ -157,3 +163,15 @@ export function env(): Env {
 }
 
 export const isProduction = () => env().NODE_ENV === "production";
+
+/**
+ * Deploy de Preview da Vercel (VERCEL_ENV, definido pela própria Vercel): roda como
+ * produção (https, cookies seguros, segredos fortes), mas é homologação — usa o banco
+ * de desenvolvimento e libera o sandbox do Mercado Pago, as contas demo e o e-mail no log.
+ */
+function previewDeployment(nodeEnv: string): boolean {
+  return nodeEnv === "production" && process.env.VERCEL_ENV === "preview";
+}
+export const isPreviewDeployment = () => previewDeployment(env().NODE_ENV);
+/** Produção de verdade (não Preview): regras de clientes reais. */
+export const isLiveProduction = () => isProduction() && !isPreviewDeployment();

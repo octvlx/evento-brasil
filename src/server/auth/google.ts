@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { z } from "zod";
 import { encryptPII, decryptPII, randomToken } from "../crypto";
-import { env } from "../env";
+import { env, isLiveProduction } from "../env";
 import { AppError } from "../errors";
 import { authAppUrl, internalReturnPath } from "../services/email-verification";
 import type { Db } from "../db";
@@ -55,7 +55,7 @@ export async function exchangeGoogleCode(code: string, state: string, rawCookie?
 }
 export async function findGoogleUser(db: Db, subject: string, email: string) {
   const user = await db.user.findUnique({ where: { googleSubject: subject } });
-  if (user) { assertActive(user); if (env().NODE_ENV === "production" && user.isDemoAccount) throw unavailable(); return user; }
+  if (user) { assertActive(user); if (isLiveProduction() && user.isDemoAccount) throw unavailable(); return user; }
   if (await db.user.findUnique({ where: { email }, select: { id: true } })) throw new AppError("CONFLICT", "Este e-mail já possui uma conta. Entre usando sua senha; não vinculamos contas automaticamente.");
   return null;
 }

@@ -17,7 +17,7 @@ import {
 } from "@/server/services/email-verification";
 import { registerGoogleUser } from "@/server/services/google-registration";
 import { GOOGLE_PENDING_COOKIE } from "@/server/auth/google";
-import { env, isProduction } from "@/server/env";
+import { env, isLiveProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { failureLimiter, rateLimit } from "@/server/rate-limit";
 import { clientIp } from "@/server/client-ip";
@@ -63,7 +63,7 @@ export async function loginAction(
       db,
       parsed.data.email,
       parsed.data.password,
-      { production: isProduction() },
+      { production: isLiveProduction() },
     );
     if (!user) {
       await failureLimiter.fail(key, WINDOW);
