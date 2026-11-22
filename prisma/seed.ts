@@ -150,8 +150,9 @@ async function main() {
     data: { scope: "PLATFORM", percentBps: 700, bearer: "ORGANIZER", processingFeeBearer: "ORGANIZER", policyVersion: "platform:default:v1", createdById: admin.id },
   });
 
+  // A migração 20261122130000_default_event_categories já cria estas categorias.
   const categories = Object.fromEntries(
-    await Promise.all(CATEGORIES.map(async ([slug, name], i) => [slug, await db.eventCategory.create({ data: { slug, name, sortOrder: i } })])),
+    await Promise.all(CATEGORIES.map(async ([slug, name], i) => [slug, await db.eventCategory.upsert({ where: { slug }, create: { slug, name, sortOrder: i }, update: { name, sortOrder: i } })])),
   );
   const cities: Record<string, Awaited<ReturnType<typeof db.city.create>>> = {};
   for (const [name, uf, isFeatured] of CITIES) {
