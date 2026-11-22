@@ -107,6 +107,8 @@ vendedores ficam ilegíveis, e não há como recuperar.
   quem responde pelo dinheiro.
 - ☐ `/admin/pagamentos` sem webhooks pendentes.
 
+Manutenção programada: `docs/manutencao.md` (`MAINTENANCE_MODE`).
+
 ## 6. A cada nova versão
 
 1. CI verde no PR e merge no `main`.
