@@ -34,10 +34,10 @@ test("compra com PIX simulado → ingresso com QR → check-in → leitura dupli
   await ticketLink.click();
   await expect(buyer.getByRole("img", { name: "QR code do ingresso" })).toBeVisible();
   await expect(buyer.getByText(code)).toBeVisible();
-  // Voltar, imprimir e salvar em PDF (abre no visualizador do navegador).
+  // Voltar, imprimir e baixar o comprovante em PDF (abre no visualizador do navegador; sem QR de entrada).
   await expect(buyer.getByRole("link", { name: "Meus ingressos" }).first()).toBeVisible();
   await expect(buyer.getByRole("button", { name: "Imprimir" })).toBeVisible();
-  const pdfLink = buyer.getByRole("link", { name: "Salvar PDF" });
+  const pdfLink = buyer.getByRole("link", { name: "Comprovante (PDF)" });
   await expect(pdfLink).toHaveAttribute("target", "_blank");
   const pdf = await buyer.request.get((await pdfLink.getAttribute("href"))!);
   expect(pdf.status()).toBe(200);
