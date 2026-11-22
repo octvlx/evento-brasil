@@ -180,6 +180,12 @@ Um site não consegue bloquear print nem captura de tela; em vez disso, o print 
   - o titular pode compartilhar o acesso à conta, que é o mesmo risco de transferir;
   - um aparelho offline com hora errada pode recusar QRs válidos ou aceitar um print recente.
 
+**Decisão (22/11/2026): só o QR dinâmico vale.** Não há transição: PDF, carteira e print nunca entram.
+- **Bloqueio no deploy:** `npm run deploy:check` falha se `QR_STATIC_ACCEPTED=true`.
+- **Aviso aos titulares** de ingressos emitidos antes da mudança (`services/qr-notice.ts`):
+  - `npm run email:aviso-qr` simula (só conta);
+  - `-- --enviar` põe na fila um e-mail por titular e evento futuro (não duplica, vence no início do evento), e o `email:worker` envia.
+
 ## O que falta (por prioridade)
 
 1. ~~**Vazamento entre organizações em WRONG_EVENT.**~~ **Feito.** Ao ler um

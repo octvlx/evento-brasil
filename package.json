@@ -28,6 +28,7 @@
     "email:worker": "tsx --conditions=react-server scripts/email-worker.ts",
     "email:status": "tsx --conditions=react-server scripts/email-status.ts",
     "email:retry": "tsx --conditions=react-server scripts/email-retry.ts",
+    "email:aviso-qr": "tsx --conditions=react-server scripts/qr-aviso-compradores.ts",
     "deploy:check": "tsx --conditions=react-server scripts/production-check.ts",
     "admin:promote": "tsx --conditions=react-server scripts/admin-promote.ts"
   },

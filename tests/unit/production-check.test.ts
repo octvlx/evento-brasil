@@ -77,10 +77,15 @@ describe("verificação de produção: configuração", () => {
     expect(fails(checkProductionEnv({ ...good, GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "s" }))).toEqual([]);
   });
 
-  it("avisa (sem bloquear) banco sem TLS, repasse desligado e checagem de senha vazada desligada", () => {
+  it("avisa (sem bloquear) banco sem TLS e checagem de senha vazada desligada; com split do Mercado Pago, liquidação própria desligada não avisa", () => {
     const items = checkProductionEnv({ ...good, DATABASE_URL: "postgresql://u:p@db.exemplo.com.br/app", SETTLEMENT_ENABLED: "false", PASSWORD_BREACH_CHECK: "false" });
     expect(fails(items)).toEqual([]);
-    expect(warns(items).sort()).toEqual(["DATABASE_URL", "PASSWORD_BREACH_CHECK", "SETTLEMENT_ENABLED"]);
+    expect(warns(items).sort()).toEqual(["DATABASE_URL", "PASSWORD_BREACH_CHECK"]);
+  });
+
+  it("bloqueia o QR fixo na portaria (só vale o QR dinâmico do site/app)", () => {
+    expect(fails(checkProductionEnv({ ...good, QR_STATIC_ACCEPTED: "true" }))).toEqual(["QR_STATIC_ACCEPTED"]);
+    expect(fails(checkProductionEnv({ ...good, QR_STATIC_ACCEPTED: "false" }))).toEqual([]);
   });
 });
 
