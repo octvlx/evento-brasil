@@ -50,6 +50,9 @@ async function Content({ searchParams }: { searchParams: Search }) {
   };
 
   if (!sp.evento) {
+    // Organização sem locais: o passo 2 só oferece "novo local". O assistente não é
+    // remontado ao criar o rascunho, então o modo precisa nascer certo aqui.
+    const initial = options.venues.length ? BLANK : { ...BLANK, venueMode: "new" as const };
     // Rascunhos do assistente ainda incompletos: oferecer continuar de onde parou.
     const drafts = await db.event.findMany({
       where: { organizationId: org.id, status: "DRAFT" },
@@ -88,7 +91,7 @@ async function Content({ searchParams }: { searchParams: Search }) {
             </ul>
           </Card>
         ) : null}
-        <EventWizard {...common} eventId={null} step={1} completed={[]} initial={BLANK} ticketTypes={[]} estimates={{}} />
+        <EventWizard {...common} eventId={null} step={1} completed={[]} initial={initial} ticketTypes={[]} estimates={{}} />
       </>
     );
   }
