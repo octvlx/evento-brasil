@@ -1,11 +1,11 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { headers } from "next/headers";
 import { requireUser } from "@/server/auth/current";
 import { db } from "@/server/db";
 import { AppError, toActionResult } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 import { saveBuyerAddress, saveBuyerPersonalData } from "@/server/services/buyer-profile";
 import { lookupPostalAddress } from "@/server/services/postal-address";
 import { buyerAddressSchema, buyerPersonalSchema, type BuyerAddressInput, type BuyerPersonalInput } from "./schemas";
@@ -35,7 +35,7 @@ export async function saveBuyerAddressAction(raw: BuyerAddressInput) {
 export async function lookupPostalAddressAction(postalCode: string) {
   const actor = await requireUser();
   return toActionResult(async () => {
-    const client = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    const client = (await clientIp()) ?? "local";
     await rateLimit(`buyer-cep:${actor.id}:${client}`, 20, 60_000);
     return lookupPostalAddress(postalCode);
   });

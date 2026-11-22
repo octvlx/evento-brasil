@@ -1,0 +1,17 @@
+# Nada de segredos, dados locais nem artefatos no contexto do build.
+.env*
+!.env.example
+.data
+.git
+.github
+.claude
+.codex
+.next
+node_modules
+coverage
+test-results
+playwright-report
+my-mercadopago-app
+*.log
+*.pem
+tsconfig.tsbuildinfo

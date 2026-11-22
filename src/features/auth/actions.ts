@@ -20,6 +20,7 @@ import { GOOGLE_PENDING_COOKIE } from "@/server/auth/google";
 import { env, isProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { failureLimiter, rateLimit } from "@/server/rate-limit";
+import { clientIp } from "@/server/client-ip";
 import { createSession, deleteSession } from "@/server/auth/sessions";
 import {
   clearSessionCookie,
@@ -38,12 +39,7 @@ import {
 import { deleteOwnAccount } from "@/server/services/account-deletion";
 
 async function clientKey() {
-  const h = await headers();
-  return (
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    h.get("x-real-ip") ||
-    "local"
-  );
+  return (await clientIp()) ?? "local";
 }
 
 export type LoginState = { error?: string } | undefined;

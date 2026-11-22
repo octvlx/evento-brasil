@@ -1,10 +1,11 @@
 "use server";
 
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/server/db";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
+import { clientIp as requestIp } from "@/server/client-ip";
 import { clearSessionCookie, requireUser, safeNext, SESSION_COOKIE, setSessionCookie } from "@/server/auth/current";
 import { deleteSession, SESSION_TTL_MS } from "@/server/auth/sessions";
 import {
@@ -16,8 +17,7 @@ import {
 } from "@/server/services/two-factor";
 
 async function clientIp() {
-  const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local";
+  return (await requestIp()) ?? "local";
 }
 
 const sessionToken = async () => (await cookies()).get(SESSION_COOKIE)?.value ?? null;
