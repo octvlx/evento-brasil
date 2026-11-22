@@ -80,7 +80,7 @@ export function buildIcs(event: CalendarEvent, host: string, now = new Date()) {
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Evento Brasil//Agenda//PT-BR",
+    "PRODID:-//TICKET24//Agenda//PT-BR",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     "BEGIN:VEVENT",

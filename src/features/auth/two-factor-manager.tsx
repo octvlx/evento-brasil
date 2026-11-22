@@ -41,7 +41,7 @@ function CodeInput({ id, value, onChange, label = "Código de 6 dígitos" }: { i
 /** Mostra os códigos de recuperação uma única vez, com cópia e download. */
 function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
   const [copied, setCopied] = useState(false);
-  const text = `QQPega — códigos de recuperação da verificação em duas etapas\nCada código vale uma única vez.\n\n${codes.join("\n")}\n`;
+  const text = `TICKET24 — códigos de recuperação da verificação em duas etapas\nCada código vale uma única vez.\n\n${codes.join("\n")}\n`;
   return (
     <div className="space-y-4" data-testid="recovery-codes">
       <Alert variant="warning">
@@ -66,7 +66,7 @@ function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void 
         <a
           className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-semibold"
           href={`data:text/plain;charset=utf-8,${encodeURIComponent(text)}`}
-          download="evento-brasil-codigos-de-recuperacao.txt"
+          download="ticket24-codigos-de-recuperacao.txt"
         >
           Baixar .txt
         </a>

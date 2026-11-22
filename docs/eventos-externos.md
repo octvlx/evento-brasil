@@ -1,6 +1,6 @@
 # Eventos externos (descoberta)
 
-Eventos publicados em outras plataformas aparecem na QQPega como **"Evento externo"**:
+Eventos publicados em outras plataformas aparecem na TICKET24 como **"Evento externo"**:
 só com dados públicos e factuais, com a fonte visível e um botão **"Ver ingressos no site
 oficial"**. A compra acontece fora da plataforma.
 
@@ -25,7 +25,7 @@ afiliados da Sympla, ou um acordo ou feed com a Q2. Com isso, cria-se um adaptad
   - só HTTPS e só os hosts da fonte, conferidos também em cada redirecionamento;
   - DNS conferido contra localhost e redes privadas ou reservadas;
   - timeout, limite de tamanho e tentativas com espera progressiva;
-  - identificação `QQPegaBot`.
+  - identificação `TICKET24Bot`.
 - **Adaptador por fonte** (`src/server/external/adapters/*.ts`). Texto de terceiros vira
   texto puro (`text.ts`), sem HTML.
 - **Importação** (`runExternalImport` em `src/server/services/external-events.ts`):

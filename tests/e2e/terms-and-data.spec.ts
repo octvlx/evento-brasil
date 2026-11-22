@@ -57,7 +57,7 @@ test("cadastro exige termos e privacidade, grava o aceite e a conta baixa os prÃ
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("link", { name: "Baixar meus dados" }).click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^meus-dados-evento-brasil-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(download.suggestedFilename()).toMatch(/^meus-dados-ticket24-\d{4}-\d{2}-\d{2}\.json$/);
     const data = JSON.parse(await readFile((await download.path())!, "utf8"));
     expect(data.profile.email).toBe(email);
     expect(data.termsAcceptances.map((a: { kind: string }) => a.kind).sort()).toEqual(["BUYER", "PRIVACY"]);

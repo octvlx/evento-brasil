@@ -1,6 +1,6 @@
-# QQPega
+# TICKET24
 
-Marketplace de eventos e ingressos (antes "Evento Brasil", nome provisório; o repositório, o banco e os identificadores técnicos mantêm o nome antigo).
+Marketplace de eventos e ingressos em TICKET24.com.br (antes "QQPega" e "Evento Brasil"; o repositório, o banco e os identificadores técnicos mantêm o nome antigo).
 
 Marketplace multi-organizador de descoberta e venda de ingressos para o Brasil —
 pt-BR, BRL, web responsiva + PWA.

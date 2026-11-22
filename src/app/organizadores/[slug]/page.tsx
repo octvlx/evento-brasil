@@ -12,7 +12,7 @@ export async function generateMetadata({ params }: PageProps<"/organizadores/[sl
   const { slug } = await params;
   const org = await db.organization.findFirst({ where: { slug, status: "APPROVED" }, select: { name: true, description: true, coverUrl: true, logoUrl: true } });
   if (!org) return { title: "Organizador não encontrado", robots: { index: false } };
-  const description = org.description?.slice(0, 160) ?? `Eventos de ${org.name} na QQPega. Compre ingressos com PIX ou cartão.`;
+  const description = org.description?.slice(0, 160) ?? `Eventos de ${org.name} na TICKET24. Compre ingressos com PIX ou cartão.`;
   return {
     title: org.name,
     description,

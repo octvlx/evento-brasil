@@ -66,7 +66,7 @@ try {
     EMAIL_PROVIDER: "console",
     RESEND_API_KEY: "",
     EMAIL_API_KEY: "",
-    EMAIL_FROM: "Evento Brasil <local@example.com>",
+    EMAIL_FROM: "TICKET24 <local@example.com>",
     PAYMENT_PROVIDER: "simulated",
     SIMULATED_WEBHOOK_SECRET: randomBytes(32).toString("hex"),
     STORAGE_PROVIDER: "local",

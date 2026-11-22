@@ -3,12 +3,12 @@
 // também é lido por componentes de cliente.
 
 export const BRAND = {
-  /** Nome oficial: sempre "QQPega", com essa capitalização. */
-  name: "QQPega",
+  /** Nome oficial: sempre "TICKET24", em maiúsculas. */
+  name: "TICKET24",
   tagline: "Ingressos para o que está rolando na sua cidade",
   description: "Descubra shows, festas, teatro e tudo o que está rolando perto de você. Compre ingressos com PIX ou cartão e receba no celular.",
   /** Assinatura curta para e-mails e rodapés. */
-  signature: "Equipe QQPega",
+  signature: "Equipe TICKET24",
 } as const;
 
 /** Cores para lugares sem acesso às variáveis CSS (e-mail, PDF, OG, manifesto). */

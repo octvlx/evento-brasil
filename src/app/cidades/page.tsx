@@ -10,7 +10,7 @@ import { cityOverview } from "@/server/services/catalog";
 import { UFS } from "@/lib/br";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 
-const DESCRIPTION = "Cidades com eventos à venda na QQPega: escolha a sua e veja shows, festas, teatro e mais.";
+const DESCRIPTION = "Cidades com eventos à venda na TICKET24: escolha a sua e veja shows, festas, teatro e mais.";
 
 export const metadata: Metadata = {
   title: "Cidades",

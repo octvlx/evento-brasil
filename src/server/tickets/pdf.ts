@@ -21,7 +21,7 @@ export interface PdfTicket {
   organizerIdentity?: OrganizerIdentity;
 }
 
-// Cores da marca QQPega (tinta, pink, limão e cinza de apoio).
+// Cores da marca TICKET24 (tinta, pink, limão e cinza de apoio).
 const NIGHT = rgb(0.086, 0.071, 0.122);
 const PINK = rgb(0.82, 0.078, 0.353);
 const LIME = rgb(0.776, 0.957, 0.196);
@@ -40,9 +40,9 @@ export async function renderTicketsPdf(tickets: PdfTicket[]): Promise<Uint8Array
     const page = pdf.addPage([420, 595]);
     const { width } = page.getSize();
     page.drawRectangle({ x: 0, y: 515, width, height: 80, color: NIGHT });
-    // Logotipo tipográfico: "QQ" em limão + "Pega" em branco (nome oficial: QQPega).
-    page.drawText("QQ", { x: 28, y: 545, size: 22, font: bold, color: LIME });
-    page.drawText("Pega", { x: 28 + bold.widthOfTextAtSize("QQ", 22), y: 545, size: 22, font: bold, color: rgb(1, 1, 1) });
+    // Logotipo tipográfico: "TICKET" em branco + "24" em limão (nome oficial: TICKET24).
+    page.drawText("TICKET", { x: 28, y: 545, size: 22, font: bold, color: rgb(1, 1, 1) });
+    page.drawText("24", { x: 28 + bold.widthOfTextAtSize("TICKET", 22), y: 545, size: 22, font: bold, color: LIME });
     page.drawText("INGRESSO", { x: width - 28 - bold.widthOfTextAtSize("INGRESSO", 11), y: 549, size: 11, font: bold, color: rgb(1, 1, 1) });
     if (t.kind === "HALF_PRICE") {
       // Faixa de alto contraste na base do cabeçalho: a portaria exige o documento.

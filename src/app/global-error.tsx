@@ -10,7 +10,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         <main role="alert" style={{ maxWidth: 480, margin: "0 auto", padding: "96px 16px", textAlign: "center" }}>
           <title>{`Algo deu errado | ${BRAND.name}`}</title>
           <p style={{ margin: "0 0 16px", fontSize: 22, fontWeight: 800, letterSpacing: -1 }}>
-            <span style={{ color: C.pink }}>QQ</span>Pega
+            TICKET<span style={{ color: C.pink }}>24</span>
           </p>
           <h1 style={{ fontSize: 28, margin: "0 0 8px" }}>Algo deu errado</h1>
           <p style={{ color: C.mutedText, margin: 0 }}>Não conseguimos carregar o {BRAND.name} agora. Tente novamente em instantes.</p>

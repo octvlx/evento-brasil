@@ -27,7 +27,7 @@ export default function HomePage() {
               Qual é o <span className="highlight-lime">rolê</span> de hoje?
             </h1>
             <h2 id="destaques-titulo" className="mt-1.5 text-sm font-semibold text-muted-foreground">
-              Em destaque <span className="font-normal">· seleção da QQPega</span>
+              Em destaque <span className="font-normal">· seleção da TICKET24</span>
             </h2>
           </div>
           {/* Celular: botão e "Ver todos" numa linha abaixo do título; a partir do tablet, no topo à direita. */}

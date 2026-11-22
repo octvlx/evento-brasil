@@ -1,6 +1,6 @@
 # Deploy de produção: passo a passo
 
-Checklist para colocar o QQPega no ar pela primeira vez e para cada nova versão.
+Checklist para colocar o TICKET24 no ar pela primeira vez e para cada nova versão.
 A parte automatizável está no script de verificação; o resto é manual e vem marcado
 com ☐. Visão geral da arquitetura e da segurança: `docs/production-readiness.md`.
 
@@ -57,7 +57,7 @@ segredos repetidos.
 | `MERCADO_PAGO_OAUTH_TEST_TOKEN`, `ALLOW_SIMULATED_PAYMENTS_IN_PRODUCTION` | `false` |
 | `SETTLEMENT_ENABLED` | `true` só depois de validar a liquidação; desligado, os repasses são manuais |
 | `EMAIL_PROVIDER` / `RESEND_API_KEY` | `resend` e a chave |
-| `EMAIL_FROM` | remetente do domínio verificado, ex.: `QQPega <nao-responda@seudominio.com.br>` |
+| `EMAIL_FROM` | remetente do domínio verificado, ex.: `TICKET24 <nao-responda@seudominio.com.br>` |
 | `STORAGE_PROVIDER` e `OBJECT_STORAGE_*` | `s3`, bucket, chaves e URL pública HTTPS |
 | `TRUSTED_PROXY_HOPS` | `0` na Vercel e no Cloud Run direto; `1` com Load Balancer do Google na frente (`docs/deploy-cloud-run.md`) |
 | `MFA_REQUIRED` | vazio ou `true` (2FA obrigatório para admins e donos de organização) |
