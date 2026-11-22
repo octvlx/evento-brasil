@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["gru1"],
+  "schedules": {
+    "maintenance": {
+      "schedule": "* * * * *",
+      "path": "/api/cron/maintenance",
+      "requestMethod": "POST"
+    }
+  }
+}

@@ -40,4 +40,10 @@ describe("cron: erros parciais de reconciliação", () => {
     expect((await POST(new Request("http://localhost/api/cron/maintenance", { method: "POST" }))).status).toBe(403);
     expect(mocks.complete).not.toHaveBeenCalled();
   });
+  it("aceita a chamada da Vercel (Authorization: Bearer)", async () => {
+    const vercel = new Request("http://localhost/api/cron/maintenance", { method: "POST", headers: { authorization: "Bearer unit-test-secret" } });
+    expect((await POST(vercel)).status).toBe(200);
+    const wrong = new Request("http://localhost/api/cron/maintenance", { method: "POST", headers: { authorization: "Bearer outro" } });
+    expect((await POST(wrong)).status).toBe(403);
+  });
 });

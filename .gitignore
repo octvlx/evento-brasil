@@ -52,3 +52,5 @@ next-env.d.ts
 /.claude/launch.json
 /.claude/settings.local.json
 .neon
+# Ligação local com o projeto da Vercel (vercel link)
+.vercel
