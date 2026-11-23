@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { Plus_Jakarta_Sans, Unbounded } from "next/font/google";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { SiteFooter } from "@/components/site/footer";
 import { SiteHeader } from "@/components/site/header";
 import { NavigationTracker } from "@/components/site/back-button";
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <NavigationTracker />
         </Suspense>
         <ServiceWorkerRegister />
+        <SpeedInsights />
       </body>
     </html>
   );
