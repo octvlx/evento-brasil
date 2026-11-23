@@ -88,7 +88,7 @@ export default function HomePage() {
         <div className="grid gap-4 sm:grid-cols-3">
           {[
             { icon: Zap, title: "PIX na hora", text: "Pague com PIX ou cartão e receba o ingresso assim que o pagamento é confirmado." },
-            { icon: QrCode, title: "Ingresso no celular", text: "QR code seguro, PDF para download e cópia no seu e-mail." },
+            { icon: QrCode, title: "QR Code dinâmico", text: "O código do ingresso muda o tempo todo no seu celular, e print não entra. Mais proteção contra cambismo e golpes." },
             { icon: ShieldCheck, title: "Compra transparente", text: "Taxas exibidas antes do pagamento e política de reembolso clara em cada evento." },
           ].map(({ icon: Icon, title, text }) => (
             <div key={title} className="rounded-2xl border border-border bg-card p-5 shadow-card">

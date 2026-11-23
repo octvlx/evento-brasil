@@ -13,7 +13,7 @@ export function AuthShell({ title, subtitle, children, footer }: { title: string
           <p className="font-display text-3xl font-extrabold leading-tight">
             Seu próximo evento <span className="text-lime">começa aqui.</span>
           </p>
-          <p className="mt-3 text-white/80">Ingresso no celular, PIX na hora e o que está rolando na sua cidade.</p>
+          <p className="mt-3 text-white/80">QR Code dinâmico contra cambismo e golpes, PIX na hora e o que está rolando na sua cidade.</p>
         </div>
       </div>
       <div className="flex flex-col justify-center">
