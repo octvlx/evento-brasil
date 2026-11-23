@@ -1,6 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { maintenanceConfig, maintenanceDecision } from "@/server/maintenance";
+import {
+  MAINTENANCE_PREVIEW_COOKIE,
+  maintenanceConfig,
+  maintenanceDecision,
+  signMaintenancePreview,
+  verifyMaintenancePreview,
+} from "@/server/maintenance";
+
+describe("prévia da equipe", () => {
+  const secret = "s".repeat(32);
+  const now = new Date("2026-11-23T12:00:00Z");
+  const inOneHour = new Date(now.getTime() + 3_600_000);
+
+  it("aceita o cookie assinado e válido", () => {
+    expect(verifyMaintenancePreview(signMaintenancePreview("u1", inOneHour, secret), secret, now)).toBe(true);
+  });
+
+  it("recusa cookie vencido, com outro segredo, adulterado ou longo demais", () => {
+    const ok = signMaintenancePreview("u1", inOneHour, secret);
+    expect(verifyMaintenancePreview(signMaintenancePreview("u1", new Date(now.getTime() - 1), secret), secret, now)).toBe(false);
+    expect(verifyMaintenancePreview(ok, "x".repeat(32), now)).toBe(false);
+    expect(verifyMaintenancePreview(ok.replace("u1.", "u2."), secret, now)).toBe(false);
+    const [u, , sig] = ok.split(".");
+    expect(verifyMaintenancePreview(`${u}.${inOneHour.getTime() + 1}.${sig}`, secret, now)).toBe(false);
+    const tooLong = new Date(now.getTime() + 9 * 3_600_000);
+    expect(verifyMaintenancePreview(signMaintenancePreview("u1", tooLong, secret), secret, now)).toBe(false);
+    expect(verifyMaintenancePreview(`${ok}.extra`, secret, now)).toBe(false);
+    expect(verifyMaintenancePreview(undefined, secret, now)).toBe(false);
+    expect(verifyMaintenancePreview(ok, undefined, now)).toBe(false);
+  });
+});
 
 const on = { enabled: true, allowCheckin: true };
 
@@ -76,6 +106,26 @@ describe("proxy", () => {
       expect(webhook.headers.get("x-middleware-next")).toBe("1");
     } finally {
       delete process.env.MAINTENANCE_MODE;
+    }
+  });
+
+  it("deixa passar quem tem a prévia da equipe, e só com o cookie válido", async () => {
+    process.env.MAINTENANCE_MODE = "true";
+    const previousSecret = process.env.AUTH_SECRET;
+    process.env.AUTH_SECRET = "p".repeat(32);
+    try {
+      const { proxy } = await import("@/proxy");
+      const valid = signMaintenancePreview("admin1", new Date(Date.now() + 3_600_000), process.env.AUTH_SECRET);
+      const withCookie = (value: string, path = "/eventos") =>
+        proxy(new NextRequest(`https://ticket24.com.br${path}`, { headers: { cookie: `${MAINTENANCE_PREVIEW_COOKIE}=${value}` } }));
+
+      expect(withCookie(valid).headers.get("x-middleware-next")).toBe("1");
+      expect(withCookie(valid, "/api/orders").headers.get("x-middleware-next")).toBe("1");
+      expect(withCookie(`${valid}x`).status).toBe(503);
+    } finally {
+      delete process.env.MAINTENANCE_MODE;
+      if (previousSecret === undefined) delete process.env.AUTH_SECRET;
+      else process.env.AUTH_SECRET = previousSecret;
     }
   });
 });

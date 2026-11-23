@@ -37,6 +37,7 @@ import {
   updateProfile,
 } from "@/server/services/users";
 import { deleteOwnAccount } from "@/server/services/account-deletion";
+import { MAINTENANCE_PREVIEW_COOKIE } from "@/server/maintenance";
 
 async function clientKey() {
   return (await clientIp()) ?? "local";
@@ -129,6 +130,7 @@ export async function logoutAction() {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (token) await deleteSession(db, token);
   await clearSessionCookie();
+  (await cookies()).delete(MAINTENANCE_PREVIEW_COOKIE); // a prévia da manutenção sai junto
   redirect("/");
 }
 
