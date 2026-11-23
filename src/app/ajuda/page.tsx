@@ -1,69 +1,79 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { ProsePage } from "@/components/site/prose-page";
-import { Skeleton } from "@/components/ui/primitives";
+import { MessageCircleQuestion, ReceiptText, Ticket, Undo2 } from "lucide-react";
+import { Card, Skeleton } from "@/components/ui/primitives";
+import { helpTopics } from "@/content/help";
+import { HelpCenter } from "@/features/help/help-center";
 import { CancellationRequestForm } from "@/features/orders/cancellation-form";
 import { CancellationRequestList } from "@/features/orders/cancellation-list";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
 import { listMyCancellationRequests, PROVISIONAL_CANCELLATION_RESPONSE_DAYS } from "@/server/services/cancellation-requests";
-import { DEFAULT_REFUND_POLICY } from "@/server/services/refunds";
 import { formatDateShort } from "@/lib/datetime";
-import { DEFAULT_TRANSFER_POLICY } from "@/lib/transfer-policy";
 
-export const metadata: Metadata = { title: "Central de ajuda" };
+export const metadata: Metadata = {
+  title: "Central de ajuda",
+  description: "Respostas sobre compra, ingressos, transferência, cancelamento, reembolso, meia-entrada e taxas na TICKET24.",
+};
+
+// Âncoras usadas por links do site: #cancelamento (CANCEL_HELP_HREF), #transferencia,
+// #taxas e #contato (rodapé) e #solicitar-cancelamento (pedido com protocolo).
+
+const SHORTCUTS = [
+  { href: "/meus-ingressos", icon: Ticket, title: "Meus ingressos", text: "QR code, carteira digital e transferência" },
+  { href: "/meus-pedidos", icon: ReceiptText, title: "Meus pedidos", text: "Pagamento, reembolso e comprovante" },
+  { href: "#cancelamento", icon: Undo2, title: "Cancelar compra", text: "Arrependimento e reembolso" },
+  { href: "#contato", icon: MessageCircleQuestion, title: "Falar com a gente", text: "Cancelamento com protocolo e atendimento" },
+] as const;
 
 export default function HelpPage() {
   return (
-    <ProsePage title="Central de ajuda">
-      <h2>Comprando ingressos</h2>
-      <ul>
-        <li>Escolha os ingressos na página do evento. Eles ficam reservados por alguns minutos enquanto você paga.</li>
-        <li>Pague com PIX (ou cartão, quando disponível). Os ingressos são emitidos somente após a confirmação do provedor de pagamento.</li>
-        <li>Seus ingressos ficam em “Meus ingressos”, com QR code e PDF, e também chegam por e-mail.</li>
-      </ul>
-      <h2 id="transferencia">Transferência de ingresso</h2>
-      <p>
-        A transferência é gratuita. Consulte as regras do evento antes de comprar e em “Meus ingressos”: o organizador define o prazo para solicitar e aceitar,
-        o limite de transferências aceitas e se permite devolver o ingresso a um titular anterior.
-      </p>
-      <p>
-        Por padrão, a solicitação e o aceite devem ocorrer até {DEFAULT_TRANSFER_POLICY.transferDeadlineHours} horas antes do início do evento,
-        com no máximo {DEFAULT_TRANSFER_POLICY.transferMaxTransfers} transferência aceita por ingresso e sem devolução após o aceite.
-        O prazo exato é exibido no fuso do evento. Você pode cancelar um convite que ainda não foi aceito.
-      </p>
-      <p>
-        Depois do aceite, o ingresso e um novo QR code passam para o destinatário. Não há desfazer: quando o evento permite devolução, ela exige uma nova transferência
-        iniciada pelo titular atual, o aceite do destinatário e saldo no limite de transferências. Um eventual reembolso continua voltando para quem pagou.
-      </p>
-      <h2>Meia-entrada</h2>
-      <p>Ao escolher meia-entrada, você declara ter direito ao benefício e deve apresentar o documento comprobatório na entrada do evento.</p>
-      <h2 id="taxas">Taxas e repasses</h2>
-      <p>
-        A comissão padrão da plataforma é de 7% sobre o valor de face de cada ingresso pago. Ingressos gratuitos não pagam comissão. Dependendo da configuração do evento, a comissão é descontada do repasse ao
-        organizador ou exibida ao comprador como taxa de serviço — sempre antes do pagamento.
-      </p>
-      <p>
-        Quando há taxa de serviço para o comprador, os cards de eventos, a busca, as páginas de cidade e a página do evento mostram o <strong>preço total por ingresso</strong>, com a taxa discriminada — por
-        exemplo, “R$ 107,00 (R$ 100,00 + R$ 7,00 de taxa)”. É o mesmo valor cobrado no pagamento.
-      </p>
-      <p>Exemplo (comissão descontada do organizador): ingresso de R$ 100,00 → comissão R$ 7,00 → R$ 93,00 ao organizador, antes dos custos do processador de pagamento.</p>
-      <h2 id="cancelamento">Cancelar compra / arrependimento</h2>
-      {/* TODO(jurídico): texto provisório — revisar prazos e redação (CDC art. 49, Decreto nº 13.108/2026; D3 em docs/conformidade-decreto-13108.md). */}
-      <p className="rounded-xl border border-warning/40 bg-warning-soft px-4 py-3 text-sm text-warning">Texto provisório, pendente de revisão jurídica.</p>
-      <CancellationPolicy />
-      <h3 id="solicitar-cancelamento" className="font-display text-lg font-bold">
-        Solicitar cancelamento
-      </h3>
-      <Suspense fallback={<Skeleton className="h-24" />}>
-        <MyCancellations />
-      </Suspense>
-      <h2>Reembolsos</h2>
-      <p>Cada evento exibe sua política na página do evento. O pedido de reembolso e o andamento do estorno ficam na página do pedido (veja “Cancelar compra / arrependimento” acima).</p>
-      <h2 id="contato">Atendimento</h2>
-      <p>Canal de atendimento a definir antes do lançamento (e-mail e WhatsApp oficiais da empresa).</p>
-    </ProsePage>
+    <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
+      <header>
+        <h1 className="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Central de ajuda</h1>
+        <p className="mt-2 text-muted-foreground">Como podemos ajudar? Busque uma dúvida ou escolha um tema.</p>
+      </header>
+
+      <nav aria-label="Atalhos" className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {SHORTCUTS.map(({ href, icon: Icon, title, text }) => (
+          <Link key={href} href={href} className="flex items-start gap-3 rounded-2xl bg-night p-4 text-white transition-opacity hover:opacity-90">
+            <Icon aria-hidden className="mt-0.5 size-5 shrink-0 text-accent" />
+            <span>
+              <span className="block font-semibold">{title}</span>
+              <span className="block text-xs text-white/70">{text}</span>
+            </span>
+          </Link>
+        ))}
+      </nav>
+
+      <div className="mt-10">
+        <HelpCenter topics={helpTopics()} />
+      </div>
+
+      <section id="contato" className="mt-12 scroll-mt-24">
+        <h2 className="font-display text-xl font-bold">Ainda precisa de ajuda?</h2>
+        <Card className="mt-3 space-y-4 p-5">
+          <div id="solicitar-cancelamento" className="scroll-mt-24">
+            <h3 className="font-display text-lg font-bold">Pedido de cancelamento</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Para cancelar uma compra que não se encaixa no reembolso automático. Você recebe um <strong>número de protocolo</strong> e a resposta sai em até{" "}
+              {PROVISIONAL_CANCELLATION_RESPONSE_DAYS} dias. Também dá para pedir pela página do pedido.
+            </p>
+            <div className="mt-3">
+              <Suspense fallback={<Skeleton className="h-24" />}>
+                <MyCancellations />
+              </Suspense>
+            </div>
+          </div>
+          <div className="border-t border-border pt-4">
+            <h3 className="font-display text-lg font-bold">Outros assuntos</h3>
+            {/* TODO(lançamento): publicar os canais oficiais (e-mail e WhatsApp) da empresa. */}
+            <p className="mt-1 text-sm text-muted-foreground">Os canais oficiais de atendimento por e-mail e WhatsApp serão publicados aqui antes do lançamento.</p>
+          </div>
+        </Card>
+      </section>
+    </div>
   );
 }
 
@@ -73,10 +83,10 @@ async function MyCancellations() {
   if (!user)
     return (
       <p>
-        <Link href={`/entrar?next=${encodeURIComponent("/ajuda#cancelamento")}`} className="font-semibold text-secondary hover:underline">
+        <Link href={`/entrar?next=${encodeURIComponent("/ajuda#solicitar-cancelamento")}`} className="font-semibold text-secondary hover:underline">
           Entre na sua conta
         </Link>{" "}
-        para pedir o cancelamento de uma compra e acompanhar o protocolo.
+        para pedir o cancelamento e acompanhar o protocolo.
       </p>
     );
   const [requests, orders] = await Promise.all([
@@ -89,11 +99,15 @@ async function MyCancellations() {
     }),
   ]);
   return (
-    <div className="space-y-4 [&_li]:ml-0! [&_li]:list-none!">
-      <p>
-        Se o seu caso não se encaixa nas condições acima, peça o cancelamento aqui (ou no botão da página do pedido). Você recebe um <strong>número de protocolo</strong> e o prazo de resposta.
-      </p>
-      <CancellationRequestForm orders={orders.map((o) => ({ id: o.id, label: `${o.publicCode} · ${o.event.title} · ${formatDateShort(o.createdAt)}` }))} responseDays={PROVISIONAL_CANCELLATION_RESPONSE_DAYS} />
+    <div className="space-y-4">
+      {orders.length > 0 ? (
+        <CancellationRequestForm
+          orders={orders.map((o) => ({ id: o.id, label: `${o.publicCode} · ${o.event.title} · ${formatDateShort(o.createdAt)}` }))}
+          responseDays={PROVISIONAL_CANCELLATION_RESPONSE_DAYS}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">Você não tem pedidos pagos ou aguardando pagamento para cancelar.</p>
+      )}
       {requests.length > 0 && (
         <>
           <p className="font-semibold">Meus pedidos de cancelamento</p>
@@ -101,50 +115,5 @@ async function MyCancellations() {
         </>
       )}
     </div>
-  );
-}
-
-/** Prazos padrão de um evento novo; cada evento pode definir os seus (mostrados na página do evento). */
-function CancellationPolicy() {
-  const { refundWindowDays: windowDays, refundMinHoursBeforeEvent: minHoursBeforeEvent } = DEFAULT_REFUND_POLICY;
-  return (
-    <>
-      <p>
-        Você pode desistir de uma compra paga e receber o <strong>reembolso integral</strong> — valor dos ingressos e taxa de serviço, se houver — pelo mesmo meio de pagamento, desde que:
-      </p>
-      <ul>
-        <li>
-          o pedido tenha sido pago há no máximo <strong>{windowDays} dias</strong>;
-        </li>
-        <li>
-          faltem pelo menos <strong>{minHoursBeforeEvent} horas</strong> para o início do evento;
-        </li>
-        <li>nenhum ingresso do pedido tenha sido usado na entrada.</li>
-      </ul>
-      <p>
-        Esses são os prazos padrão. Cada evento pode definir prazos próprios, mostrados na página do evento e aplicados ao seu pedido; depois que há ingressos vendidos, o organizador só pode torná-los mais
-        favoráveis a você.
-      </p>
-      <p>
-        <strong>Como pedir:</strong> entre em{" "}
-        <Link href="/meus-ingressos" className="font-semibold text-secondary hover:underline">
-          Meus ingressos
-        </Link>
-        , abra o pedido no “Histórico de pedidos” e toque em “Solicitar reembolso”. Os ingressos do pedido são cancelados na hora e a página mostra o andamento do estorno.
-      </p>
-      <p>
-        <strong>Evento cancelado:</strong> o reembolso integral, incluindo a taxa de serviço, é feito automaticamente — você não precisa pedir.
-      </p>
-      <p>
-        <strong>Pedido aguardando pagamento:</strong> use “Cancelar pedido” na página do pedido; nada é cobrado e a reserva é liberada.
-      </p>
-      <p>
-        <strong>Fora dessas condições:</strong> fale com o{" "}
-        <a href="#contato" className="font-semibold text-secondary hover:underline">
-          atendimento
-        </a>{" "}
-        informando o código do pedido.
-      </p>
-    </>
   );
 }
