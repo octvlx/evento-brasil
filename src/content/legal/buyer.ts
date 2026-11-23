@@ -155,7 +155,7 @@ export const BUYER_TERMS: LegalDocument = {
     },
   ],
   reviewNotes: [
-    "Arrependimento (D3): o texto promete os 7 dias do CDC, art. 49, sem exceção. O sistema hoje não garante isso automaticamente: o reembolso automático segue a política do evento (refundWindowDays, que o organizador pode pôr em 0, e refundMinHoursBeforeEvent, padrão 48 h, até 720 h). Até a correção, o arrependimento fora da política depende do pedido de cancelamento com protocolo, decidido no admin. Decidir a regra e ajustar o sistema ou o texto.",
+    "Arrependimento (D3): o texto promete os 7 dias do CDC, art. 49, sem exceção, e o sistema aplica isso desde o PR #196 (refundEligibility, base ARREPENDIMENTO): reembolso integral até 7 dias após o pagamento e antes do início do evento, mesmo com política mais restritiva. Confirmar se o arrependimento deve valer também nas últimas horas antes do evento.",
     "Valor fixo não reembolsável: hoje o aviso aparece na página do pedido. Confirmar se é preciso exibi-lo também antes do pagamento (oferta/checkout) para valer contra o comprador.",
     "Definição de \"alteração relevante\" e duração da janela de reembolso (D2).",
     "Prazo de resposta de 5 dias no pedido de cancelamento é provisório (PROVISIONAL_CANCELLATION_RESPONSE_DAYS).",

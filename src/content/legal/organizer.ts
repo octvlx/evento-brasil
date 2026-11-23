@@ -115,7 +115,7 @@ export const ORGANIZER_TERMS: LegalDocument = {
     "Organizador como controlador independente (e não operador) dos dados dos participantes: confirmar a qualificação e se é preciso um acordo de tratamento de dados à parte.",
     "Cobrança de saldo devedor não compensado e indenização (seção 11): avaliar a redação e se cabe cláusula penal ou garantia.",
     "Limitação de responsabilidade da TICKET24 perante o organizador (relação entre empresas): confirmar o alcance.",
-    "A política de reembolso do evento hoje aceita prazo de 0 dias no formulário (src/features/schemas.ts). O texto exige respeitar os 7 dias do CDC; ver a nota correspondente nos termos do comprador.",
+    "A política de reembolso do evento aceita prazo de 0 dias no formulário, mas desde o PR #196 o arrependimento de 7 dias vale sempre, por cima da política do evento.",
     "Organizador pessoa física: avaliar se alguma cláusula precisa de tratamento diferente.",
   ],
 };
