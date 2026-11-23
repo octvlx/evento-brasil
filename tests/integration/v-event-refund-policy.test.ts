@@ -62,17 +62,25 @@ describe("V — política de reembolso por evento", () => {
     const owner = await makeUser();
     const customer = await makeUser();
     const org = await makeOrg(owner);
-    // Evento daqui a 3 dias (72h): com 48h padrão, reembolsável; com 96h, não.
+    // Arrependimento: nos 7 dias após o pagamento, antes do evento, vale mesmo com a política
+    // mais restritiva (0 dias e 96h de antecedência, com o evento daqui a 3 dias).
     const strict = await makeEvent(org, { startsInDays: 3 });
-    await db.event.update({ where: { id: strict.id }, data: { refundMinHoursBeforeEvent: 96 } });
+    await db.event.update({ where: { id: strict.id }, data: { refundWindowDays: 0, refundMinHoursBeforeEvent: 96 } });
     const a = await buyAndPay(customer, strict.id, [{ ticketTypeId: strict.ticketTypes[0].id, quantity: 1 }]);
-    await expect(requestCustomerRefund(db, adapter, customer, a.order.id)).rejects.toThrow("Reembolsos só até 96h antes do evento.");
+    expect(await requestCustomerRefund(db, adapter, customer, a.order.id)).toMatchObject({ status: "SUCCEEDED", amountCents: a.order.totalCents });
 
-    // Prazo de compra de 0 dias: qualquer pedido já pago está fora.
+    // Depois dos 7 dias vale a política do evento. Antecedência: evento em 10 dias, prazo de
+    // 30 dias e 96h; pedido no 8º dia (48h antes do início) está fora.
+    const near = await makeEvent(org, { startsInDays: 10 });
+    await db.event.update({ where: { id: near.id }, data: { refundWindowDays: 30, refundMinHoursBeforeEvent: 96 } });
+    const n = await buyAndPay(customer, near.id, [{ ticketTypeId: near.ticketTypes[0].id, quantity: 1 }]);
+    await expect(requestCustomerRefund(db, adapter, customer, n.order.id, new Date(Date.now() + 8 * DAY))).rejects.toThrow("Reembolsos só até 96h antes do evento.");
+
+    // Prazo de compra de 0 dias: passado o arrependimento, qualquer pedido pago está fora.
     const noWindow = await makeEvent(org);
     await db.event.update({ where: { id: noWindow.id }, data: { refundWindowDays: 0 } });
     const b = await buyAndPay(customer, noWindow.id, [{ ticketTypeId: noWindow.ticketTypes[0].id, quantity: 1 }]);
-    await expect(requestCustomerRefund(db, adapter, customer, b.order.id, new Date(Date.now() + 60_000))).rejects.toThrow("O prazo de 0 dias após a compra terminou.");
+    await expect(requestCustomerRefund(db, adapter, customer, b.order.id, new Date(Date.now() + 8 * DAY))).rejects.toThrow("O prazo de 0 dias após a compra terminou.");
 
     // Pago há 10 dias: fora do padrão de 7, dentro de um prazo de 30.
     const generous = await makeEvent(org, { startsInDays: 40 });

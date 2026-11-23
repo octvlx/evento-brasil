@@ -75,6 +75,7 @@ export async function openChangeRefundWindow(client: Db | Tx, eventId: string, p
 }
 
 export type RefundEligibility =
+  | { eligible: true; basis: "ARREPENDIMENTO" }
   | { eligible: true; basis: "EVENT_POLICY" }
   | { eligible: true; basis: "EVENT_CHANGED"; window: ChangeRefundWindow; message: string }
   | { eligible: false; reason: string };
@@ -85,6 +86,9 @@ export type RefundEligibility =
  * - Com janela de alteração relevante aberta (`changeWindow`, de
  *   `openChangeRefundWindow`): reembolso integral, taxas incluídas,
  *   independentemente dos prazos normais do evento (R8).
+ * - Arrependimento (CDC art. 49): até ARREPENDIMENTO_DAYS dias após o pagamento e antes
+ *   do início do evento, sempre, por mais restritiva que seja a política do evento.
+ *   Reembolso integral: retainedFixedFeeCents não retém nada nesse prazo.
  * - Senão, pela política do próprio evento: até `refundWindowDays` dias após a
  *   compra E até `refundMinHoursBeforeEvent` horas antes do início.
  *
@@ -108,6 +112,8 @@ export function refundEligibility(
       message: `O evento foi alterado depois da sua compra: você pode pedir o reembolso integral, com as taxas, até ${dateTimeBR.format(changeWindow.refundUntil)}.`,
     };
   }
+  if (order.paidAt && now.getTime() - order.paidAt.getTime() <= ARREPENDIMENTO_DAYS * 86_400_000 && now.getTime() < event.startsAt.getTime())
+    return { eligible: true, basis: "ARREPENDIMENTO" };
   if (!order.paidAt || now.getTime() - order.paidAt.getTime() > event.refundWindowDays * 86_400_000)
     return { eligible: false, reason: `O prazo de ${event.refundWindowDays} ${event.refundWindowDays === 1 ? "dia" : "dias"} após a compra terminou.` };
   if (event.startsAt.getTime() - now.getTime() < event.refundMinHoursBeforeEvent * 3_600_000)
