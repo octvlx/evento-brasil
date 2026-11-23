@@ -11,6 +11,16 @@ import { alertRecipients, operationalHealth } from "@/server/services/ops-health
 import { formatDateTimeShort } from "@/lib/datetime";
 import { ADMIN_ROLE_LABELS } from "@/server/auth/admin-roles";
 import { formatBRL } from "@/lib/money";
+import { cookies } from "next/headers";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { env } from "@/server/env";
+import {
+  MAINTENANCE_PREVIEW_COOKIE,
+  MAINTENANCE_PREVIEW_HOURS,
+  maintenanceConfig,
+  verifyMaintenancePreview,
+} from "@/server/maintenance";
+import { startMaintenancePreviewAction, stopMaintenancePreviewAction } from "@/features/admin/maintenance-preview-actions";
 
 export const metadata: Metadata = { title: "Administração", robots: { index: false } };
 
@@ -19,6 +29,43 @@ export default function AdminHome({ searchParams }: PageProps<"/admin">) {
     <Suspense fallback={<Skeleton className="h-[500px]" />}>
       <Content searchParams={searchParams} />
     </Suspense>
+  );
+}
+
+/** Com o site em manutenção, o admin pode navegar por ele (docs/manutencao.md). */
+async function MaintenancePreview() {
+  if (!maintenanceConfig().enabled) return null;
+  const active = verifyMaintenancePreview((await cookies()).get(MAINTENANCE_PREVIEW_COOKIE)?.value, env().AUTH_SECRET);
+  return (
+    <Alert variant="warning" className="mb-4" data-testid="maintenance-preview">
+      <p className="font-semibold">O site está em manutenção para o público.</p>
+      {active ? (
+        <>
+          <p className="mt-1">A prévia está ligada neste navegador: você vê o site inteiro, como se a manutenção estivesse desligada. Pagamentos e e-mails são reais.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/" className={buttonVariants({ size: "sm" })}>
+              Abrir o site
+            </Link>
+            <form action={stopMaintenancePreviewAction}>
+              <Button type="submit" variant="outline" size="sm">
+                Sair da prévia
+              </Button>
+            </form>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="mt-1">
+            Ligue a prévia para navegar pelo site neste navegador por até {MAINTENANCE_PREVIEW_HOURS} horas, sem tirar o site da manutenção. Só o seu navegador passa.
+          </p>
+          <form action={startMaintenancePreviewAction} className="mt-3">
+            <Button type="submit" size="sm">
+              Ver o site durante a manutenção
+            </Button>
+          </form>
+        </>
+      )}
+    </Alert>
   );
 }
 
@@ -39,6 +86,7 @@ async function Content({ searchParams }: { searchParams: PageProps<"/admin">["se
       <p className="mb-4 text-sm text-muted-foreground" data-testid="admin-roles">
         Seu papel: <strong>{roles || "nenhum (só a visão geral)"}</strong>
       </p>
+      <MaintenancePreview />
       {health.length > 0 ? (
         <Alert variant={health.some((c) => c.severity === "critical") ? "danger" : "warning"} className="mb-4" data-testid="ops-health">
           <p className="font-semibold">Precisa de atenção</p>

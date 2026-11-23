@@ -1,5 +1,6 @@
 // Modo de manutenção (src/proxy.ts; docs/manutencao.md). Módulo puro, sem banco nem
 // "server-only": o proxy roda antes das rotas e não deve depender do resto do app.
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 /** Sempre liberados: dinheiro em trânsito, tarefas agendadas e o acesso da equipe. */
 const ALWAYS_OPEN = [
@@ -33,6 +34,35 @@ export function maintenanceDecision(pathname: string, config: MaintenanceConfig)
   if (ALWAYS_OPEN.some((p) => matches(pathname, p))) return "open";
   if (config.allowCheckin && CHECKIN.some((p) => matches(pathname, p))) return "open";
   return pathname === "/api" || pathname.startsWith("/api/") ? "api" : "page";
+}
+
+/**
+ * Prévia da equipe: um admin liga em /admin e navega o site inteiro (páginas e APIs)
+ * durante a manutenção. O cookie é assinado com AUTH_SECRET e expira sozinho; o
+ * proxy só confere a assinatura e a validade, sem banco.
+ */
+export const MAINTENANCE_PREVIEW_COOKIE = "eb_preview";
+export const MAINTENANCE_PREVIEW_HOURS = 8;
+
+const previewSignature = (userId: string, expiresAtMs: number, secret: string) =>
+  createHmac("sha256", secret).update(`maintenance-preview|${userId}|${expiresAtMs}`).digest("base64url");
+
+/** Valor do cookie: "<userId>.<expira em ms>.<assinatura>". */
+export function signMaintenancePreview(userId: string, expiresAt: Date, secret: string): string {
+  const exp = expiresAt.getTime();
+  return `${userId}.${exp}.${previewSignature(userId, exp, secret)}`;
+}
+
+export function verifyMaintenancePreview(value: string | undefined, secret: string | undefined, now = new Date()): boolean {
+  if (!value || !secret) return false;
+  const [userId, expRaw, sig, ...rest] = value.split(".");
+  if (!userId || !expRaw || !sig || rest.length > 0 || !/^\d+$/.test(expRaw)) return false;
+  const exp = Number(expRaw);
+  // Vencido, ou com validade maior que a permitida (não deveria existir).
+  if (exp <= now.getTime() || exp > now.getTime() + MAINTENANCE_PREVIEW_HOURS * 3_600_000) return false;
+  const expected = Buffer.from(previewSignature(userId, exp, secret));
+  const given = Buffer.from(sig);
+  return expected.length === given.length && timingSafeEqual(expected, given);
 }
 
 export const MAINTENANCE_RETRY_AFTER_SECONDS = 1800;

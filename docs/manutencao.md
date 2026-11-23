@@ -20,6 +20,19 @@ Todo o resto (páginas públicas, checkout, área do comprador e do organizador,
 APIs) fica parado. Depois do login, a equipe vai direto a `/admin`: a página inicial
 também mostra a tela de manutenção.
 
+## Ver o site durante a manutenção (prévia da equipe)
+
+Em `/admin` (página inicial), com a manutenção ligada, aparece o botão **Ver o site
+durante a manutenção**. Ele grava no navegador do admin um cookie `eb_preview`,
+assinado com `AUTH_SECRET`, e o proxy passa a deixar esse navegador ver o site inteiro
+(páginas e APIs) por até 8 horas. O público continua vendo a tela de manutenção.
+
+- Para sair: **Sair da prévia** em `/admin`, ou sair da conta. O cookie também vence sozinho.
+- Cada prévia ligada fica na auditoria (`MAINTENANCE_PREVIEW_STARTED`).
+- Tudo é real: um pedido feito na prévia cobra de verdade e os e-mails saem.
+- O proxy só confere a assinatura e a validade, sem consultar o banco: quem perde o papel
+  de admin continua com a prévia até ela vencer ou até `AUTH_SECRET` ser trocado.
+
 ## Ligar (Vercel)
 
 ```bash

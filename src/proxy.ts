@@ -1,18 +1,24 @@
 // Modo de manutenção: com MAINTENANCE_MODE=true, as páginas respondem uma tela de
 // manutenção (503) e as APIs um JSON 503, exceto as rotas sempre liberadas em
-// src/server/maintenance.ts. Desligado, o proxy só deixa passar. Guia: docs/manutencao.md.
+// src/server/maintenance.ts e de quem tem a prévia da equipe (cookie assinado, ligado em
+// /admin). Desligado, o proxy só deixa passar. Guia: docs/manutencao.md.
 import { NextResponse, type NextRequest } from "next/server";
 import {
   MAINTENANCE_MESSAGE,
+  MAINTENANCE_PREVIEW_COOKIE,
   MAINTENANCE_RETRY_AFTER_SECONDS,
   maintenanceConfig,
   maintenanceDecision,
   maintenanceHtml,
+  verifyMaintenancePreview,
 } from "@/server/maintenance";
 
 export function proxy(request: NextRequest) {
   const decision = maintenanceDecision(request.nextUrl.pathname, maintenanceConfig());
   if (decision === "open") return NextResponse.next();
+  if (verifyMaintenancePreview(request.cookies.get(MAINTENANCE_PREVIEW_COOKIE)?.value, process.env.AUTH_SECRET)) {
+    return NextResponse.next();
+  }
 
   const headers = {
     "Retry-After": String(MAINTENANCE_RETRY_AFTER_SECONDS),
