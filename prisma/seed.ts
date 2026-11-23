@@ -57,8 +57,7 @@ const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 export const DEMO_TERMS = [
   { kind: "BUYER", documentPath: "/termos" },
   { kind: "PRIVACY", documentPath: "/privacidade" },
-  // Ainda sem página própria.
-  { kind: "ORGANIZER", documentPath: null },
+  { kind: "ORGANIZER", documentPath: "/termos-organizador" },
 ].map((t) => ({ ...t, version: "v1", textHash: sha256(`evento-brasil:termos:${t.kind}:v1:rascunho`) })) as {
   kind: "BUYER" | "PRIVACY" | "ORGANIZER";
   documentPath: string | null;
