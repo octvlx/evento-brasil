@@ -58,12 +58,18 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
   });
   const adapter = getPaymentAdapter();
   const v = org.verifications[0];
+  // Mercado Pago ativo com credenciais de produção: a autorização OAuth habilita a venda.
+  const realCharges = !adapter.isSimulated && adapter.id === "mercadopago" && !sandboxTokens();
 
   return (
     <>
       <PageTitle title="Configurações" subtitle={`${org.name} · ${ORG_STATUS[org.status].label}`} />
       <div className="space-y-6">
-        {mp === "connected" && <Alert variant="success">Conta Mercado Pago autorizada. Pagamentos continuam no provedor configurado.</Alert>}
+        {mp === "connected" && (
+          <Alert variant="success">
+            {realCharges ? "Conta Mercado Pago conectada. Os ingressos pagos já podem ser vendidos." : "Conta Mercado Pago autorizada. Pagamentos continuam no provedor configurado."}
+          </Alert>
+        )}
         {mp === "denied" && <Alert variant="warning">Autorização cancelada. Você pode tentar novamente.</Alert>}
         {mp === "error" && <Alert variant="danger">Não foi possível concluir a conexão. Confira a configuração ou inicie uma nova autorização.</Alert>}
         <Card className="space-y-3 p-6">
@@ -76,9 +82,13 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
               Ambiente de desenvolvimento: pagamentos usam o provedor simulado. A conexão OAuth abaixo autoriza a conta do organizador; cobranças e repasses reais continuam desabilitados.
             </Alert>
           ) : adapter.id === "mercadopago" && adapter.supportedMethods.length > 0 ? (
-            <Alert variant="warning">
-              Checkout Pro está configurado para PIX, cartão (crédito à vista ou débito) e saldo Mercado Pago. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
-            </Alert>
+            sandboxTokens() ? (
+              <Alert variant="warning">
+                Checkout Pro está configurado para PIX, cartão (crédito à vista ou débito) e saldo Mercado Pago. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
+              </Alert>
+            ) : (
+              <Alert>Pagamentos pelo Checkout Pro do Mercado Pago: PIX, cartão (crédito à vista ou débito) e saldo Mercado Pago, direto na sua conta.</Alert>
+            )
           ) : adapter.id === "mercadopago" ? (
             <Alert variant="warning">
               Checkout Pro indisponível: confira credenciais OAuth, chave de criptografia e segredo de assinatura dos webhooks.
@@ -87,7 +97,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
             <Alert>O provedor de pagamentos está indisponível nesta configuração.</Alert>
           )}
           {adapter.id !== "mercadopago" && org.status === "APPROVED" && org.paymentAccountStatus === "NOT_CONNECTED" && <ConnectPaymentButton simulated={adapter.isSimulated} />}
-          <p className="text-sm">Mercado Pago OAuth: {org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt ? "Autorizado" : "Não conectado ou requer nova autorização"}. Esta autorização não habilita cobranças reais.</p>
+          <p className="text-sm">Mercado Pago OAuth: {org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt ? "Autorizado" : "Não conectado ou requer nova autorização"}.{realCharges ? "" : " Esta autorização não habilita cobranças reais."}</p>
           {org.status === "APPROVED" && org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt && (
             <Suspense fallback={<p className="text-sm text-muted-foreground">Verificando PIX na conta Mercado Pago…</p>}>
               <PixAvailability organizationId={org.id} />

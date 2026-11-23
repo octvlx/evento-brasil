@@ -77,6 +77,20 @@ function stored(tokens: Tokens) {
 async function lock(tx: Tx, organizationId: string) {
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${"mp-oauth:" + organizationId}, 0))::text`;
 }
+/**
+ * Status da conta de recebimento (Organization.paymentAccountStatus) quando o Mercado Pago é
+ * o provedor ativo: segue a autorização OAuth, que é o que libera a venda (orders.ts). Com o
+ * provedor simulado o status é do fluxo simulado e não muda aqui.
+ */
+async function syncAccountStatus(tx: Tx, organizationId: string, mercadoPagoUserId: string | null) {
+  if (env().PAYMENT_PROVIDER !== "mercadopago") return;
+  await tx.organization.update({
+    where: { id: organizationId },
+    data: mercadoPagoUserId
+      ? { paymentProvider: "mercadopago", paymentAccountStatus: "CONNECTED", paymentAccountExternalId: mercadoPagoUserId }
+      : { paymentAccountStatus: "NOT_CONNECTED" },
+  });
+}
 export async function finishConnection(db: Db, actor: Actor, cookie: string, state: string, code: string | null, denied = false) {
   const flow = readFlow(cookie, state, actor.id);
   await authorize(db, actor, flow.organizationId);
@@ -91,7 +105,7 @@ export async function finishConnection(db: Db, actor: Actor, cookie: string, sta
     await authorize(tx, actor, flow.organizationId);
     const data = stored(tokens);
     await tx.mercadoPagoAccount.upsert({ where: { organizationId: flow.organizationId }, create: { organizationId: flow.organizationId, ...data }, update: { ...data, connectedAt: new Date() } });
-    // OAuth linkage is independent of the active payment provider and settlement flags.
+    await syncAccountStatus(tx, flow.organizationId, data.mercadoPagoUserId);
   }, { maxWait: 5000, timeout: 20000 });
   return "connected" as const;
 }
@@ -111,6 +125,7 @@ export async function getMercadoPagoAccessToken(db: Db, organizationId: string) 
     } catch (err) {
       if (err instanceof AppError && err.code === "INVALID_STATE") {
         await tx.mercadoPagoAccount.update({ where: { organizationId }, data: { revokedAt: new Date() } });
+        await syncAccountStatus(tx, organizationId, null);
         return { token: null };
       }
       throw failure();
