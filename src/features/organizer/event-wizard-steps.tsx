@@ -587,7 +587,7 @@ export function StepSettings({ form, errors }: { form: Form; errors: Errors }) {
         >
           {(a) => <Textarea {...a} {...reg(form, "refundPolicy")} />}
         </Field>
-        <Field name="refundWindowDays" label="Dias após a compra" error={errors.refundWindowDays} help="Até quantos dias depois da compra o reembolso pode ser pedido (0 a 365).">
+        <Field name="refundWindowDays" label="Dias após a compra" error={errors.refundWindowDays} help="Até quantos dias depois da compra o reembolso pode ser pedido (0 a 365). Nos primeiros 7 dias, antes do evento, o comprador sempre pode desistir (direito de arrependimento).">
           {(a) => <Input {...a} type="number" min={0} max={365} step="1" inputMode="numeric" {...reg(form, "refundWindowDays")} />}
         </Field>
         <Field name="refundMinHoursBeforeEvent" label="Horas antes do evento" error={errors.refundMinHoursBeforeEvent} help="Prazo final antes do início (0 a 720). Padrão: 7 dias e 48 horas.">

@@ -29,20 +29,33 @@ describe("elegibilidade de reembolso", () => {
   const now = new Date("2026-11-01T12:00:00Z");
   const paid = { status: "PAID", paidAt: new Date("2026-10-30T12:00:00Z"), totalCents: 1000 };
   const event = { status: "PUBLISHED", startsAt: new Date("2026-11-20T23:00:00Z"), refundWindowDays: 7, refundMinHoursBeforeEvent: 48 };
-  it("elegível dentro das janelas", () => expect(refundEligibility(paid, event, [{ status: "VALID" }], now).eligible).toBe(true));
-  it("fora do prazo da compra", () =>
-    expect(refundEligibility({ ...paid, paidAt: new Date("2026-10-20T12:00:00Z") }, event, [], now).eligible).toBe(false));
+  // Pago há 9 dias: fora do arrependimento, vale a política do evento.
+  const paidEarlier = { ...paid, paidAt: new Date("2026-10-23T12:00:00Z") };
+  it("arrependimento: 7 dias após o pagamento, antes do evento, mesmo com política mais restritiva", () => {
+    const strict = { ...event, refundWindowDays: 0, refundMinHoursBeforeEvent: 720 };
+    expect(refundEligibility(paid, strict, [{ status: "VALID" }], now)).toEqual({ eligible: true, basis: "ARREPENDIMENTO" });
+    // Exatamente no 7º dia ainda vale; logo depois, não.
+    const day7 = { ...paid, paidAt: new Date("2026-10-25T12:00:00Z") };
+    expect(refundEligibility(day7, strict, [], now)).toMatchObject({ eligible: true, basis: "ARREPENDIMENTO" });
+    expect(refundEligibility(day7, strict, [], new Date(now.getTime() + 1)).eligible).toBe(false);
+    // Perto do evento ainda vale; depois do início, não.
+    expect(refundEligibility(paid, { ...strict, startsAt: new Date("2026-11-01T13:00:00Z") }, [], now)).toMatchObject({ basis: "ARREPENDIMENTO" });
+    expect(refundEligibility(paid, { ...strict, startsAt: new Date("2026-11-01T11:00:00Z") }, [], now).eligible).toBe(false);
+  });
+  it("elegível dentro das janelas do evento", () =>
+    expect(refundEligibility(paidEarlier, { ...event, refundWindowDays: 10 }, [{ status: "VALID" }], now)).toEqual({ eligible: true, basis: "EVENT_POLICY" }));
+  it("fora do prazo da compra", () => expect(refundEligibility(paidEarlier, event, [], now).eligible).toBe(false));
   it("muito perto do evento", () =>
-    expect(refundEligibility(paid, { ...event, startsAt: new Date("2026-11-02T12:00:00Z") }, [], now).eligible).toBe(false));
+    expect(refundEligibility(paidEarlier, { ...event, refundWindowDays: 30, startsAt: new Date("2026-11-02T12:00:00Z") }, [], now).eligible).toBe(false));
   it("ingresso já utilizado", () => expect(refundEligibility(paid, event, [{ status: "CHECKED_IN" }], now).eligible).toBe(false));
   it("pedido não pago", () => expect(refundEligibility({ ...paid, status: "PENDING_PAYMENT" }, event, [], now).eligible).toBe(false));
-  it("usa os prazos do próprio evento", () => {
-    // Pago há 2 dias, evento em 19 dias: fora com 1 dia de prazo; fora com 500h de antecedência.
-    expect(refundEligibility(paid, { ...event, refundWindowDays: 1 }, [], now)).toEqual({ eligible: false, reason: "O prazo de 1 dia após a compra terminou." });
-    expect(refundEligibility(paid, { ...event, refundMinHoursBeforeEvent: 500 }, [], now)).toEqual({ eligible: false, reason: "Reembolsos só até 500h antes do evento." });
+  it("usa os prazos do próprio evento depois do arrependimento", () => {
+    // Pago há 9 dias, evento em 19 dias: fora com 8 dias de prazo; fora com 500h de antecedência.
+    expect(refundEligibility(paidEarlier, { ...event, refundWindowDays: 8 }, [], now)).toEqual({ eligible: false, reason: "O prazo de 8 dias após a compra terminou." });
+    expect(refundEligibility(paidEarlier, { ...event, refundWindowDays: 30, refundMinHoursBeforeEvent: 500 }, [], now)).toEqual({ eligible: false, reason: "Reembolsos só até 500h antes do evento." });
     // Prazos mais generosos tornam elegível o que o padrão recusaria.
     expect(refundEligibility({ ...paid, paidAt: new Date("2026-10-20T12:00:00Z") }, { ...event, refundWindowDays: 30 }, [], now).eligible).toBe(true);
-    expect(refundEligibility(paid, { ...event, startsAt: new Date("2026-11-02T12:00:00Z"), refundMinHoursBeforeEvent: 0 }, [], now).eligible).toBe(true);
+    expect(refundEligibility(paidEarlier, { ...event, refundWindowDays: 30, startsAt: new Date("2026-11-02T12:00:00Z"), refundMinHoursBeforeEvent: 0 }, [], now).eligible).toBe(true);
   });
 });
 

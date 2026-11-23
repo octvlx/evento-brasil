@@ -78,7 +78,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             <Row label="Responder até">{r.respondBy ? formatDateTimeShort(r.respondBy) : "—"}</Row>
             <Row label="Reembolsável pela política na abertura">{r.autoEligibleAtRequest == null ? "—" : r.autoEligibleAtRequest ? "Sim" : "Não"}</Row>
             <Row label="Reembolsável pela política hoje">
-              {eligibilityNow.eligible ? (eligibilityNow.basis === "EVENT_CHANGED" ? "Sim (janela de alteração do evento)" : "Sim") : `Não — ${eligibilityNow.reason}`}
+              {eligibilityNow.eligible ? (eligibilityNow.basis === "EVENT_CHANGED" ? "Sim (janela de alteração do evento)" : eligibilityNow.basis === "ARREPENDIMENTO" ? "Sim (arrependimento, 7 dias)" : "Sim") : `Não — ${eligibilityNow.reason}`}
             </Row>
             {!open && (
               <>

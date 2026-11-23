@@ -59,11 +59,11 @@ function recordChange(
 describe("Z1 — reembolso integral por alteração relevante (L8a)", () => {
   it("concede reembolso integral, com taxas, fora dos prazos normais do evento", async () => {
     const { buyer, event, order, payment } = await paidOrder({ refundWindowDays: 0 });
-    const now = later(60_000);
-    // Fora da política normal: prazo de 0 dias após a compra.
+    // Fora da política normal e do arrependimento: 8 dias depois, com prazo de 0 dias.
+    const now = later(8 * DAY);
     await expect(requestCustomerRefund(db, adapter, buyer, order.id, now)).rejects.toThrow("O prazo de 0 dias após a compra terminou.");
 
-    const change = await recordChange(event, { createdAt: later(1_000), refundUntil: later(5 * DAY) });
+    const change = await recordChange(event, { createdAt: later(1_000), refundUntil: later(12 * DAY) });
     const window = await openChangeRefundWindow(db, event.id, order.paidAt, now);
     expect(window).toMatchObject({ eventChangeId: change.id, grantedById: change.id });
     const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id } });
@@ -252,7 +252,8 @@ describe("Z3 — pedido de cancelamento com protocolo (L5b)", () => {
   it("aprovação reembolsa pelo caminho normal, mesmo fora dos prazos; aprovar de novo não reembolsa em dobro", async () => {
     const { buyer, order, payment } = await paidOrder({ refundWindowDays: 0 });
     const admin = await makeUser({ admin: true });
-    const request = await createCancellationRequest(db, buyer, order.id, "Problema de saúde.", later(60_000));
+    // 8 dias depois: fora do arrependimento e do prazo de 0 dias do evento.
+    const request = await createCancellationRequest(db, buyer, order.id, "Problema de saúde.", later(8 * DAY));
     expect(request.autoEligibleAtRequest).toBe(false);
 
     const res = await decideCancellationRequest(db, adapter, admin, request.id, { decision: "APPROVE", note: "Atestado apresentado." });
