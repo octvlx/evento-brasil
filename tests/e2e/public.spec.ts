@@ -199,11 +199,12 @@ test("canal de cancelamento/arrependimento: rodapé, Meus ingressos e Central de
   await expect(footerLink).toHaveAttribute("href", "/ajuda#cancelamento");
   await footerLink.click();
   await expect(page).toHaveURL(/\/ajuda#cancelamento$/);
-  const section = page.getByRole("heading", { name: "Cancelar compra / arrependimento" });
-  await expect(section).toBeVisible();
-  await expect(page.getByText(/pago há no máximo 7 dias/)).toBeVisible();
-  await expect(page.getByText(/pelo menos 48 horas/)).toBeVisible();
-  await expect(page.getByText(/revisão jurídica/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cancelar compra e reembolso" })).toBeVisible();
+  // Arrependimento (CDC art. 49): a resposta abre ao tocar na pergunta.
+  await page.getByText("Posso desistir da compra em até 7 dias?").click();
+  await expect(page.getByText(/Até 7 dias depois do pagamento, antes do início do evento/)).toBeVisible();
+  // Caminho para o pedido com protocolo, na mesma página.
+  await expect(page.locator("#solicitar-cancelamento")).toBeAttached();
 
   await login(page, USERS.customer, "/meus-ingressos");
   await expect(page.getByRole("link", { name: "Cancelar compra / arrependimento" }).first()).toHaveAttribute("href", "/ajuda#cancelamento");
