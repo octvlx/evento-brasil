@@ -124,6 +124,6 @@ export const PRIVACY_POLICY: LegalDocument = {
     "Marco Civil da Internet, art. 15: hoje o sistema não guarda registros de acesso (IP) além do aceite de termos. Confirmar se a obrigação se aplica.",
     "Base legal do CPF e da data de nascimento na primeira compra: confirmar a finalidade declarada (identificação, antifraude, nota fiscal).",
     "Organizador como controlador independente dos dados recebidos: confirmar a qualificação e alinhar com os termos do organizador.",
-    "Se o Vercel Speed Insights for ativado, mencionar a coleta de métricas de desempenho (sem cookies).",
+    "Vercel Web Analytics e Speed Insights estão ativos: mencionar (na seção 8 ou numa nova) a coleta de métricas de uso e desempenho, sem cookies, com URLs sem tokens nem identificadores (src/lib/analytics-redact.ts). Texto novo exige versão nova.",
   ],
 };
