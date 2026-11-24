@@ -15,7 +15,8 @@ export type AdminPermission =
   | "users:manage" // suspender cliente, redefinir 2FA
   | "audit:read" // auditoria completa
   | "admins:manage" // papéis de outros admins
-  | "users:delete"; // excluir definitivamente conta de cliente/organizador (anonimização)
+  | "users:delete" // excluir definitivamente conta de cliente/organizador (anonimização)
+  | "organizers:delete"; // excluir organização (exclusão lógica) e decidir pedidos de exclusão
 
 export const ADMIN_ROLES = ["SUPER_ADMIN", "FINANCE", "MODERATION", "SUPPORT"] as const satisfies readonly AdminRole[];
 
@@ -32,6 +33,7 @@ const ROLE_PERMISSIONS: Record<AdminRole, readonly AdminPermission[]> = {
     "audit:read",
     "admins:manage",
     "users:delete",
+    "organizers:delete",
   ],
   FINANCE: ["finance:commissions", "finance:refunds", "cancellations:decide"],
   MODERATION: ["organizers:review", "events:moderate", "events:cancel", "transfers:read"],

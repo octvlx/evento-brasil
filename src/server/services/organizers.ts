@@ -221,6 +221,8 @@ export async function setOrganizationSuspended(db: Db, admin: Actor, organizatio
   return db.$transaction(async (tx) => {
     const org = await lockOrganization(tx, organizationId);
     if (!org) throw notFound();
+    // Organização excluída fica suspensa para sempre (organization-deletion.ts).
+    if (org.deletedAt) throw invalidState("Esta organização foi excluída e não pode ser reativada.");
     if (suspended === (org.status === "SUSPENDED")) return org;
     if (!suspended && org.status !== "SUSPENDED") throw invalidState("Organização não está suspensa.");
     const newStatus = suspended ? "SUSPENDED" : "APPROVED";

@@ -13,6 +13,9 @@ import { getPaymentAdapter } from "@/server/payments";
 import { sellerCheckoutReadiness } from "@/server/payments/mercadopago";
 import { sandboxTokens } from "@/server/payments/mercadopago-oauth";
 import { requireOrganizer } from "@/server/auth/organizer-context";
+import { OrganizationDeletionPanel } from "@/features/organizer/organization-deletion";
+import { latestOrganizationDeletionRequest, organizationDeletionBlockers } from "@/server/services/organization-deletion";
+import { ORG_DELETION_BLOCKER_TEXT } from "@/lib/organization-deletion";
 import { ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Configurações", robots: { index: false } };
@@ -47,7 +50,7 @@ async function PixAvailability({ organizationId }: { organizationId: string }) {
 
 async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }> }) {
   const { mp } = await searchParams;
-  const { org: activeOrg, can } = await requireOrganizer("/organizador/configuracoes");
+  const { org: activeOrg, can, membership, user } = await requireOrganizer("/organizador/configuracoes");
   if (!can("org:manage")) redirect("/organizador");
   const org = await db.organization.findUniqueOrThrow({
     where: { id: activeOrg.id },
@@ -56,6 +59,15 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
       verifications: { orderBy: { createdAt: "desc" }, take: 1 },
     },
   });
+  // Exclusão da organização: só o responsável (OWNER) pede; a plataforma decide.
+  const isOwner = membership.role === "OWNER";
+  const [deletionRequest, deletionBlockers, me] = isOwner
+    ? await Promise.all([
+        latestOrganizationDeletionRequest(db, user, org.id),
+        organizationDeletionBlockers(db, org.id),
+        db.user.findUnique({ where: { id: user.id }, select: { googleSubject: true } }),
+      ])
+    : [null, [], null];
   const adapter = getPaymentAdapter();
   const v = org.verifications[0];
   // Mercado Pago ativo com credenciais de produção: a autorização OAuth habilita a venda.
@@ -128,6 +140,17 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
             <OrgImageField kind="cover" url={org.coverUrl} />
           </div>
         </Card>
+
+        {isOwner && (
+          <Card className="border-destructive/30 p-6">
+            <OrganizationDeletionPanel
+              organizationName={org.name}
+              latest={deletionRequest}
+              blockers={deletionBlockers.map((b) => ORG_DELETION_BLOCKER_TEXT[b])}
+              needsPassword={!me?.googleSubject}
+            />
+          </Card>
+        )}
       </div>
     </>
   );

@@ -16,6 +16,7 @@ import { getPaymentAdapter } from "@/server/payments";
 import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
+import { cancelOrganizationDeletionRequest, requestOrganizationDeletion } from "@/server/services/organization-deletion";
 import { createCoupon, createOrganizationCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { recordAcceptance } from "@/server/services/terms";
@@ -508,4 +509,28 @@ export async function declineOwnershipTransferAction(token: string): Promise<Act
     await declineOwnershipTransfer(db, user, token);
     return undefined;
   });
+}
+
+// ───────────────────────────── Exclusão da organização ─────────────────────────────
+
+/** O responsável pede a exclusão da organização ativa (o superadmin decide). */
+export async function requestOrganizationDeletionAction(password: string, reason: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/configuracoes");
+  const res = await toActionResult(async () => {
+    await rateLimit(`org-deletion-request:${user.id}`, 10, 60 * 60_000);
+    await requestOrganizationDeletion(db, user, await activeOrgId(user.id), { password: String(password ?? "") || undefined, reason: String(reason ?? "") });
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function cancelOrganizationDeletionAction(): Promise<ActionResult> {
+  const user = await requireUser("/organizador/configuracoes");
+  const res = await toActionResult(async () => {
+    await cancelOrganizationDeletionRequest(db, user, await activeOrgId(user.id));
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
 }

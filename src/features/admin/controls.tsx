@@ -6,6 +6,7 @@ import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import type { ActionResult } from "@/server/errors";
 import { deleteCommissionRuleAction, saveCommissionRuleAction, updateCommissionRuleAction } from "./actions";
 import { commissionPreview } from "./commission-preview";
+import { deletionConfirmationMatches } from "@/lib/organization-deletion";
 import { formatBRL, parseBRLToCents } from "@/lib/money";
 import type { FeeBearer } from "@/features/fees/policy";
 import { ORGANIZER_REVIEW_AREA, ORGANIZER_REVIEW_AREA_HINT, ORGANIZER_REVIEW_AREAS, type OrganizerReviewArea } from "@/lib/labels";
@@ -206,6 +207,107 @@ export function DeleteAccountButton({
       />
       <div className="flex gap-1">
         <Button size="sm" variant="destructive" disabled={pending || !emailMatches || reason.trim().length < 5 || code.replace(/\s/g, "").length !== 6}>
+          {pending ? "…" : "Excluir definitivamente"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Voltar
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="whitespace-pre-line text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/**
+ * Exclusão lógica de organização (só superadmin; o servidor confere de novo). Confirmação
+ * explícita: o nome da organização digitado, o motivo e o código do autenticador. Os
+ * impedimentos conhecidos aparecem antes; o servidor confere tudo de novo sob trava.
+ */
+export function DeleteOrganizationButton({
+  organization,
+  blockers,
+  action,
+  label = "Excluir organização",
+}: {
+  organization: { name: string; events: number; members: number };
+  blockers: string[];
+  action: (confirmName: string, reason: string, adminCode: string) => Promise<ActionResult>;
+  label?: string;
+}) {
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [reason, setReason] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const titleId = useId();
+  if (!open)
+    return (
+      <Button size="sm" variant="destructive" onClick={() => setOpen(true)}>
+        {label}
+      </Button>
+    );
+  const nameMatches = deletionConfirmationMatches(name, organization.name);
+  return (
+    <form
+      role="group"
+      aria-labelledby={titleId}
+      data-testid="delete-organization"
+      className="flex w-full max-w-md flex-col gap-1.5 rounded-xl border border-destructive/60 p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await action(name, reason, code);
+          if (!r.ok) setError(r.error);
+          else {
+            setOpen(false);
+            setError(null);
+          }
+        });
+      }}
+    >
+      <p id={titleId} className="text-sm font-semibold">
+        Excluir a organização {organization.name}?
+      </p>
+      <ul className="list-disc space-y-0.5 pl-4 text-xs">
+        <li>Não dá para desfazer. A organização sai da vitrine e não vende mais; os {organization.members} membro(s) perdem o acesso a ela.</li>
+        <li>Perfil público, contato, logo e capa são apagados; o Mercado Pago é desconectado; convites e transferência pendentes são cancelados.</li>
+        <li>Eventos ({organization.events}), pedidos, pagamentos, reembolsos, repasses, o razão financeiro, os dados fiscais e a auditoria ficam guardados.</li>
+      </ul>
+      {blockers.length > 0 && (
+        <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+          <p className="font-semibold">Hoje a exclusão está bloqueada:</p>
+          <ul className="list-disc pl-4">
+            {blockers.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <Input
+        placeholder={`Digite ${organization.name} para confirmar`}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoComplete="off"
+        className="h-9 text-xs"
+        aria-label="Nome da organização, para confirmar"
+      />
+      <Input placeholder="Motivo (ex.: pedido do responsável)" value={reason} onChange={(e) => setReason(e.target.value)} className="h-9 text-xs" aria-label="Motivo da exclusão" />
+      <Input
+        placeholder="Seu código de 6 dígitos"
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, "").slice(0, 7))}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        className="h-9 font-mono text-xs"
+        aria-label="Seu código do aplicativo autenticador"
+      />
+      <div className="flex gap-1">
+        <Button size="sm" variant="destructive" disabled={pending || !nameMatches || reason.trim().length < 5 || code.replace(/\s/g, "").length !== 6}>
           {pending ? "…" : "Excluir definitivamente"}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
