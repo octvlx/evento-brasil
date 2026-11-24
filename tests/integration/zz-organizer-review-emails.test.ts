@@ -44,6 +44,21 @@ describe("e-mail da decisão do cadastro de organizador", () => {
     expect(sent[1].message.text).not.toContain("aprovada");
   });
 
+  it("recusa com área diz o que ajustar; \"Outro\" e sem área não", async () => {
+    const owner = await makeUser();
+    const admin = await makeUser({ admin: true });
+    const org = await submitOrganizerApplication(db, owner, application("Área Mail"));
+    await reviewOrganization(db, admin, org.id, "REJECT", "Confira o documento", "LEGAL");
+    await resubmitOrganizerApplication(db, owner, org.id, application("Área Mail"));
+    await reviewOrganization(db, admin, org.id, "REJECT", "Confira tudo", "OTHER");
+    await resubmitOrganizerApplication(db, owner, org.id, application("Área Mail"));
+    await reviewOrganization(db, admin, org.id, "REJECT", "Sem área");
+    const [legal, other, none] = await mails("ORGANIZATION_REJECTED");
+    expect(legal.message.text).toContain("Ajuste pedido em Dados legais (razão social, nome completo, CPF/CNPJ).");
+    expect(other.message.text).not.toContain("Ajuste pedido");
+    expect(none.message.text).not.toContain("Ajuste pedido");
+  });
+
   it("decisão que falha não envia nada", async () => {
     const owner = await makeUser();
     const admin = await makeUser({ admin: true });

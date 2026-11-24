@@ -4,6 +4,7 @@ import { env } from "../env";
 import { enqueueEmail } from "./outbox";
 import { transactionalEmail } from "./templates";
 import { formatBRL } from "@/lib/money";
+import { ORGANIZER_REVIEW_AREA, ORGANIZER_REVIEW_AREA_HINT } from "@/lib/labels";
 import { formatDateTimeShort } from "@/lib/datetime";
 import type { CancellationOutcome } from "../services/cancellation-requests";
 export async function enqueueOrderEmailsTx(tx: Db | Tx, orderId: string) {
@@ -327,13 +328,15 @@ export async function enqueueOrganizationReviewEmailsTx(
   note: string | null,
   verificationId: string | null,
 ) {
-  const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { id: true, name: true } });
+  const approved = decision === "APPROVE";
+  // Lido depois da decisão (mesma transação): a área da recusa já está gravada.
+  const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { id: true, name: true, statusReasonArea: true } });
+  const area = !approved && org.statusReasonArea && org.statusReasonArea !== "OTHER" ? org.statusReasonArea : null;
   const owners = await tx.organizationMember.findMany({
     where: { organizationId, role: "OWNER", user: { status: "ACTIVE" } },
     select: { user: { select: { email: true } } },
   });
   const submission = verificationId ?? `${org.id}:${Date.now()}`;
-  const approved = decision === "APPROVE";
   for (const email of new Set(owners.map((m) => m.user.email))) {
     await enqueueEmail(tx, {
       dedupeKey: `organization-review:${submission}:${decision}:${email}`,
@@ -351,6 +354,7 @@ export async function enqueueOrganizationReviewEmailsTx(
           : [
               `O cadastro de ${org.name} não foi aprovado desta vez.`,
               "Motivo: " + (note?.trim() || "—"),
+              ...(area ? [`Ajuste pedido em ${ORGANIZER_REVIEW_AREA[area]} (${ORGANIZER_REVIEW_AREA_HINT[area]}). O reenvio abre direto nessa parte.`] : []),
               "Corrija os dados e envie de novo para análise.",
             ],
         env().APP_URL + (approved ? "/organizador" : "/organizador/cadastro"),
