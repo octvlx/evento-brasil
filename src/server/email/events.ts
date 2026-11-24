@@ -317,3 +317,44 @@ export async function enqueueEventSuspensionEmailsTx(tx: Tx, eventId: string, su
     });
   }
 }
+
+// Decisão do admin sobre o cadastro de organizador: avisa os responsáveis (OWNER)
+// ativos. Um aviso por envio do cadastro (a verificação é nova a cada reenvio).
+export async function enqueueOrganizationReviewEmailsTx(
+  tx: Tx,
+  organizationId: string,
+  decision: "APPROVE" | "REJECT",
+  note: string | null,
+  verificationId: string | null,
+) {
+  const org = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { id: true, name: true } });
+  const owners = await tx.organizationMember.findMany({
+    where: { organizationId, role: "OWNER", user: { status: "ACTIVE" } },
+    select: { user: { select: { email: true } } },
+  });
+  const submission = verificationId ?? `${org.id}:${Date.now()}`;
+  const approved = decision === "APPROVE";
+  for (const email of new Set(owners.map((m) => m.user.email))) {
+    await enqueueEmail(tx, {
+      dedupeKey: `organization-review:${submission}:${decision}:${email}`,
+      template: approved ? "ORGANIZATION_APPROVED" : "ORGANIZATION_REJECTED",
+      recipient: email,
+      message: transactionalEmail(
+        "organizer",
+        approved ? "Cadastro aprovado" : "Seu cadastro precisa de ajustes",
+        approved
+          ? [
+              `${org.name} foi aprovada para vender ingressos.`,
+              "Você já pode publicar eventos pelo painel do organizador.",
+              "Para receber os repasses das vendas, conecte sua conta do Mercado Pago em Configurações.",
+            ]
+          : [
+              `O cadastro de ${org.name} não foi aprovado desta vez.`,
+              "Motivo: " + (note?.trim() || "—"),
+              "Corrija os dados e envie de novo para análise.",
+            ],
+        env().APP_URL + (approved ? "/organizador" : "/organizador/cadastro"),
+      ),
+    });
+  }
+}

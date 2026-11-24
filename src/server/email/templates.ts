@@ -73,7 +73,8 @@ export function transactionalEmail(
     | "invitation"
     | "ownership"
     | "approval"
-    | "event",
+    | "event"
+    | "organizer",
   title: string,
   lines: string[],
   url: string,
@@ -88,6 +89,7 @@ export function transactionalEmail(
     ownership: `Responsável pela organização | ${BRAND.name}`,
     approval: `Reembolso aguardando sua aprovação | ${BRAND.name}`,
     event: `Atualização importante sobre seu evento | ${BRAND.name}`,
+    organizer: `Seu cadastro de organizador | ${BRAND.name}`,
   };
   const label =
     kind === "invitation"
