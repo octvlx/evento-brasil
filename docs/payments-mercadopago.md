@@ -6,7 +6,7 @@ elegibilidade comercial, split, webhooks ou reembolsos em produção.
 
 O adaptador anuncia zero métodos se faltarem credenciais OAuth, chave de
 criptografia ou segredo de assinatura dos webhooks. Quando configurado, oferece
-PIX e cartão de crédito à vista pelo Checkout Pro; o comprador é redirecionado à página hospedada
+PIX e cartão (crédito, débito e pré-pago) pelo Checkout Pro; o comprador é redirecionado à página hospedada
 do Mercado Pago. O provedor permanece selecionado explicitamente por
 `PAYMENT_PROVIDER`; o padrão continua sendo `simulated`.
 
@@ -227,10 +227,10 @@ Falhas na criação da preferência continuam "incertas" até a reconciliação.
 Em `/organizador/configuracoes`, a tela avisa quando a conta conectada não
 oferece PIX: cadastre uma chave PIX na conta Mercado Pago ou conecte outra.
 
-**Cartão de crédito:** com o método `CREDIT_CARD`, a preferência aceita só
-cartões de **crédito** à vista (`installments: 1`, para o valor pago ser o total
-do pedido); débito, pré-pago e boleto saem por `excluded_payment_types` e PIX
-por `excluded_payment_methods`. Sem cartão de crédito na conta, a tentativa é
+**Cartão:** com o método `CREDIT_CARD`, a preferência aceita crédito, débito e
+pré-pago; boleto sai por `excluded_payment_types` e PIX por
+`excluded_payment_methods`. O crédito parcela até `MERCADO_PAGO_MAX_INSTALLMENTS`
+(padrão 1 = só à vista; ver "Parcelamento" abaixo). Sem cartão na conta, a tentativa é
 recusada antes de qualquer cobrança (`CARD_UNAVAILABLE`). Com PIX, a
 preferência aceita só PIX. Em ambos, o saldo em conta (`account_money`) não
 pode ser excluído e sempre aparece. Uma tentativa pendente com página do
@@ -243,9 +243,22 @@ real e conectar um vendedor de teste faz o checkout falhar ao enviar o cartão,
 sem criar pagamento. Contas de teste normalmente não têm chave PIX: no sandbox,
 use o cartão; o PIX ponta a ponta é validado com uma compra real de valor mínimo.
 
-**Formas de pagamento:** PIX → só PIX. Cartão → crédito (à vista), débito e
+**Formas de pagamento:** PIX → só PIX. Cartão → crédito, débito e
 pré-pago; boleto fica de fora (compensação maior que a reserva). O saldo
 Mercado Pago aparece sempre (não pode ser excluído).
+
+**Parcelamento:** `MERCADO_PAGO_MAX_INSTALLMENTS` (1 a 12, padrão 1) vira
+`payment_methods.installments` da preferência: o máximo de parcelas oferecido no
+crédito. As parcelas disponíveis e os juros seguem a configuração da conta do
+vendedor no Mercado Pago (com juros pagos pelo comprador ou "sem juros" absorvidos
+pelo vendedor). A confirmação compara `transaction_amount` com o total do pedido; se
+o provedor informar outro valor, o pagamento fica `AMOUNT_MISMATCH` e nenhum
+ingresso é emitido. Juros pagos pelo comprador (`charges_details` com `from: "payer"`
+ou `fee_details` com `fee_payer: "payer"`) não entram na tarifa do vendedor.
+A documentação do Mercado Pago não deixa explícito se `transaction_amount` exclui os
+juros do comprador. **Antes de subir o valor em produção**, faça uma compra real
+parcelada de valor mínimo com juros e confira: pedido pago, ingresso emitido,
+tarifa e líquido do repasse corretos, e reembolso integral.
 
 **Confirmação na volta do checkout:** as `back_urls` levam a `/pedido/<id>` com
 `payment_id`/`collection_id`. Esse id é só uma pista: o servidor consulta

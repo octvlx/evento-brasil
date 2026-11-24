@@ -38,6 +38,9 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   SETTLEMENT_ENABLED: bool,
   RESERVATION_MINUTES: int(15),
+  // Máximo de parcelas no cartão de crédito (Checkout Pro). 1 = só à vista. Antes de subir,
+  // validar com uma compra real parcelada que o pagamento é confirmado (docs/payments-mercadopago.md).
+  MERCADO_PAGO_MAX_INSTALLMENTS: z.coerce.number().int().min(1).max(12).default(1),
   EMAIL_PROVIDER: z.enum(["console", "resend"]).default("console"),
   EMAIL_API_KEY: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
