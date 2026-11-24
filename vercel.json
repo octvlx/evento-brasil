@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "node scripts/check-migrations.mjs && npm run build",
   "regions": ["gru1"],
   "schedules": {
     "maintenance": {

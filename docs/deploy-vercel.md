@@ -58,3 +58,17 @@ agendamento a cada minuto). Banco: Neon, branch `production`, em São Paulo
 
 CI verde e merge na `main`. Se houver migração, rode o passo 5 **antes** do merge
 (as migrações do projeto são aditivas).
+
+O build de produção confere isso sozinho (`buildCommand` no `vercel.json` →
+`scripts/check-migrations.mjs`): se o banco de produção não tiver todas as
+migrações do código, ou tiver uma com falha, o **deploy é barrado** e o site
+continua na versão anterior. O script só lê `_prisma_migrations`; nunca aplica
+nada. Para destravar, aplique a migração do computador local e refaça o deploy:
+
+```bash
+npx dotenv run -f .env.production --override -- npm run db:deploy
+vercel redeploy ticket24.com.br --environment production
+```
+
+Preview e builds locais não são barrados. Emergência com o banco fora do ar:
+variável `SKIP_MIGRATION_CHECK=1` no ambiente Production, só durante aquele deploy.
