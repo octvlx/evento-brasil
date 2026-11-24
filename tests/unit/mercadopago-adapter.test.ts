@@ -7,7 +7,7 @@ const oauth = vi.hoisted(() => ({
   getForUser: vi.fn(async () => "seller-access-token"),
 }));
 
-const envOverrides = vi.hoisted(() => ({}) as { NODE_ENV?: string });
+const envOverrides = vi.hoisted(() => ({}) as { NODE_ENV?: string; MERCADO_PAGO_MAX_INSTALLMENTS?: number });
 vi.mock("@/server/env", () => ({
   env: () => ({
     APP_URL: "https://events.example",
@@ -15,6 +15,7 @@ vi.mock("@/server/env", () => ({
     MERCADO_PAGO_CLIENT_ID: "client-id",
     MERCADO_PAGO_CLIENT_SECRET: "client-secret",
     MERCADO_PAGO_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+    MERCADO_PAGO_MAX_INSTALLMENTS: envOverrides.MERCADO_PAGO_MAX_INSTALLMENTS ?? 1,
   }),
 }));
 vi.mock("@/server/payments/mercadopago-oauth", () => ({
@@ -50,6 +51,7 @@ function paymentResponse(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.resetAllMocks();
   delete envOverrides.NODE_ENV;
+  delete envOverrides.MERCADO_PAGO_MAX_INSTALLMENTS;
   oauth.getForOrganization.mockResolvedValue("seller-access-token");
   oauth.getForUser.mockResolvedValue("seller-access-token");
   vi.stubGlobal("fetch", vi.fn());
@@ -163,6 +165,29 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(body.payment_methods.excluded_payment_methods).toEqual([{ id: "bolbradesco" }]);
     expect(body.payment_methods.excluded_payment_types).toEqual([{ id: "ticket" }]);
     expect(body.payment_methods.installments).toBe(1);
+  });
+
+  it("card: offers up to MERCADO_PAGO_MAX_INSTALLMENTS; PIX never gets installments", async () => {
+    envOverrides.MERCADO_PAGO_MAX_INSTALLMENTS = 12;
+    const methods = [
+      { id: "pix", payment_type_id: "bank_transfer" },
+      { id: "visa", payment_type_id: "credit_card" },
+      { id: "account_money", payment_type_id: "account_money" },
+    ];
+    const preference = { id: "pref", init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=z" };
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json(methods))
+      .mockResolvedValueOnce(Response.json(preference))
+      .mockResolvedValueOnce(Response.json(methods))
+      .mockResolvedValueOnce(Response.json(preference));
+    await adapter().createPayment({ ...pixInput(), method: "CREDIT_CARD" });
+    await adapter().createPayment(pixInput());
+    const card = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body));
+    const pix = JSON.parse(String(vi.mocked(fetch).mock.calls[3][1]?.body));
+    expect(card.payment_methods.installments).toBe(12);
+    // O valor cobrado no pedido não muda com as parcelas: os juros ficam com o Mercado Pago.
+    expect(card.items[0].unit_price).toBe(pix.items[0].unit_price);
+    expect(pix.payment_methods.installments).toBeUndefined();
   });
 
   it("card: refuses before any charge when the seller has no cards", async () => {
@@ -305,6 +330,34 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     expect(await adapter().getPayment("189772021215", { organizationId: "org-1" })).toMatchObject({ status: "PAID", processingFeeCents: 4 });
     vi.mocked(fetch).mockResolvedValueOnce(Response.json(card(true)));
     expect(await adapter().getPayment("189772021215", { organizationId: "org-1" })).toMatchObject({ status: "REFUNDED", processingFeeCents: 0 });
+  });
+
+  it("installment interest paid by the buyer is not the seller's processing fee", async () => {
+    // Parcelado com juros do comprador: só a tarifa do vendedor (from "collector") conta.
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
+      transaction_amount: 100,
+      fee_details: [
+        { amount: 4.99, type: "mercadopago_fee", fee_payer: "collector" },
+        { amount: 7, type: "application_fee", fee_payer: "collector" },
+        { amount: 12.34, type: "financing_fee", fee_payer: "payer" },
+      ],
+      charges_details: [
+        { type: "fee", name: "third_payment", accounts: { from: "collector", to: "marketplace_owner" }, amounts: { original: 7, refunded: 0 } },
+        { type: "fee", name: "mercadopago_fee", accounts: { from: "collector", to: "mp" }, amounts: { original: 4.99, refunded: 0 } },
+        { type: "fee", name: "financing_fee", accounts: { from: "payer", to: "mp" }, amounts: { original: 12.34, refunded: 0 } },
+      ],
+    })));
+    expect(await adapter().getPayment("1", { organizationId: "org-1" })).toMatchObject({ status: "PAID", amountCents: 10000, processingFeeCents: 499 });
+
+    // Sem charges_details: o fallback por fee_details também ignora o que o comprador pagou.
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({
+      transaction_amount: 100,
+      fee_details: [
+        { amount: 4.99, type: "mercadopago_fee", fee_payer: "collector" },
+        { amount: 12.34, type: "financing_fee", fee_payer: "payer" },
+      ],
+    })));
+    expect(await adapter().getPayment("2", { organizationId: "org-1" })).toMatchObject({ processingFeeCents: 499 });
   });
 
   it("falls back to fee_details when a provider fee has no original amount", async () => {

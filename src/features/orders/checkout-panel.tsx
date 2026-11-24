@@ -5,6 +5,7 @@ import { useEffect, useState, useTransition } from "react";
 import { Copy, CreditCard, FlaskConical, Loader2, QrCode, TimerReset } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/primitives";
+import { cardMethodsText } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { TermsReaccept } from "@/features/auth/terms-reaccept";
 import { simulatePaymentAction, startPaymentAction } from "./actions";
@@ -22,6 +23,8 @@ interface Props {
   termsPending: boolean;
   /** O provedor aceita cartão de crédito (Mercado Pago: Checkout Pro). */
   cardAvailable: boolean;
+  /** Máximo de parcelas no crédito (1 = só à vista). */
+  maxInstallments: number;
 }
 
 function mercadoPagoCheckoutUrl(value: string) {
@@ -42,7 +45,7 @@ function useCountdown(target: string, initialNow: number) {
   return Math.max(0, left);
 }
 
-export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pendingPix, pendingCheckoutUrl, cardProcessing, termsPending, cardAvailable }: Props) {
+export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pendingPix, pendingCheckoutUrl, cardProcessing, termsPending, cardAvailable, maxInstallments }: Props) {
   const cardEnabled = isSimulated || cardAvailable;
   const router = useRouter();
   const [method, setMethod] = useState<"PIX" | "CREDIT_CARD">("PIX");
@@ -167,7 +170,7 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
                 [
                   "CREDIT_CARD",
                   isSimulated ? "Cartão de crédito (simulado)" : "Cartão pelo Mercado Pago",
-                  isSimulated ? "Ambiente de teste" : cardEnabled ? "Crédito à vista ou débito" : "Indisponível",
+                  isSimulated ? "Ambiente de teste" : cardEnabled ? cardMethodsText(maxInstallments).replace(/^./, (c) => c.toUpperCase()) : "Indisponível",
                   CreditCard,
                 ],
               ] as const
@@ -189,6 +192,11 @@ export function CheckoutPanel({ orderId, expiresAt, initialNow, isSimulated, pen
               </label>
             ))}
           </fieldset>
+          {method === "CREDIT_CARD" && !isSimulated && cardEnabled && maxInstallments > 1 && (
+            <p className="text-sm text-muted-foreground">
+              Você escolhe as parcelas no Mercado Pago. Se houver juros, eles aparecem lá antes de você confirmar o pagamento.
+            </p>
+          )}
           {method === "CREDIT_CARD" && isSimulated && (
             <div className="rounded-xl bg-muted p-3 text-sm">
               <p className="mb-2 font-semibold">Resultado simulado do cartão</p>

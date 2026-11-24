@@ -135,7 +135,7 @@ export default function PublishEventPage() {
             <h3 className="text-lg font-extrabold">Ingressos pagos</h3>
             <ul className="mt-3 space-y-2 text-sm text-foreground/90">
               <li className="flex gap-2"><Check />Para vender, conecte a conta do Mercado Pago da organização em Configurações. O valor das vendas vai para essa conta.</li>
-              <li className="flex gap-2"><Check />O público paga com PIX ou cartão (crédito à vista ou débito), pelo Mercado Pago.</li>
+              <li className="flex gap-2"><Check />O público paga com PIX ou cartão de crédito ou débito, pelo Mercado Pago.</li>
               <li className="flex gap-2"><Check />O ingresso só é emitido depois que o pagamento é confirmado.</li>
               <li className="flex gap-2"><Check />Há comissão da plataforma por ingresso vendido — veja os valores abaixo.</li>
             </ul>
