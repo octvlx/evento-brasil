@@ -12,6 +12,7 @@ import {
 } from "@/features/organizer/settings-forms";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
+import { SuspendedOrganizationNotice } from "@/features/organizer/suspended-notice";
 import { assignableRoles, listPendingInvitations, MAX_PENDING_INVITATIONS, pendingOwnershipTransfer } from "@/server/services/organizers";
 import { OwnershipTransferPanel } from "@/features/organizer/ownership-transfer";
 import { formatDateTimeShort } from "@/lib/datetime";
@@ -30,6 +31,7 @@ export default function TeamPage() {
 async function Content() {
   const { user, membership, org, can } = await requireOrganizer("/organizador/equipe");
   if (!can("members:manage")) redirect("/organizador");
+  if (org.status === "SUSPENDED") return <SuspendedOrganizationNotice organizationId={org.id} title="Equipe" blocked="convidar pessoas, mudar papéis ou transferir a responsabilidade" />;
   const [members, invitations, events] = await Promise.all([
     db.organizationMember.findMany({
       where: { organizationId: org.id },

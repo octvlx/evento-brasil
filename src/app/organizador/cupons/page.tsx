@@ -6,6 +6,7 @@ import { PageTitle } from "@/components/site/panel-shell";
 import { CouponsManager } from "@/features/organizer/coupons-manager";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
+import { SuspendedOrganizationNotice } from "@/features/organizer/suspended-notice";
 import { listOrganizationCoupons, ORG_COUPON_TIMEZONE } from "@/server/services/coupons";
 import { utcToZonedLocalInput } from "@/lib/datetime";
 
@@ -22,6 +23,7 @@ export default function OrganizationCouponsPage() {
 async function Content() {
   const { user, org, can } = await requireOrganizer("/organizador/cupons");
   if (!can("event:write")) redirect("/organizador");
+  if (org.status === "SUSPENDED") return <SuspendedOrganizationNotice organizationId={org.id} title="Cupons" blocked="criar ou editar cupons" />;
   const coupons = await listOrganizationCoupons(db, user, org.id);
   const tz = ORG_COUPON_TIMEZONE;
   return (
@@ -31,7 +33,7 @@ async function Content() {
         <CouponsManager
           eventId={null}
           ticketTypes={[]}
-          locked={org.status === "REJECTED" || org.status === "SUSPENDED"}
+          locked={org.status === "REJECTED"}
           items={coupons.map((c) => ({
             ...c,
             validFromLocal: c.validFrom ? utcToZonedLocalInput(c.validFrom, tz) : "",
