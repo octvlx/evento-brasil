@@ -8,7 +8,8 @@ export const COMPANY = {
   legalName: "[A PREENCHER: razão social]",
   cnpj: "[A PREENCHER: CNPJ]",
   address: "[A PREENCHER: endereço completo da sede]",
-  supportEmail: "[A PREENCHER: e-mail de atendimento]",
+  /** Também publicado na Central de ajuda (/ajuda#contato). */
+  supportEmail: "suporte@ticket24.com.br",
   dpoName: "[A PREENCHER: nome do encarregado de dados]",
   dpoEmail: "[A PREENCHER: e-mail do encarregado de dados]",
   /** Foro do contrato com organizadores (relação entre empresas). */

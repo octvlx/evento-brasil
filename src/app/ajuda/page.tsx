@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { MessageCircleQuestion, ReceiptText, Ticket, Undo2 } from "lucide-react";
 import { Card, Skeleton } from "@/components/ui/primitives";
 import { helpTopics } from "@/content/help";
+import { COMPANY } from "@/content/legal/company";
 import { HelpCenter } from "@/features/help/help-center";
 import { CancellationRequestForm } from "@/features/orders/cancellation-form";
 import { CancellationRequestList } from "@/features/orders/cancellation-list";
@@ -68,8 +69,13 @@ export default function HelpPage() {
           </div>
           <div className="border-t border-border pt-4">
             <h3 className="font-display text-lg font-bold">Outros assuntos</h3>
-            {/* TODO(lançamento): publicar os canais oficiais (e-mail e WhatsApp) da empresa. */}
-            <p className="mt-1 text-sm text-muted-foreground">Os canais oficiais de atendimento por e-mail e WhatsApp serão publicados aqui antes do lançamento.</p>
+            <p className="mt-1 text-sm text-muted-foreground" data-testid="support-email">
+              Para qualquer outro assunto, escreva para{" "}
+              <a href={`mailto:${COMPANY.supportEmail}`} className="font-semibold text-foreground underline underline-offset-4">
+                {COMPANY.supportEmail}
+              </a>
+              . Se for sobre uma compra, informe o código do pedido, que aparece em Meus pedidos.
+            </p>
           </div>
         </Card>
       </section>
