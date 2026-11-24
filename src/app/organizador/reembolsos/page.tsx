@@ -7,6 +7,7 @@ import { ReasonedDecisionButton } from "@/features/admin/decision-controls";
 import { decideRefundApprovalAction } from "@/features/orders/actions";
 import { db } from "@/server/db";
 import { requireOrganizer } from "@/server/auth/organizer-context";
+import { SuspendedOrganizationNotice } from "@/features/organizer/suspended-notice";
 import { listOrgPendingApprovals, REFUND_APPROVAL_THRESHOLD_CENTS } from "@/server/services/refunds";
 import { formatDateTimeShort } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
@@ -25,6 +26,7 @@ export default function OrganizerRefundApprovals() {
 async function Content() {
   const { user, org, can } = await requireOrganizer("/organizador/reembolsos");
   if (!can("refunds:approve")) redirect("/organizador");
+  if (org.status === "SUSPENDED") return <SuspendedOrganizationNotice organizationId={org.id} title="Reembolsos para aprovar" blocked="aprovar ou recusar reembolsos" />;
   const [pending, decided] = await Promise.all([
     listOrgPendingApprovals(db, user, org.id),
     db.refund.findMany({
