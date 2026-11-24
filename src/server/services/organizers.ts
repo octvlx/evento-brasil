@@ -144,6 +144,9 @@ export async function resubmitOrganizerApplication(db: Db, actor: Actor, organiz
         contactEmail: input.contactEmail,
         contactPhone: input.contactPhone ? onlyDigits(input.contactPhone) : null,
         cityId: await applicationCityId(tx, input),
+        // Mesmas regras do cadastro novo: vazio apaga o valor anterior.
+        websiteUrl: input.websiteUrl || null,
+        instagramHandle: input.instagramHandle?.replace(/^@/, "") || null,
         status: "PENDING_REVIEW",
         statusReason: null,
         verifications: { create: verificationData(input, actor.id) },

@@ -104,4 +104,16 @@ describe("criação de organizações", () => {
     const again = await resubmitOrganizerApplication(db, owner, org.id, application("Recusada Corrigida"));
     expect(again).toMatchObject({ status: "PENDING_REVIEW", name: "Recusada Corrigida", statusReason: null });
   });
+
+  it("reenvio grava site e Instagram corrigidos (e apaga os que ficaram vazios)", async () => {
+    const owner = await makeUser();
+    const org = await submitOrganizerApplication(db, owner, { ...application("Redes"), websiteUrl: "https://antigo.example.com", instagramHandle: "@antigo" });
+    expect(org).toMatchObject({ websiteUrl: "https://antigo.example.com", instagramHandle: "antigo" });
+    await db.organization.update({ where: { id: org.id }, data: { status: "REJECTED", statusReason: "Instagram não encontrado" } });
+    const fixed = await resubmitOrganizerApplication(db, owner, org.id, { ...application("Redes"), websiteUrl: "https://novo.example.com", instagramHandle: "@novo.perfil" });
+    expect(fixed).toMatchObject({ websiteUrl: "https://novo.example.com", instagramHandle: "novo.perfil" });
+    await db.organization.update({ where: { id: org.id }, data: { status: "REJECTED", statusReason: "Remova o site" } });
+    const cleared = await resubmitOrganizerApplication(db, owner, org.id, { ...application("Redes"), instagramHandle: "novo.perfil" });
+    expect(cleared).toMatchObject({ websiteUrl: null, instagramHandle: "novo.perfil" });
+  });
 });
