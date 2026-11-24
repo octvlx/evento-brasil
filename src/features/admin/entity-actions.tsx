@@ -1,14 +1,16 @@
 // Ações do admin sobre evento, organização e usuário: as mesmas na lista e na página de
 // detalhe. Cada ação revalida a permissão no servidor (features/admin/actions.ts).
 import type { AdminRole, EventStatus, OrganizationStatus, UserStatus } from "@/generated/prisma/client";
-import { AdminActionButton, AdminRolesEditor, DeleteAccountButton, RejectOrganizationButton, ResetTwoFactorButton } from "@/features/admin/controls";
+import { AdminActionButton, AdminRolesEditor, DeleteAccountButton, DeleteOrganizationButton, RejectOrganizationButton, ResetTwoFactorButton } from "@/features/admin/controls";
 import {
   adminCancelEventAction,
   autoPublishAction,
+  deleteOrganizationAction,
   deleteUserAccountAction,
   featureEventAction,
   moderateEventAction,
   resetUserTwoFactorAction,
+  rejectOrganizationDeletionAction,
   reviewOrganizationAction,
   setAdminRolesAction,
   suspendEventAction,
@@ -62,7 +64,9 @@ export function EventAdminActions({ e }: { e: { id: string; status: EventStatus;
   );
 }
 
-export function OrganizationAdminActions({ o }: { o: { id: string; status: OrganizationStatus; autoPublishEvents: boolean } }) {
+export function OrganizationAdminActions({ o }: { o: { id: string; status: OrganizationStatus; autoPublishEvents: boolean; deletedAt: Date | null } }) {
+  // Excluída: nada a decidir (nem reativar).
+  if (o.deletedAt) return null;
   return (
     <div className="flex flex-wrap items-start gap-2">
       {o.status === "PENDING_REVIEW" && (
@@ -79,6 +83,41 @@ export function OrganizationAdminActions({ o }: { o: { id: string; status: Organ
       )}
       {o.status === "SUSPENDED" && <AdminActionButton label="Reativar" action={suspendOrganizationAction.bind(null, o.id, false)} confirm="Reativar a organização?" />}
     </div>
+  );
+}
+
+/**
+ * Exclusão da organização pelo superadmin (a página só mostra a quem tem
+ * "organizers:delete"; a ação confere de novo). Com `requestId`, aprova o pedido do responsável.
+ */
+export function OrganizationDeleteAction({
+  o,
+  blockers,
+  requestId = null,
+}: {
+  o: { id: string; name: string; events: number; members: number };
+  blockers: string[];
+  requestId?: string | null;
+}) {
+  return (
+    <DeleteOrganizationButton
+      organization={{ name: o.name, events: o.events, members: o.members }}
+      blockers={blockers}
+      label={requestId ? "Aprovar e excluir" : "Excluir organização"}
+      action={deleteOrganizationAction.bind(null, o.id, requestId)}
+    />
+  );
+}
+
+/** Recusa do pedido de exclusão (motivo obrigatório, vai para o responsável). */
+export function RejectOrganizationDeletionAction({ requestId }: { requestId: string }) {
+  return (
+    <AdminActionButton
+      label="Recusar pedido"
+      askReason="Motivo da recusa (vai para o responsável)"
+      reasonRequired
+      action={rejectOrganizationDeletionAction.bind(null, requestId)}
+    />
   );
 }
 

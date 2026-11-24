@@ -17,6 +17,7 @@ import { setAdminRoles, setUserSuspended } from "@/server/services/users";
 import { assignCancellationRequest } from "@/server/services/cancellation-requests";
 import { adminResetTwoFactor } from "@/server/services/two-factor";
 import { adminDeleteAccount } from "@/server/services/account-deletion";
+import { adminDeleteOrganization, rejectOrganizationDeletionRequest } from "@/server/services/organization-deletion";
 import { rateLimit } from "@/server/rate-limit";
 import { decideEventReports } from "@/server/services/event-reports";
 import {
@@ -74,6 +75,19 @@ export const deleteUserAccountAction = async (id: string, confirmEmail: string, 
     await rateLimit(`account-admin-delete:${a.id}`, 10, 15 * 60_000);
     await adminDeleteAccount(db, a, id, { confirmEmail: String(confirmEmail), reason: String(reason), adminCode: String(adminCode) });
   });
+/** Exclusão lógica da organização (direta ou aprovando o pedido `requestId`). Só superadmin. */
+export const deleteOrganizationAction = async (id: string, requestId: string | null, confirmName: string, reason: string, adminCode: string) =>
+  run(async (a) => {
+    await rateLimit(`org-admin-delete:${a.id}`, 10, 15 * 60_000);
+    await adminDeleteOrganization(db, a, String(id), {
+      confirmName: String(confirmName),
+      reason: String(reason),
+      adminCode: String(adminCode),
+      requestId: requestId ? String(requestId) : undefined,
+    });
+  });
+export const rejectOrganizationDeletionAction = async (requestId: string, note?: string) =>
+  run((a) => rejectOrganizationDeletionRequest(db, a, String(requestId), String(note ?? "")));
 export const adminRefundAction =async (orderId: string, note?: string) => run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, note ?? ""));
 export const adminPartialRefundAction = async (orderId: string, ticketIds: string[], note: string) =>
   run((a) => adminRefundOrder(db, getPaymentAdapter(), a, orderId, String(note ?? ""), Array.isArray(ticketIds) ? ticketIds.map(String).slice(0, 200) : []));

@@ -5,12 +5,14 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
-import { OrganizationAdminActions } from "@/features/admin/entity-actions";
+import { OrganizationAdminActions, OrganizationDeleteAction, RejectOrganizationDeletionAction } from "@/features/admin/entity-actions";
 import { HistoryTable, auditLinkFor } from "@/features/admin/history-table";
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { adminHas } from "@/server/auth/admin-roles";
 import { entityHistory, parsePage } from "@/server/services/admin-oversight";
+import { organizationDeletionBlockers } from "@/server/services/organization-deletion";
+import { DELETION_REQUEST_STATUS, ORG_DELETION_BLOCKER_TEXT } from "@/lib/organization-deletion";
 import { formatDateShort, formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { EVENT_STATUS, ORG_ROLE, ORG_STATUS, PAYMENT_ACCOUNT_STATUS, toneToBadge } from "@/lib/labels";
@@ -37,10 +39,15 @@ async function Content({ params, searchParams }: { params: Promise<{ id: string 
       verifications: { orderBy: { createdAt: "desc" }, take: 5 },
       members: { include: { user: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: "asc" } },
       events: { select: { id: true, title: true, status: true, startsAt: true, endsAt: true, timezone: true, suspendedAt: true }, orderBy: { startsAt: "desc" }, take: 50 },
-      _count: { select: { events: true } },
+      deletionRequests: { orderBy: { createdAt: "desc" }, take: 1, include: { requestedBy: { select: { name: true, email: true } } } },
+      _count: { select: { events: true, members: true } },
     },
   });
   if (!org) notFound();
+  const canDelete = adminHas(admin.adminRoles, "organizers:delete") && !org.deletedAt;
+  const deletionBlockers = canDelete ? (await organizationDeletionBlockers(db, org.id)).map((b) => ORG_DELETION_BLOCKER_TEXT[b]) : [];
+  const deletionRequest = org.deletionRequests[0] ?? null;
+  const pendingRequestId = deletionRequest?.status === "PENDING" ? deletionRequest.id : null;
   const history = await entityHistory(db, admin, "Organization", org.id, parsePage(sp.historico));
   const st = ORG_STATUS[org.status];
   const canSeeUsers = adminHas(admin.adminRoles, "users:manage");
@@ -56,8 +63,17 @@ async function Content({ params, searchParams }: { params: Promise<{ id: string 
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1 text-sm">
             <p>
-              <Badge variant={toneToBadge[st.tone]}>{st.label}</Badge> {org.autoPublishEvents && <Badge variant="accent">Publicação automática</Badge>}
+              {org.deletedAt ? <Badge variant="danger">Excluída em {formatDateTimeShort(org.deletedAt)}</Badge> : <Badge variant={toneToBadge[st.tone]}>{st.label}</Badge>}{" "}
+              {org.autoPublishEvents && <Badge variant="accent">Publicação automática</Badge>}
             </p>
+            {deletionRequest && (
+              <p className="text-xs" data-testid="org-deletion-request">
+                Pedido de exclusão de {deletionRequest.requestedBy.name} em {formatDateTimeShort(deletionRequest.createdAt)}:{" "}
+                <Badge variant={toneToBadge[DELETION_REQUEST_STATUS[deletionRequest.status].tone]}>{DELETION_REQUEST_STATUS[deletionRequest.status].label}</Badge>
+                {deletionRequest.reason ? ` · motivo: ${deletionRequest.reason}` : ""}
+                {deletionRequest.decisionNote ? ` · decisão: ${deletionRequest.decisionNote}` : ""}
+              </p>
+            )}
             {org.statusReason && <p className="text-xs text-destructive">Motivo{org.statusReasonArea ? ` (${ORGANIZER_REVIEW_AREA[org.statusReasonArea]})` : ""}: {org.statusReason}</p>}
             <p className="text-muted-foreground">
               {org.city ? `${org.city.name} – ${org.city.state}` : "Cidade não informada"} · contato {org.contactEmail}
@@ -71,7 +87,15 @@ async function Content({ params, searchParams }: { params: Promise<{ id: string 
               </p>
             )}
           </div>
-          <OrganizationAdminActions o={org} />
+          <div className="flex flex-col items-end gap-2">
+            <OrganizationAdminActions o={org} />
+            {canDelete && (
+              <div className="flex flex-wrap items-start justify-end gap-2">
+                <OrganizationDeleteAction o={{ id: org.id, name: org.name, events: org._count.events, members: org._count.members }} blockers={deletionBlockers} requestId={pendingRequestId} />
+                {pendingRequestId && <RejectOrganizationDeletionAction requestId={pendingRequestId} />}
+              </div>
+            )}
+          </div>
         </div>
       </Card>
 
