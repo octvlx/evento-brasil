@@ -20,6 +20,7 @@ import { getCurrentUser } from "@/server/auth/current";
 import { getPublicEvent, relatedEvents, trackingLinkCouponCode } from "@/server/services/catalog";
 import { EventGrid } from "@/components/site/event-card";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
+import { eventJsonLd, jsonLdHtml } from "@/lib/structured-data";
 import { formatAddress } from "@/lib/br";
 import { eventAddress, googleCalendarUrl, mapLinks } from "@/lib/event-links";
 import { formatDateLong, formatTime, timezoneLabel } from "@/lib/datetime";
@@ -115,24 +116,10 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
     requiresAttendeeInfo: t.requiresAttendeeInfo,
   }));
 
-  const jsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Event",
-    name: event.title,
-    description: event.summary ?? event.description.slice(0, 300),
-    startDate: event.startsAt.toISOString(),
-    endDate: event.endsAt.toISOString(),
-    eventStatus: "https://schema.org/EventScheduled",
-    eventAttendanceMode: event.locationType === "ONLINE" ? "https://schema.org/OnlineEventAttendanceMode" : "https://schema.org/OfflineEventAttendanceMode",
-    location:
-      event.locationType === "ONLINE"
-        ? { "@type": "VirtualLocation", url }
-        : { "@type": "Place", name: event.venue?.name, address: { "@type": "PostalAddress", addressLocality: city?.name, addressRegion: city?.state, addressCountry: "BR" } },
-    organizer: { "@type": "Organization", name: event.organization.name },
-    // Preço total por ingresso (com a taxa do comprador), o mesmo exibido e cobrado.
-    // Encerrado: nenhuma oferta à venda.
-    ...(ended ? {} : { offers: event.ticketTypes.map((t) => ({ "@type": "Offer", name: t.name, price: (prices[t.id].totalCents / 100).toFixed(2), priceCurrency: "BRL", url })) }),
-  };
+  // Preço total por ingresso (com a taxa do comprador), o mesmo exibido e cobrado.
+  // Evento privado (fora dos buscadores): sem dados estruturados.
+  const totals = Object.fromEntries(event.ticketTypes.map((t) => [t.id, prices[t.id].totalCents]));
+  const jsonLd = event.isUnlisted ? null : eventJsonLd(event, totals, { ended, base });
 
   // Trilha: Início › cidade › categoria na cidade (ou na busca, para eventos online).
   const trail = [
@@ -149,8 +136,8 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   return (
     <>
     <article className="mx-auto max-w-7xl px-4 pb-10 pt-6 sm:px-6">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd).replace(/</g, "\\u003c") }} />
+      {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(jsonLd) }} />}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(breadcrumbLd) }} />
       <nav aria-label="Trilha de navegação" className="mb-4">
         <ol className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
           {trail.map((t) => (
