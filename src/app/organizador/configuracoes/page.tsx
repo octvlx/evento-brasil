@@ -10,13 +10,13 @@ import {
 } from "@/features/organizer/settings-forms";
 import { db } from "@/server/db";
 import { getPaymentAdapter } from "@/server/payments";
-import { sellerCheckoutReadiness } from "@/server/payments/mercadopago";
+import { checkoutMaxInstallments, sellerCheckoutReadiness } from "@/server/payments/mercadopago";
 import { sandboxTokens } from "@/server/payments/mercadopago-oauth";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { OrganizationDeletionPanel } from "@/features/organizer/organization-deletion";
 import { latestOrganizationDeletionRequest, organizationDeletionBlockers } from "@/server/services/organization-deletion";
 import { ORG_DELETION_BLOCKER_TEXT } from "@/lib/organization-deletion";
-import { ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
+import { cardMethodsText, ORG_STATUS, PAYMENT_ACCOUNT_STATUS } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Configurações", robots: { index: false } };
 
@@ -96,10 +96,10 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
           ) : adapter.id === "mercadopago" && adapter.supportedMethods.length > 0 ? (
             sandboxTokens() ? (
               <Alert variant="warning">
-                Checkout Pro está configurado para PIX, cartão (crédito à vista ou débito) e saldo Mercado Pago. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
+                Checkout Pro está configurado para PIX, cartão ({cardMethodsText(checkoutMaxInstallments())}) e saldo Mercado Pago. Valide o fluxo completo no sandbox antes de habilitar cobranças reais em produção.
               </Alert>
             ) : (
-              <Alert>Pagamentos pelo Checkout Pro do Mercado Pago: PIX, cartão (crédito à vista ou débito) e saldo Mercado Pago, direto na sua conta.</Alert>
+              <Alert>Pagamentos pelo Checkout Pro do Mercado Pago: PIX, cartão ({cardMethodsText(checkoutMaxInstallments())}) e saldo Mercado Pago, direto na sua conta.</Alert>
             )
           ) : adapter.id === "mercadopago" ? (
             <Alert variant="warning">

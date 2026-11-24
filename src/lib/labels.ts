@@ -1,5 +1,10 @@
 // Rótulos pt-BR para enums do banco (seguro para cliente).
 
+/** Texto das opções de cartão no Mercado Pago ("crédito à vista ou débito" / "crédito em até 12x ou débito"). */
+export function cardMethodsText(maxInstallments: number) {
+  return maxInstallments > 1 ? `crédito em até ${maxInstallments}x ou débito` : "crédito à vista ou débito";
+}
+
 export const ORDER_STATUS: Record<string, { label: string; tone: "default" | "success" | "warning" | "danger" }> = {
   PENDING_PAYMENT: { label: "Aguardando pagamento", tone: "warning" },
   PAID: { label: "Pago", tone: "success" },

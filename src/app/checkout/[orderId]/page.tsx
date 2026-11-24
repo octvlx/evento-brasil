@@ -13,6 +13,7 @@ import { getOrderForBuyer } from "@/server/services/orders";
 import { checkoutStep } from "@/features/orders/status-view";
 import { formatEventDateTime } from "@/lib/datetime";
 import { getPaymentAdapter } from "@/server/payments";
+import { checkoutMaxInstallments } from "@/server/payments/mercadopago";
 import { pendingTermsKinds } from "@/server/services/terms";
 
 export const metadata: Metadata = { title: "Pagamento", robots: { index: false } };
@@ -75,6 +76,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
           pendingCheckoutUrl={pendingCheckoutUrl}
           cardProcessing={step === "card-processing"}
           cardAvailable={cardAvailable}
+          maxInstallments={checkoutMaxInstallments()}
           termsPending={termsPending}
         />}
       </div>

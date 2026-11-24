@@ -40,7 +40,7 @@ type SellerMethod = z.infer<typeof methodsSchema>[number];
 
 /**
  * Métodos do Mercado Pago aceitos para o método escolhido no site: PIX → só PIX;
- * cartão → crédito (à vista), débito e pré-pago. Boleto fica de fora (compensação
+ * cartão → crédito (parcelas até `MERCADO_PAGO_MAX_INSTALLMENTS`), débito e pré-pago. Boleto fica de fora (compensação
  * de dias não cabe na reserva de 15 minutos).
  * O saldo em conta (`account_money`) não pode ser excluído e sempre aparece.
  */
@@ -73,6 +73,11 @@ export function checkoutExclusions(methods: SellerMethod[], allowed: SellerMetho
     excluded_payment_methods: [...ids].map((id) => ({ id })),
     excluded_payment_types: [...types].map((id) => ({ id })),
   };
+}
+
+/** Máximo de parcelas oferecido no cartão de crédito (1 = só à vista). */
+export function checkoutMaxInstallments() {
+  return env().MERCADO_PAGO_MAX_INSTALLMENTS;
 }
 
 /**
@@ -123,11 +128,11 @@ const paymentSchema = z.object({
   money_release_date: z.string().nullish(),
   money_release_status: z.string().nullish(),
   transaction_details: z.object({ net_received_amount: z.number().nullish() }).nullish(),
-  fee_details: z.array(z.object({ amount: z.number().nonnegative(), type: z.string().nullish() })).nullish(),
+  fee_details: z.array(z.object({ amount: z.number().nonnegative(), type: z.string().nullish(), fee_payer: z.string().nullish() })).nullish(),
   // Movimentações de taxa; `amounts.refunded` mostra quanto o provedor devolveu num estorno.
   charges_details: z.array(z.object({
     type: z.string().nullish(),
-    accounts: z.object({ to: z.string().nullish() }).nullish(),
+    accounts: z.object({ from: z.string().nullish(), to: z.string().nullish() }).nullish(),
     amounts: z.object({ original: z.number().nonnegative().nullish(), refunded: z.number().nonnegative().nullish() }).nullish(),
   })).nullish(),
   point_of_interaction: z.object({
@@ -239,16 +244,18 @@ function mapStatus(status: string, detail: string | null | undefined): ProviderP
  * devoluções de tarifas nunca contadas. Sem `amounts.original` em todas elas, cai em
  * `fee_details` (sem `application_fee`, que é a comissão da plataforma, já lançada na
  * venda). Null quando o provedor não informa a tarifa.
+ * Cobranças pagas pelo comprador (juros do parcelamento: `from`/`fee_payer` "payer") não
+ * saem do valor do vendedor e ficam de fora.
  */
 function netProcessingFeeCents(payment: z.infer<typeof paymentSchema>) {
-  const mpCharges = (payment.charges_details ?? []).filter((charge) => charge.type === "fee" && charge.accounts?.to === "mp");
+  const mpCharges = (payment.charges_details ?? []).filter((charge) => charge.type === "fee" && charge.accounts?.to === "mp" && charge.accounts?.from !== "payer");
   const refunded = mpCharges.reduce((total, charge) => total + cents(charge.amounts?.refunded ?? 0), 0);
   if (mpCharges.length && mpCharges.every((charge) => typeof charge.amounts?.original === "number")) {
     const charged = mpCharges.reduce((total, charge) => total + cents(charge.amounts!.original!), 0);
     return Math.max(0, charged - refunded);
   }
   if (!payment.fee_details) return null;
-  const charged = payment.fee_details.filter((fee) => fee.type !== "application_fee").reduce((total, fee) => total + cents(fee.amount), 0);
+  const charged = payment.fee_details.filter((fee) => fee.type !== "application_fee" && fee.fee_payer !== "payer").reduce((total, fee) => total + cents(fee.amount), 0);
   return Math.max(0, charged - refunded);
 }
 
@@ -367,9 +374,10 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       marketplace_fee: amount(input.marketplace.applicationFeeCents),
       payment_methods: {
         ...checkoutExclusions(methods.data, allowed),
-        // Cartão só à vista: parcelado com juros mudaria o valor pago em relação ao pedido.
-        ...(card ? { installments: 1 } : {}),
-        // Debito/pré-pago não parcelam; o limite acima vale para o crédito.
+        // Máximo de parcelas do crédito (débito/pré-pago não parcelam). Os juros, quando há,
+        // o Mercado Pago mostra e cobra do comprador; o valor do pedido continua sendo o
+        // `transaction_amount` conferido na confirmação (divergência não emite ingresso).
+        ...(card ? { installments: checkoutMaxInstallments() } : {}),
       },
       notification_url: new URL("/api/webhooks/mercadopago", appUrl).href,
       back_urls: {
