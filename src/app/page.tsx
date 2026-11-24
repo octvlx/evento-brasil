@@ -11,6 +11,7 @@ import { CategoryChips } from "@/components/site/category-chips";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
 import { PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
+import { jsonLdHtml, siteJsonLd } from "@/lib/structured-data";
 import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
 import { eventsInCity, featuredEvents, featuredOrganizers, getPublicCity, listCategories, recommendedEvents, weekendEvents } from "@/server/services/catalog";
@@ -19,6 +20,8 @@ import { getCurrentUser } from "@/server/auth/current";
 export default function HomePage() {
   return (
     <>
+      {/* Nome e logo do site nos resultados do Google. */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(siteJsonLd()) }} />
       {/* 1. Destaques logo abaixo do header, com uma introdução de uma linha. */}
       <section aria-labelledby="destaques-titulo" className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 sm:pt-8">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
