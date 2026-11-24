@@ -1,6 +1,7 @@
 import "server-only";
 import { cancelQueuedEmails, enqueueEmail } from "../email/outbox";
 import { transactionalEmail } from "../email/templates";
+import { enqueueOrganizationReviewEmailsTx } from "../email/events";
 import { env } from "../env";
 import { inviteSchema, organizerApplicationSchema, type OrganizerApplicationInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
@@ -209,6 +210,8 @@ export async function reviewOrganization(
       entityId: organizationId,
       metadata: { previousStatus: org.status, newStatus, note: note ?? null, area: reasonArea },
     });
+    // Na mesma transação: o aviso só sai se a decisão for gravada.
+    await enqueueOrganizationReviewEmailsTx(tx, organizationId, decision, note ?? null, latest?.id ?? null);
     return updated;
   });
 }
