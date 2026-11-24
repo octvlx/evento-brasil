@@ -22,6 +22,8 @@ export default function OrganizerSignupPage() {
 async function Content() {
   const user = await requireUser("/organizador/cadastro");
   const { active } = await getActiveMembership(user.id);
+  // Em análise: a tela "Enviado" explica o que acontece agora (é para lá que o envio leva).
+  if (active?.organization.status === "PENDING_REVIEW") redirect("/organizador/cadastro/enviado");
   if (active && !["REJECTED", "DRAFT"].includes(active.organization.status)) redirect("/organizador");
   const org = active ? await db.organization.findUnique({ where: { id: active.organizationId }, include: { city: true } }) : null;
   // Cidade antiga sem código IBGE não encontrada na base: mantém o cityId até o usuário escolher outra.

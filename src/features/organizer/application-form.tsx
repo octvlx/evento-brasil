@@ -4,9 +4,10 @@
 // Revisão). Cada "Continuar" valida só o passo atual; o envio final manda o mesmo
 // `OrganizerApplicationInput` de antes às actions, que revalidam tudo no servidor.
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Building2, Check, CircleCheck, Loader2, Lock, Pencil, Send, UserRound } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Alert, FieldError, Input, Label, Skeleton, Textarea } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import { createOrganizationAction, resubmitApplicationAction } from "./actions";
@@ -160,7 +161,7 @@ function ApplicationWizard(props: Props) {
   const [focusTarget, setFocusTarget] = useState<{ id: string; n: number } | null>(null);
   const dirty = useRef(initial.restored);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const doneRef = useRef<HTMLHeadingElement>(null);
+  const router = useRouter();
 
   const legal = values.legalType;
   const docLabel = documentLabel(legal);
@@ -173,9 +174,9 @@ function ApplicationWizard(props: Props) {
 
   useEffect(() => {
     if (!focusTarget) return;
-    const el = focusTarget.id === "heading" ? headingRef.current : focusTarget.id === "done" ? doneRef.current : document.getElementById(focusTarget.id);
+    const el = focusTarget.id === "heading" ? headingRef.current : document.getElementById(focusTarget.id);
     el?.focus();
-    if (el && focusTarget.id !== "heading" && focusTarget.id !== "done") el.scrollIntoView?.({ block: "center" });
+    if (el && focusTarget.id !== "heading") el.scrollIntoView?.({ block: "center" });
   }, [focusTarget]);
 
   const focus = (id: string) => setFocusTarget((f) => ({ id, n: (f?.n ?? 0) + 1 }));
@@ -241,9 +242,12 @@ function ApplicationWizard(props: Props) {
         const input = toApplicationInput(values);
         const res = resubmitOrganizationId ? await resubmitApplicationAction(resubmitOrganizationId, input) : await createOrganizationAction(input);
         if (res.ok) {
-          removeDraft(storageKey);
+          // A tela "Enviado" é uma rota própria, renderizada pelo status real da
+          // organização: a action troca a organização ativa e a página recarrega.
+          dirty.current = false;
           setSubmitted(true);
-          focus("done");
+          removeDraft(storageKey);
+          router.replace("/organizador/cadastro/enviado");
         } else setSubmitError(res.error);
       } catch {
         setSubmitError("Não conseguimos enviar agora. Verifique sua conexão e tente de novo: seus dados continuam aqui.");
@@ -260,8 +264,6 @@ function ApplicationWizard(props: Props) {
     setErrors({});
     goTo(1);
   }
-
-  if (submitted) return <Submitted headingRef={doneRef} name={values.name} resubmit={resubmit} />;
 
   const errorCount = Object.values(errors).filter(Boolean).length;
   const describe = (f: ApplicationField, ...extra: (string | false | undefined)[]) =>
@@ -571,9 +573,9 @@ function ApplicationWizard(props: Props) {
           ) : (
             <span className="hidden sm:block" />
           )}
-          <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={pending}>
+          <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={pending || submitted}>
             {step === APPLICATION_REVIEW_STEP ? (
-              pending ? (
+              pending || submitted ? (
                 <>
                   <Loader2 className="animate-spin" aria-hidden /> Enviando…
                 </>
@@ -610,7 +612,7 @@ function Stepper({ step, completed, onGo, disabled }: { step: ApplicationStep; c
                 aria-hidden
                 className={cn("block h-1.5 w-full rounded-full transition-colors sm:hidden", current ? "bg-secondary" : done ? "bg-success" : "bg-muted")}
               />
-              <span className="hidden items-center gap-2 sm:flex">
+              <span className="hidden flex-col items-center gap-1 text-center sm:flex">
                 <span
                   aria-hidden
                   className={cn(
@@ -620,7 +622,7 @@ function Stepper({ step, completed, onGo, disabled }: { step: ApplicationStep; c
                 >
                   {done && !current ? <Check className="size-3.5 motion-safe:animate-step-in" /> : n}
                 </span>
-                <span aria-hidden className={cn("truncate text-sm", current ? "font-semibold text-foreground" : "text-muted-foreground")}>
+                <span aria-hidden className={cn("text-xs leading-tight", current ? "font-semibold text-foreground" : "text-muted-foreground")}>
                   {short}
                 </span>
               </span>
@@ -635,7 +637,7 @@ function Stepper({ step, completed, onGo, disabled }: { step: ApplicationStep; c
                 <button
                   type="button"
                   onClick={() => onGo(n)}
-                  className="block w-full rounded-lg py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-1.5"
+                  className="block w-full rounded-lg py-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-1.5"
                 >
                   {content}
                 </button>
@@ -793,42 +795,5 @@ function Review({
         </p>
       </div>
     </>
-  );
-}
-
-function Submitted({ headingRef, name, resubmit }: { headingRef: React.RefObject<HTMLHeadingElement | null>; name: string; resubmit: boolean }) {
-  const next = [
-    { title: "Análise da equipe", text: "Conferimos os dados do cadastro. O status aparece no seu painel." },
-    { title: "Enquanto isso", text: "Você já pode montar rascunhos de eventos. Publicar só depois da aprovação." },
-    { title: "Depois da aprovação", text: "Conecte sua conta do Mercado Pago para receber os repasses das vendas." },
-  ];
-  return (
-    <div className="mx-auto max-w-2xl rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-card motion-safe:animate-step-in sm:p-8">
-      <span className="grid size-12 place-items-center rounded-full bg-success-soft text-success" aria-hidden>
-        <Check className="size-6" />
-      </span>
-      <h2 ref={headingRef} tabIndex={-1} className="mt-4 font-display text-xl font-bold focus:outline-none sm:text-2xl">
-        Cadastro enviado para análise
-      </h2>
-      <p className="mt-2 text-sm text-muted-foreground">
-        {resubmit ? "Recebemos o novo envio" : "Recebemos o cadastro"} de <strong className="text-foreground">{name}</strong>. Ele ainda não está aprovado: veja o que acontece agora.
-      </p>
-      <ol className="mt-6 space-y-4">
-        {next.map((s, i) => (
-          <li key={s.title} className="flex gap-3">
-            <span className="grid size-7 shrink-0 place-items-center rounded-full border-2 border-border text-xs font-bold text-muted-foreground" aria-hidden>
-              {i + 1}
-            </span>
-            <span className="text-sm">
-              <strong className="block font-semibold">{s.title}</strong>
-              <span className="text-muted-foreground">{s.text}</span>
-            </span>
-          </li>
-        ))}
-      </ol>
-      <Link href="/organizador" className={cn(buttonVariants({ size: "lg" }), "mt-8 w-full sm:w-auto")}>
-        Ir para o painel <ArrowRight aria-hidden />
-      </Link>
-    </div>
   );
 }
