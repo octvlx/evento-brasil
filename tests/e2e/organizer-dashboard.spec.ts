@@ -1,31 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { acceptSignupTerms, login, USERS, confirmEmail } from "./helpers";
+import { login, signUpForOrganizer, submitOrganizerApplication, USERS } from "./helpers";
 
 test("organizador cria uma segunda organização e alterna entre elas", async ({ page }) => {
   const stamp = Date.now();
   const first = `Primeira Org ${stamp}`;
   const second = `Segunda Org ${stamp}`;
 
-  await page.goto("/registrar?next=/organizador/cadastro");
-  await page.getByLabel("Nome completo").fill("Organizadora E2E");
-  await page.getByLabel("E-mail", { exact: true }).fill(`org-e2e+${stamp}@test.local`);
-  await page.getByLabel("Confirmar e-mail", { exact: true }).fill(`org-e2e+${stamp}@test.local`);
-  await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
-  await page.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
-  await acceptSignupTerms(page);
-  await page.getByRole("button", { name: "Criar conta" }).click();
-  // Conta nova confirma o e-mail antes de seguir para o cadastro de organizador.
-  await page.waitForURL(/\/confirmar-email/);
-  await confirmEmail(page, `org-e2e+${stamp}@test.local`);
-  await page.goto("/organizador/cadastro");
+  await signUpForOrganizer(page, `org-e2e+${stamp}@test.local`, "Organizadora E2E");
 
-  const fill = async (name: string) => {
-    await page.getByLabel("Nome público").fill(name);
-    await page.getByLabel("Razão social").fill(`${name} LTDA`);
-    await page.getByLabel("CNPJ", { exact: true }).fill("11.222.333/0001-81");
-    await page.getByRole("button", { name: "Enviar para análise" }).click();
-    await page.waitForURL(/\/organizador$/);
-  };
+  const fill = (name: string) => submitOrganizerApplication(page, { name });
   await fill(first);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(first);
 

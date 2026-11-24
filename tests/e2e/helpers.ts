@@ -42,6 +42,64 @@ export async function acceptSignupTerms(page: Page) {
   await page.getByRole("checkbox", { name: /política de privacidade/ }).check();
 }
 
+/** Cria uma conta nova, confirma o e-mail e abre o cadastro de organizador. */
+export async function signUpForOrganizer(page: Page, email: string, name = "Pessoa Teste E2E") {
+  await page.goto("/registrar?next=/organizador/cadastro");
+  await page.getByLabel("Nome completo").fill(name);
+  await page.getByLabel("E-mail", { exact: true }).fill(email);
+  await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email);
+  await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");
+  await page.getByLabel("Confirmar senha", { exact: true }).fill("Cadastro#E2e2468");
+  await acceptSignupTerms(page);
+  await page.getByRole("button", { name: "Criar conta" }).click();
+  // Conta nova confirma o e-mail antes de seguir para o cadastro de organizador.
+  await page.waitForURL(/\/confirmar-email/);
+  await confirmEmail(page, email);
+  await page.goto("/organizador/cadastro");
+}
+
+/** Título (h2) do passo atual do cadastro de organizador. */
+export const APPLICATION_STEP_TITLES = {
+  perfil: "Como você vai vender ingressos?",
+  marca: "Como o público vai te conhecer",
+  legal: "Para os repasses e as obrigações fiscais",
+  contato: "Como a equipe e o público falam com você",
+  revisao: "Confira antes de enviar",
+} as const;
+
+export async function expectApplicationStep(page: Page, step: keyof typeof APPLICATION_STEP_TITLES) {
+  await expect(page.getByRole("heading", { level: 2, name: APPLICATION_STEP_TITLES[step] })).toBeVisible();
+}
+
+export async function continueApplication(page: Page) {
+  await page.getByRole("button", { name: /^(Continuar|Voltar para a revisão)$/ }).click();
+}
+
+/** Percorre o cadastro de organizador em passos, envia e vai ao painel. */
+export async function submitOrganizerApplication(
+  page: Page,
+  { name, legalType = "COMPANY", legalName = `${name} LTDA`, document = "11.222.333/0001-81" }: { name: string; legalType?: "COMPANY" | "INDIVIDUAL"; legalName?: string; document?: string },
+) {
+  await expectApplicationStep(page, "perfil");
+  await page.getByText(legalType === "COMPANY" ? "Empresa (CNPJ)" : "Pessoa física (CPF)", { exact: true }).click();
+  await continueApplication(page);
+  await expectApplicationStep(page, "marca");
+  await page.getByLabel("Nome público").fill(name);
+  await continueApplication(page);
+  await expectApplicationStep(page, "legal");
+  await page.getByLabel(legalType === "COMPANY" ? "Razão social" : "Nome completo").fill(legalName);
+  await page.getByLabel(legalType === "COMPANY" ? "CNPJ" : "CPF", { exact: true }).fill(document);
+  await continueApplication(page);
+  await expectApplicationStep(page, "contato");
+  await continueApplication(page);
+  await expectApplicationStep(page, "revisao");
+  await page.getByRole("checkbox", { name: /Li e aceito os termos para organizadores/ }).check();
+  await page.getByRole("button", { name: "Enviar para análise" }).click();
+  await expect(page.getByRole("heading", { name: "Cadastro enviado para análise" })).toBeVisible();
+  await page.getByRole("link", { name: "Ir para o painel" }).click();
+  await page.waitForURL(/\/organizador$/);
+}
+
 /**
  * QR que a câmera da portaria leria agora na tela do titular: o dinâmico (EB2), assinado
  * com a chave do ingresso como o celular faz (mesma derivação de deriveTicketSigningKey).
