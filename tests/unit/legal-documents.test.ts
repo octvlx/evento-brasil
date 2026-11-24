@@ -31,6 +31,11 @@ describe("documentos legais", () => {
     expect(pendingPlaceholders({ ...BUYER_TERMS, sections: [{ title: "x", blocks: ["texto final"] }] })).toEqual([]);
   });
 
+  it("o e-mail de atendimento já está definido", () => {
+    expect(pendingPlaceholders(BUYER_TERMS)).not.toContain("[A PREENCHER: e-mail de atendimento]");
+    expect(JSON.stringify(BUYER_TERMS.sections)).toContain("suporte@ticket24.com.br");
+  });
+
   it("os prazos do texto batem com as regras do sistema", () => {
     const buyer = text(BUYER_TERMS);
     expect(buyer).toContain(`até ${ARREPENDIMENTO_DAYS} dias depois da compra`);
