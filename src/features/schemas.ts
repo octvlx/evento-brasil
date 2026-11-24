@@ -54,37 +54,50 @@ export const changePasswordSchema = z
 export type ChangePasswordInput = z.input<typeof changePasswordSchema>;
 
 // ── Organizador ──
-export const organizerApplicationSchema = z
-  .object({
-    name: trimmed(2, 120, "Informe o nome público"),
-    legalType: z.enum(["INDIVIDUAL", "COMPANY"]),
-    legalName: trimmed(2, 200, "Informe o nome/razão social"),
-    document: z.string().trim(),
-    contactEmail: email,
-    contactPhone: mobile.optional(),
-    // Cidade-sede (opcional): município do IBGE pelo autocomplete. `cityId` fica só por
-    // compatibilidade com formulários antigos; `cityName` é só a exibição do campo.
-    cityUf: emptyToUndefined(z.enum(UF_CODES, { message: "Selecione a UF" }).optional()),
-    cityIbgeCode: emptyToUndefined(z.string().trim().regex(/^\d{7}$/, "Selecione a cidade na lista").optional()),
-    cityName: z.string().optional(),
-    cityId: emptyToUndefined(z.string().optional()),
-    description: optionalText(2000),
-    websiteUrl: z
-      .string()
-      .trim()
-      .optional()
-      .refine((v) => !v || /^https:\/\/[^\s]+$/.test(v), "Use um endereço https://"),
-    instagramHandle: z
-      .string()
-      .trim()
-      .optional()
-      .refine((v) => !v || /^@?[A-Za-z0-9._]{1,30}$/.test(v), "Usuário do Instagram inválido"),
-  })
-  .superRefine((v, ctx) => {
-    const ok = v.legalType === "INDIVIDUAL" ? isValidCPF(v.document) : isValidCNPJ(v.document);
-    if (!ok) ctx.addIssue({ code: "custom", path: ["document"], message: v.legalType === "INDIVIDUAL" ? "CPF inválido" : "CNPJ inválido" });
-    if (v.cityUf && !v.cityIbgeCode) ctx.addIssue({ code: "custom", path: ["cityIbgeCode"], message: "Selecione a cidade na lista" });
-  });
+// Campos do cadastro sem as regras cruzadas: o assistente valida cada passo com
+// `organizerApplicationFields.pick(...)` + a regra do passo (o Zod 4 não deixa
+// usar `.pick()` num schema com `superRefine`). O servidor usa o schema completo.
+export const organizerApplicationFields = z.object({
+  name: trimmed(2, 120, "Informe o nome público"),
+  legalType: z.enum(["INDIVIDUAL", "COMPANY"]),
+  legalName: trimmed(2, 200, "Informe o nome/razão social"),
+  document: z.string().trim(),
+  contactEmail: email,
+  contactPhone: mobile.optional(),
+  // Cidade-sede (opcional): município do IBGE pelo autocomplete. `cityId` fica só por
+  // compatibilidade com formulários antigos; `cityName` é só a exibição do campo.
+  cityUf: emptyToUndefined(z.enum(UF_CODES, { message: "Selecione a UF" }).optional()),
+  cityIbgeCode: emptyToUndefined(z.string().trim().regex(/^\d{7}$/, "Selecione a cidade na lista").optional()),
+  cityName: z.string().optional(),
+  cityId: emptyToUndefined(z.string().optional()),
+  description: optionalText(2000),
+  websiteUrl: z
+    .string()
+    .trim()
+    .optional()
+    .refine((v) => !v || /^https:\/\/[^\s]+$/.test(v), "Use um endereço https://"),
+  instagramHandle: z
+    .string()
+    .trim()
+    .optional()
+    .refine((v) => !v || /^@?[A-Za-z0-9._]{1,30}$/.test(v), "Usuário do Instagram inválido"),
+});
+
+/** CPF ou CNPJ com dígito verificador conforme o tipo de cadastro. */
+export function validateApplicationDocument(v: { legalType: "INDIVIDUAL" | "COMPANY"; document: string }, ctx: z.RefinementCtx) {
+  const ok = v.legalType === "INDIVIDUAL" ? isValidCPF(v.document) : isValidCNPJ(v.document);
+  if (!ok) ctx.addIssue({ code: "custom", path: ["document"], message: v.legalType === "INDIVIDUAL" ? "CPF inválido" : "CNPJ inválido" });
+}
+
+/** UF escolhida exige o município da lista. */
+export function validateApplicationCity(v: { cityUf?: string; cityIbgeCode?: string }, ctx: z.RefinementCtx) {
+  if (v.cityUf && !v.cityIbgeCode) ctx.addIssue({ code: "custom", path: ["cityIbgeCode"], message: "Selecione a cidade na lista" });
+}
+
+export const organizerApplicationSchema = organizerApplicationFields.superRefine((v, ctx) => {
+  validateApplicationDocument(v, ctx);
+  validateApplicationCity(v, ctx);
+});
 export type OrganizerApplicationInput = z.input<typeof organizerApplicationSchema>;
 
 export const inviteSchema = z.object({

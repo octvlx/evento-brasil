@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { Alert, Card, Skeleton } from "@/components/ui/primitives";
+import { Alert, Skeleton } from "@/components/ui/primitives";
 import { PageTitle } from "@/components/site/panel-shell";
 import { ApplicationForm } from "@/features/organizer/application-form";
 import { db } from "@/server/db";
@@ -28,9 +28,7 @@ async function Content() {
           Você já tem {pending} cadastros aguardando análise — o limite é {MAX_PENDING_APPLICATIONS}. Aguarde a resposta antes de criar outra organização.
         </Alert>
       )}
-      <Card className="p-6">
-        <ApplicationForm defaults={{ contactEmail: user.email }} />
-      </Card>
+      <ApplicationForm userId={user.id} defaults={{ contactEmail: user.email }} />
     </>
   );
 }
