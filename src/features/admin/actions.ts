@@ -5,6 +5,7 @@ import { commissionRuleInputSchema, commissionRuleValuesSchema } from "@/feature
 import { db } from "@/server/db";
 import { requireAdmin } from "@/server/auth/current";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
+import type { OrganizerReviewArea } from "@/lib/labels";
 import { assertAdminPermission } from "@/server/auth/permissions";
 import { getPaymentAdapter } from "@/server/payments";
 import { cancelEvent } from "@/server/services/cancellation";
@@ -46,8 +47,8 @@ async function run(fn: (admin: Awaited<ReturnType<typeof requireAdmin>>) => Prom
   return res;
 }
 
-export const reviewOrganizationAction = async (id: string, decision: "APPROVE" | "REJECT", note?: string) =>
-  run((a) => reviewOrganization(db, a, id, decision, note));
+export const reviewOrganizationAction = async (id: string, decision: "APPROVE" | "REJECT", note?: string, area?: OrganizerReviewArea) =>
+  run((a) => reviewOrganization(db, a, id, decision, note, area));
 export const suspendOrganizationAction = async (id: string, suspended: boolean, reason?: string) =>
   run((a) => setOrganizationSuspended(db, a, id, suspended, reason));
 export const autoPublishAction = async (id: string, value: boolean) => run((a) => setAutoPublish(db, a, id, value));

@@ -4,6 +4,7 @@ import { transactionalEmail } from "../email/templates";
 import { env } from "../env";
 import { inviteSchema, organizerApplicationSchema, type OrganizerApplicationInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
+import { ORGANIZER_REVIEW_AREAS, type OrganizerReviewArea } from "@/lib/labels";
 import { slugify } from "@/lib/utils";
 import type { OrgRole } from "@/generated/prisma/client";
 import type { Db, Tx } from "../db";
@@ -149,6 +150,7 @@ export async function resubmitOrganizerApplication(db: Db, actor: Actor, organiz
         instagramHandle: input.instagramHandle?.replace(/^@/, "") || null,
         status: "PENDING_REVIEW",
         statusReason: null,
+        statusReasonArea: null,
         verifications: { create: verificationData(input, actor.id) },
       },
     });
@@ -167,9 +169,22 @@ async function lockOrganization(tx: Tx, organizationId: string) {
   return tx.organization.findUnique({ where: { id: organizationId } });
 }
 
-export async function reviewOrganization(db: Db, admin: Actor, organizationId: string, decision: "APPROVE" | "REJECT", note?: string) {
+/**
+ * Aprova ou recusa um cadastro em análise. Na recusa, `area` diz que parte do
+ * cadastro corrigir (o reenvio abre nesse passo); sem ela, o reenvio usa o texto.
+ */
+export async function reviewOrganization(
+  db: Db,
+  admin: Actor,
+  organizationId: string,
+  decision: "APPROVE" | "REJECT",
+  note?: string,
+  area?: OrganizerReviewArea,
+) {
   assertAdminPermission(admin, "organizers:review");
   if (decision === "REJECT" && !note?.trim()) throw new AppError("VALIDATION", "Informe o motivo da rejeição.");
+  if (area !== undefined && !ORGANIZER_REVIEW_AREAS.includes(area)) throw new AppError("VALIDATION", "Área da recusa inválida.");
+  const reasonArea = decision === "REJECT" ? (area ?? null) : null;
   return db.$transaction(async (tx) => {
     const org = await lockOrganization(tx, organizationId);
     if (!org) throw notFound();
@@ -184,7 +199,7 @@ export async function reviewOrganization(db: Db, admin: Actor, organizationId: s
     }
     const updated = await tx.organization.update({
       where: { id: organizationId },
-      data: { status: newStatus, statusReason: note ?? null },
+      data: { status: newStatus, statusReason: note ?? null, statusReasonArea: reasonArea },
     });
     await audit(tx, {
       actorUserId: admin.id,
@@ -192,7 +207,7 @@ export async function reviewOrganization(db: Db, admin: Actor, organizationId: s
       action: decision === "APPROVE" ? "organization.approved" : "organization.rejected",
       entityType: "Organization",
       entityId: organizationId,
-      metadata: { previousStatus: org.status, newStatus, note: note ?? null },
+      metadata: { previousStatus: org.status, newStatus, note: note ?? null, area: reasonArea },
     });
     return updated;
   });
@@ -208,7 +223,7 @@ export async function setOrganizationSuspended(db: Db, admin: Actor, organizatio
     const newStatus = suspended ? "SUSPENDED" : "APPROVED";
     const updated = await tx.organization.update({
       where: { id: organizationId },
-      data: { status: newStatus, statusReason: suspended ? (reason ?? "Suspensa pela plataforma") : null },
+      data: { status: newStatus, statusReason: suspended ? (reason ?? "Suspensa pela plataforma") : null, statusReasonArea: null },
     });
     await audit(tx, {
       actorUserId: admin.id,

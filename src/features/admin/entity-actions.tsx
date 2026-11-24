@@ -1,7 +1,7 @@
 // Ações do admin sobre evento, organização e usuário: as mesmas na lista e na página de
 // detalhe. Cada ação revalida a permissão no servidor (features/admin/actions.ts).
 import type { AdminRole, EventStatus, OrganizationStatus, UserStatus } from "@/generated/prisma/client";
-import { AdminActionButton, AdminRolesEditor, DeleteAccountButton, ResetTwoFactorButton } from "@/features/admin/controls";
+import { AdminActionButton, AdminRolesEditor, DeleteAccountButton, RejectOrganizationButton, ResetTwoFactorButton } from "@/features/admin/controls";
 import {
   adminCancelEventAction,
   autoPublishAction,
@@ -68,7 +68,7 @@ export function OrganizationAdminActions({ o }: { o: { id: string; status: Organ
       {o.status === "PENDING_REVIEW" && (
         <>
           <AdminActionButton label="Aprovar" variant="secondary" action={reviewOrganizationAction.bind(null, o.id, "APPROVE")} />
-          <AdminActionButton label="Rejeitar" variant="outline" askReason="Motivo (enviado ao organizador)" reasonRequired action={reviewOrganizationAction.bind(null, o.id, "REJECT")} />
+          <RejectOrganizationButton action={reviewOrganizationAction.bind(null, o.id, "REJECT")} />
         </>
       )}
       {o.status === "APPROVED" && (

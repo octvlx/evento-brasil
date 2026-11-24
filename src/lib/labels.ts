@@ -104,3 +104,22 @@ export const AVAILABILITY: Record<string, { label: string; tone: "default" | "su
 };
 
 export const toneToBadge = { default: "default", success: "success", warning: "warning", danger: "danger" } as const;
+
+/** Parte do cadastro de organizador que a recusa pede para corrigir (ordem do seletor no admin). */
+export const ORGANIZER_REVIEW_AREAS = ["LEGAL", "BRAND", "CONTACT", "PROFILE", "OTHER"] as const;
+export type OrganizerReviewArea = (typeof ORGANIZER_REVIEW_AREAS)[number];
+export const ORGANIZER_REVIEW_AREA: Record<OrganizerReviewArea, string> = {
+  LEGAL: "Dados legais",
+  BRAND: "Marca",
+  CONTACT: "Contato e redes",
+  PROFILE: "Tipo de cadastro",
+  OTHER: "Outro",
+};
+/** O que cada área cobre (texto das opções no admin). */
+export const ORGANIZER_REVIEW_AREA_HINT: Record<OrganizerReviewArea, string> = {
+  LEGAL: "razão social, nome completo, CPF/CNPJ",
+  BRAND: "nome público, cidade, descrição",
+  CONTACT: "e-mail, celular, site, Instagram",
+  PROFILE: "empresa ou pessoa física",
+  OTHER: "abre o reenvio pela pista do texto",
+};

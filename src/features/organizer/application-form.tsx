@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, useTransition, type 
 import { ArrowLeft, ArrowRight, Building2, Check, CircleCheck, Loader2, Lock, Pencil, Send, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, FieldError, Input, Label, Skeleton, Textarea } from "@/components/ui/primitives";
+import type { OrganizerReviewArea } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { createOrganizationAction, resubmitApplicationAction } from "./actions";
 import { MunicipalityCombobox, municipalityLabel } from "./municipality-combobox";
@@ -32,6 +33,7 @@ import {
   readDraft,
   removeDraft,
   stepForRejection,
+  stepForReviewArea,
   stripAt,
   toApplicationInput,
   toDraft,
@@ -80,6 +82,8 @@ interface Props {
   resubmitOrganizationId?: string;
   /** Motivo da recusa anterior (fica visível em todos os passos). */
   rejectionReason?: string | null;
+  /** Parte do cadastro que o admin pediu para corrigir. */
+  rejectionArea?: OrganizerReviewArea | null;
 }
 
 /**
@@ -120,7 +124,7 @@ interface Initial {
   restored: boolean;
 }
 
-function initialState({ userId, defaults, resubmitOrganizationId, rejectionReason }: Props): Initial {
+function initialState({ userId, defaults, resubmitOrganizationId, rejectionReason, rejectionArea }: Props): Initial {
   const resubmit = !!resubmitOrganizationId;
   const base = blankApplication(defaults);
   // Rascunho deste navegador (sem CPF/CNPJ nem nome legal).
@@ -135,12 +139,14 @@ function initialState({ userId, defaults, resubmitOrganizationId, rejectionReaso
   // Reenvio: os passos já válidos contam como concluídos e o fluxo abre no passo
   // ligado ao motivo (ou no primeiro pendente — os dados legais são digitados de novo).
   const completed = validStepsOf(base);
-  const hinted = stepForRejection(rejectionReason);
+  // A área escolhida pelo admin manda; sem ela, uma pista no texto do motivo.
+  const hinted = stepForReviewArea(rejectionArea) ?? stepForRejection(rejectionReason);
   return { values: base, completed, step: hinted && isReachable(hinted, completed) ? hinted : firstIncompleteStep(completed), restored: false };
 }
 
 function ApplicationWizard(props: Props) {
   const { userId, defaults, resubmitOrganizationId, rejectionReason } = props;
+  const areaStep = stepForReviewArea(props.rejectionArea);
   const resubmit = !!resubmitOrganizationId;
   const storageKey = draftKey(userId, resubmitOrganizationId);
   const [initial] = useState(() => initialState(props));
@@ -273,7 +279,8 @@ function ApplicationWizard(props: Props) {
     <div className="mx-auto max-w-2xl space-y-5">
       {rejectionReason !== undefined && (
         <Alert variant="danger">
-          <strong className="font-semibold">Seu cadastro anterior foi recusado.</strong> Motivo: {rejectionReason || "sem motivo informado"}. Corrija os dados e envie novamente.
+          <strong className="font-semibold">Seu cadastro anterior foi recusado.</strong> Motivo: {rejectionReason || "sem motivo informado"}.
+          {areaStep ? ` Ajuste pedido em ${APPLICATION_STEPS[areaStep - 1].short}.` : ""} Corrija os dados e envie novamente.
         </Alert>
       )}
       <Stepper step={step} completed={completed} onGo={(n) => goTo(n)} disabled={pending} />

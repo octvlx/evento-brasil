@@ -186,6 +186,15 @@ enum OrganizationStatus {
   SUSPENDED
 }
 
+/// Parte do cadastro de organizador que a recusa pede para corrigir (abre o reenvio no passo certo).
+enum OrganizerReviewArea {
+  PROFILE
+  BRAND
+  LEGAL
+  CONTACT
+  OTHER
+}
+
 enum OrganizerLegalType {
   INDIVIDUAL
   COMPANY
@@ -220,6 +229,7 @@ model Organization {
   paymentAccountStatus     PaymentAccountStatus @default(NOT_CONNECTED)
   paymentAccountExternalId String?
   statusReason             String?
+  statusReasonArea         OrganizerReviewArea?
   createdAt                DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt                DateTime             @updatedAt @db.Timestamptz(3)
 

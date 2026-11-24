@@ -36,6 +36,7 @@ async function Content() {
         userId={user.id}
         resubmitOrganizationId={resubmit?.id}
         rejectionReason={resubmit?.status === "REJECTED" ? (resubmit.statusReason ?? null) : undefined}
+        rejectionArea={resubmit?.status === "REJECTED" ? resubmit.statusReasonArea : undefined}
         defaults={
           resubmit
             ? {

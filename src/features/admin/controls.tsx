@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useId, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import type { ActionResult } from "@/server/errors";
@@ -8,6 +8,7 @@ import { deleteCommissionRuleAction, saveCommissionRuleAction, updateCommissionR
 import { commissionPreview } from "./commission-preview";
 import { formatBRL, parseBRLToCents } from "@/lib/money";
 import type { FeeBearer } from "@/features/fees/policy";
+import { ORGANIZER_REVIEW_AREA, ORGANIZER_REVIEW_AREA_HINT, ORGANIZER_REVIEW_AREAS, type OrganizerReviewArea } from "@/lib/labels";
 
 /** Papéis de um admin (T6): só aparece para super admin, nunca na própria conta. */
 export function AdminRolesEditor({
@@ -615,6 +616,66 @@ function EditCommissionRuleForm({
           Cancelar
         </Button>
       </div>
+    </form>
+  );
+}
+
+/** Recusa de cadastro de organizador: área a corrigir + motivo (os dois vão ao organizador). */
+export function RejectOrganizationButton({ action }: { action: (reason: string, area: OrganizerReviewArea) => Promise<ActionResult> }) {
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [area, setArea] = useState<OrganizerReviewArea | "">("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const id = useId();
+  if (!open)
+    return (
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Rejeitar
+      </Button>
+    );
+  const ready = !!area && reason.trim().length >= 3;
+  return (
+    <form
+      className="flex w-full max-w-sm flex-col gap-1.5 rounded-xl border border-border p-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!ready || !area) return;
+        start(async () => {
+          const r = await action(reason.trim(), area);
+          if (!r.ok) setError(r.error);
+          else {
+            setOpen(false);
+            setError(null);
+          }
+        });
+      }}
+    >
+      <Label htmlFor={`${id}-area`} className="text-xs">
+        O que precisa de ajuste?
+      </Label>
+      <Select id={`${id}-area`} value={area} onChange={(e) => setArea(e.target.value as OrganizerReviewArea | "")} className="h-9 text-xs">
+        <option value="">Selecione</option>
+        {ORGANIZER_REVIEW_AREAS.map((a) => (
+          <option key={a} value={a}>
+            {ORGANIZER_REVIEW_AREA[a]} ({ORGANIZER_REVIEW_AREA_HINT[a]})
+          </option>
+        ))}
+      </Select>
+      <Label htmlFor={`${id}-reason`} className="text-xs">
+        Motivo (enviado ao organizador)
+      </Label>
+      <Input id={`${id}-reason`} value={reason} onChange={(e) => setReason(e.target.value)} className="h-9 text-xs" />
+      <p className="text-[11px] text-muted-foreground">O reenvio abre o cadastro direto na parte escolhida.</p>
+      <div className="flex gap-1">
+        <Button size="sm" variant="outline" disabled={pending || !ready}>
+          {pending ? "…" : "Confirmar recusa"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Voltar
+        </Button>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </form>
   );
 }
