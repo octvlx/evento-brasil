@@ -469,3 +469,21 @@ describe("MercadoPagoAdapter.isForeignWebhook", () => {
     expect(account).toHaveBeenLastCalledWith({ where: { mercadoPagoUserId: "42" }, select: { id: true } });
   });
 });
+
+describe("MercadoPagoAdapter collector", () => {
+  it("reports collector_id as the receiving account of the payment", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse({ collector_id: 123456789 })));
+    expect(await adapter().getPayment("987", { organizationId: "org-1" })).toMatchObject({ collectorAccountId: "123456789" });
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(paymentResponse()));
+    expect(await adapter().getPayment("987", { organizationId: "org-1" })).toMatchObject({ collectorAccountId: null });
+  });
+
+  it("receiving account is the organization's connected Mercado Pago user, revoked or not", async () => {
+    const findUnique = vi.fn().mockResolvedValueOnce({ mercadoPagoUserId: "555" }).mockResolvedValueOnce(null);
+    const withAccount = { ...db, mercadoPagoAccount: { findUnique } } as unknown as Db;
+    const mp = new MercadoPagoAdapter(withAccount, "webhook-secret");
+    expect(await mp.receivingAccountId("org-1")).toBe("555");
+    expect(findUnique).toHaveBeenLastCalledWith({ where: { organizationId: "org-1" }, select: { mercadoPagoUserId: true } });
+    expect(await mp.receivingAccountId("org-2")).toBeNull();
+  });
+});
