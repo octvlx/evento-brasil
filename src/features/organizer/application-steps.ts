@@ -9,6 +9,7 @@ import {
   type OrganizerApplicationInput,
 } from "@/features/schemas";
 import { isValidCNPJ, isValidCPF, onlyDigits } from "@/lib/br";
+import type { OrganizerReviewArea } from "@/lib/labels";
 
 export const APPLICATION_STEPS = [
   { n: 1, short: "Perfil", title: "Como você vai vender ingressos?" },
@@ -193,6 +194,13 @@ export function normalizeWebsite(raw: string): string {
 export const stripAt = (raw: string) => raw.trim().replace(/^@+/, "");
 
 // ── Reenvio de cadastro recusado ──
+
+const AREA_STEP: Record<OrganizerReviewArea, ApplicationDataStep | null> = { PROFILE: 1, BRAND: 2, LEGAL: 3, CONTACT: 4, OTHER: null };
+
+/** Passo escolhido pelo admin ao recusar; `null` = sem área (recusa antiga ou "Outro"). */
+export function stepForReviewArea(area: OrganizerReviewArea | null | undefined): ApplicationDataStep | null {
+  return area ? (AREA_STEP[area] ?? null) : null;
+}
 
 /** Passo mais ligado ao motivo (texto livre do admin); `null` = sem pista. */
 export function stepForRejection(reason: string | null | undefined): ApplicationDataStep | null {

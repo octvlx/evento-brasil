@@ -12,6 +12,7 @@ import {
   normalizeWebsite,
   parseDraft,
   stepForRejection,
+  stepForReviewArea,
   toApplicationInput,
   toDraft,
   validStepsOf,
@@ -99,6 +100,15 @@ describe("cadastro de organizador em passos", () => {
     expect(stepForRejection("Cadastro como pessoa física, mas é uma empresa")).toBe(1);
     expect(stepForRejection("Faltam informações")).toBeNull();
     expect(stepForRejection(null)).toBeNull();
+  });
+
+  it("a área escolhida pelo admin decide o passo do reenvio", () => {
+    expect(stepForReviewArea("PROFILE")).toBe(1);
+    expect(stepForReviewArea("BRAND")).toBe(2);
+    expect(stepForReviewArea("LEGAL")).toBe(3);
+    expect(stepForReviewArea("CONTACT")).toBe(4);
+    expect(stepForReviewArea("OTHER")).toBeNull();
+    expect(stepForReviewArea(null)).toBeNull();
   });
 
   it("o rascunho nunca guarda CPF/CNPJ nem o nome legal e expira", () => {

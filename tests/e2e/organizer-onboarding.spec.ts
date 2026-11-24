@@ -88,10 +88,11 @@ test("novo organizador (CNPJ) se cadastra em passos → admin aprova pela fila",
   await expect(owner.getByText("Cadastro: Aprovada")).toBeVisible();
 });
 
-test("organizador (CPF) recusado reenvia a partir do passo ligado ao motivo", async ({ browser }) => {
+test("organizador (CPF) recusado reenvia a partir da área pedida pelo admin", async ({ browser }) => {
   const stamp = Date.now();
   const orgName = `Coletivo E2E ${stamp}`;
-  const reason = `CPF não confere com o nome completo ${stamp}`;
+  // Motivo sem pista no texto: quem decide o passo do reenvio é a área escolhida.
+  const reason = `Confira os dados enviados ${stamp}`;
 
   const owner = await (await browser.newContext()).newPage();
   await signUpForOrganizer(owner, `e2e-cpf+${stamp}@test.local`);
@@ -138,12 +139,16 @@ test("organizador (CPF) recusado reenvia a partir do passo ligado ao motivo", as
   await expect(row).toContainText("CPF final 4725");
   await row.getByRole("button", { name: "Rejeitar" }).click();
   await row.getByLabel("Motivo (enviado ao organizador)").fill(reason);
-  await row.getByRole("button", { name: "Confirmar" }).click();
-  await expect(admin.locator("li").filter({ hasText: orgName })).toContainText("Rejeitada");
+  await expect(row.getByRole("button", { name: "Confirmar recusa" })).toBeDisabled();
+  await row.getByLabel("O que precisa de ajuste?").selectOption("LEGAL");
+  await row.getByRole("button", { name: "Confirmar recusa" }).click();
+  const rejectedRow = admin.locator("li").filter({ hasText: orgName });
+  await expect(rejectedRow).toContainText("Rejeitada");
+  await expect(rejectedRow).toContainText(`Motivo (Dados legais): ${reason}`);
 
   // Reenvio: motivo sempre visível e o fluxo abre nos dados legais.
   await owner.goto("/organizador/cadastro");
-  await expect(owner.getByRole("alert").filter({ hasText: reason })).toBeVisible();
+  await expect(owner.getByRole("alert").filter({ hasText: reason })).toContainText("Ajuste pedido em Dados legais.");
   await expectApplicationStep(owner, "legal");
   await expect(owner.getByText("Por segurança, os dados legais não ficam salvos para edição")).toBeVisible();
   await continueApplication(owner);

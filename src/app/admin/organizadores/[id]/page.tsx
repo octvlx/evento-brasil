@@ -1,3 +1,4 @@
+import { ORGANIZER_REVIEW_AREA } from "@/lib/labels";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -57,7 +58,7 @@ async function Content({ params, searchParams }: { params: Promise<{ id: string 
             <p>
               <Badge variant={toneToBadge[st.tone]}>{st.label}</Badge> {org.autoPublishEvents && <Badge variant="accent">Publicação automática</Badge>}
             </p>
-            {org.statusReason && <p className="text-xs text-destructive">Motivo: {org.statusReason}</p>}
+            {org.statusReason && <p className="text-xs text-destructive">Motivo{org.statusReasonArea ? ` (${ORGANIZER_REVIEW_AREA[org.statusReasonArea]})` : ""}: {org.statusReason}</p>}
             <p className="text-muted-foreground">
               {org.city ? `${org.city.name} – ${org.city.state}` : "Cidade não informada"} · contato {org.contactEmail}
               {org.contactPhone ? ` · ${org.contactPhone}` : ""} · recebimento: {PAYMENT_ACCOUNT_STATUS[org.paymentAccountStatus]}

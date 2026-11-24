@@ -1,3 +1,4 @@
+import { ORGANIZER_REVIEW_AREA } from "@/lib/labels";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Badge, Skeleton } from "@/components/ui/primitives";
@@ -51,7 +52,7 @@ async function Content() {
           <p className="text-xs text-muted-foreground">
             Responsável: {o.members[0]?.user.email ?? "—"} · {o._count.events} evento(s) · recebimento: {PAYMENT_ACCOUNT_STATUS[o.paymentAccountStatus]} · desde {formatDateShort(o.createdAt)}
           </p>
-          {o.statusReason && <p className="text-xs text-destructive">Motivo: {o.statusReason}</p>}
+          {o.statusReason && <p className="text-xs text-destructive">Motivo{o.statusReasonArea ? ` (${ORGANIZER_REVIEW_AREA[o.statusReasonArea]})` : ""}: {o.statusReason}</p>}
         </div>
         <OrganizationAdminActions o={o} />
       </li>
