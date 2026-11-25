@@ -26,7 +26,10 @@ export type SecurityThresholds = typeof SECURITY_THRESHOLDS;
 
 type AuditAlert = Omit<HealthCheck, "count" | "oldestAt"> & { actions: string[] };
 
-/** Ações do AuditLog que viram alerta. `auth.login_locked` é gravado por login-limits.ts. */
+/**
+ * Ações do AuditLog que viram alerta. `auth.login_locked` é gravado por login-limits.ts e
+ * `checkin.wallet_totp_locked` por checkin.ts.
+ */
 export const SECURITY_AUDIT_ALERTS: AuditAlert[] = [
   {
     code: "MFA_USER_LOCKED",
@@ -48,6 +51,13 @@ export const SECURITY_AUDIT_ALERTS: AuditAlert[] = [
     actions: ["auth.login_locked"],
     title: "Contas bloqueadas por muitas senhas erradas",
     href: "/admin/auditoria?acao=auth.login_locked",
+  },
+  {
+    code: "WALLET_TOTP_LOCKED",
+    severity: "warning",
+    actions: ["checkin.wallet_totp_locked"],
+    title: "Ingressos com o QR do Google Wallet travado na portaria por muitos códigos errados (possível tentativa de adivinhar o código)",
+    href: "/admin/auditoria?acao=checkin.wallet_totp_locked",
   },
   {
     code: "ADMIN_SENSITIVE_ACTION",

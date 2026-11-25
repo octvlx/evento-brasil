@@ -2,7 +2,8 @@
 // código errado e QR de antes da transferência não entram.
 import { beforeEach, describe, expect, it } from "vitest";
 import { deriveWalletTotpKey, totpCode } from "@/server/crypto";
-import { checkInTicket } from "@/server/services/checkin";
+import { checkInTicket, WALLET_TOTP_LIMIT, WALLET_TOTP_LOCKED_AUDIT } from "@/server/services/checkin";
+import { securityAlerts } from "@/server/services/security-alerts";
 import { acceptTransfer, requestTransfer } from "@/server/services/transfers";
 import { qrStep } from "@/lib/qr-payload";
 import { buyAndPay, db, makeEvent, makeOrg, makeVerifiedUser as makeUser, resetDb } from "../support/fixtures";
@@ -53,5 +54,34 @@ describe("QR do Google Wallet (EB3)", () => {
     const after = await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } });
     expect(await checkInTicket(db, owner, event.id, before)).toMatchObject({ result: "INVALID", message: expect.stringMatching(/SUBSTITUÍDO/) });
     expect((await checkInTicket(db, owner, event.id, walletQr(after))).result).toBe("ADMITTED");
+  });
+
+  it("muitos códigos errados travam o QR da carteira daquele ingresso (até o certo); os outros ingressos seguem", async () => {
+    const { owner, event, tickets } = await setup();
+    const good = walletQr(tickets[0]);
+    const wrong = (i: number) => {
+      const digits = String(i).padStart(8, "0");
+      return good.slice(0, -8) + (digits === good.slice(-8) ? "99999999" : digits);
+    };
+    for (let i = 0; i < WALLET_TOTP_LIMIT.max - 1; i++) expect((await checkInTicket(db, owner, event.id, wrong(i))).result).toBe("INVALID");
+    expect(await db.auditLog.count({ where: { action: WALLET_TOTP_LOCKED_AUDIT } })).toBe(0);
+    expect(await checkInTicket(db, owner, event.id, wrong(WALLET_TOTP_LIMIT.max))).toMatchObject({ result: "INVALID" });
+
+    const locks = await db.auditLog.findMany({ where: { action: WALLET_TOTP_LOCKED_AUDIT } });
+    expect(locks).toHaveLength(1);
+    expect(locks[0]).toMatchObject({ entityType: "IssuedTicket", entityId: tickets[0].id, actorUserId: owner.id });
+    expect((await securityAlerts(db)).map((c) => c.code)).toEqual(["WALLET_TOTP_LOCKED"]);
+
+    // Travado: nem o código certo entra, e mais erros não duplicam a auditoria.
+    expect(await checkInTicket(db, owner, event.id, good)).toMatchObject({ result: "INVALID", message: expect.stringMatching(/CARTEIRA BLOQUEADO/) });
+    await checkInTicket(db, owner, event.id, wrong(1));
+    expect(await db.auditLog.count({ where: { action: WALLET_TOTP_LOCKED_AUDIT } })).toBe(1);
+    expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } })).status).toBe("VALID");
+
+    // Outro ingresso do mesmo pedido não é afetado.
+    expect((await checkInTicket(db, owner, event.id, walletQr(tickets[1]))).result).toBe("ADMITTED");
+    // Passada a janela, o QR da carteira volta a valer.
+    const later = new Date(Date.now() + WALLET_TOTP_LIMIT.windowMs + 60_000);
+    expect((await checkInTicket(db, owner, event.id, walletQr(tickets[0], later), later)).result).toBe("ADMITTED");
   });
 });
