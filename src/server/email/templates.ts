@@ -74,7 +74,8 @@ export function transactionalEmail(
     | "ownership"
     | "approval"
     | "event"
-    | "organizer",
+    | "organizer"
+    | "reminder",
   title: string,
   lines: string[],
   url: string,
@@ -90,13 +91,14 @@ export function transactionalEmail(
     approval: `Reembolso aguardando sua aprovação | ${BRAND.name}`,
     event: `Atualização importante sobre seu evento | ${BRAND.name}`,
     organizer: `Seu cadastro de organizador | ${BRAND.name}`,
+    reminder: `Lembrete: seu evento está chegando | ${BRAND.name}`,
   };
   const label =
     kind === "invitation"
       ? "Visualizar convite"
       : kind === "ownership"
         ? "Abrir"
-      : kind === "tickets"
+      : kind === "tickets" || kind === "reminder"
         ? "Visualizar meus ingressos"
         : "Ver detalhes";
   return {
