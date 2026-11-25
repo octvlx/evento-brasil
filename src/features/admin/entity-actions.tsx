@@ -138,17 +138,20 @@ type ManagedUser = {
 export function UserAdminActions({ u, admin }: { u: ManagedUser; admin: AdminViewer }) {
   if (u.id === admin.id || u.anonymizedAt) return null;
   const roleOptions = ADMIN_ROLES.map((r) => ({ value: r, ...ADMIN_ROLE_LABELS[r] }));
+  // Conta de outro admin: suspender e redefinir 2FA só para quem gerencia admins (o servidor também confere).
+  const canManage = u.platformRole !== "ADMIN" || adminHas(admin.adminRoles, "admins:manage");
   return (
     <div className="flex flex-wrap items-start gap-2">
       {adminHas(admin.adminRoles, "admins:manage") && u.platformRole === "ADMIN" && (
         <AdminRolesEditor current={u.adminRoles} roles={roleOptions} action={setAdminRolesAction.bind(null, u.id)} />
       )}
-      {u.totpEnabledAt && <ResetTwoFactorButton action={resetUserTwoFactorAction.bind(null, u.id)} />}
-      {u.status === "ACTIVE" ? (
-        <AdminActionButton label="Suspender" variant="destructive" askReason="Motivo" reasonRequired action={suspendUserAction.bind(null, u.id, true)} />
-      ) : (
-        <AdminActionButton label="Reativar" action={suspendUserAction.bind(null, u.id, false)} />
-      )}
+      {canManage && u.totpEnabledAt && <ResetTwoFactorButton action={resetUserTwoFactorAction.bind(null, u.id)} />}
+      {canManage &&
+        (u.status === "ACTIVE" ? (
+          <AdminActionButton label="Suspender" variant="destructive" askReason="Motivo" reasonRequired action={suspendUserAction.bind(null, u.id, true)} />
+        ) : (
+          <AdminActionButton label="Reativar" action={suspendUserAction.bind(null, u.id, false)} />
+        ))}
       {adminHas(admin.adminRoles, "users:delete") && u.platformRole !== "ADMIN" && (
         <DeleteAccountButton account={{ name: u.name, email: u.email, orders: u.ordersCount, organizations: u.organizations }} action={deleteUserAccountAction.bind(null, u.id)} />
       )}

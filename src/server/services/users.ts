@@ -17,7 +17,7 @@ import type { Db } from "../db";
 import { audit } from "../audit";
 import { DUMMY_HASH, hashPassword, verifyPassword } from "../auth/password";
 import { assertAcceptableNewPassword } from "../auth/breached-password";
-import { assertActive, type Actor, assertAdminPermission } from "../auth/permissions";
+import { assertActive, type Actor, assertAdminPermission, assertCanManageUser } from "../auth/permissions";
 import { ADMIN_ROLES } from "../auth/admin-roles";
 import { AppError, notFound } from "../errors";
 import { BUYER_KINDS, recordAcceptanceTx } from "./terms";
@@ -125,8 +125,9 @@ export async function setUserSuspended(
   // Uma transação sob trava do usuário: suspender × reativar ao mesmo tempo ficam em
   // ordem, e status, sessões e auditoria nunca discordam.
   return db.$transaction(async (tx) => {
-    const [target] = await tx.$queryRaw<{ status: "ACTIVE" | "SUSPENDED"; anonymizedAt: Date | null }[]>`SELECT status, "anonymizedAt" FROM "User" WHERE id = ${userId} FOR UPDATE`;
+    const [target] = await tx.$queryRaw<{ status: "ACTIVE" | "SUSPENDED"; anonymizedAt: Date | null; platformRole: "USER" | "ADMIN" }[]>`SELECT status, "anonymizedAt", "platformRole"::text AS "platformRole" FROM "User" WHERE id = ${userId} FOR UPDATE`;
     if (!target) throw notFound("Usuário não encontrado.");
+    assertCanManageUser(admin, target);
     // Conta excluída pelo titular: fica suspensa e anonimizada para sempre.
     if (target.anonymizedAt)
       throw new AppError("INVALID_STATE", "Esta conta foi excluída pelo titular e não pode ser reativada.");
