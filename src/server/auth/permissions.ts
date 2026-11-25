@@ -64,6 +64,18 @@ export function assertAdminPermission(actor: Actor, perm: AdminPermission): void
   if (!adminHas(actor.adminRoles, perm)) throw forbidden("Seu papel de administrador não permite esta ação.");
 }
 
+/**
+ * Ação de suporte sobre a conta de outra pessoa (suspender, redefinir 2FA): `users:manage`
+ * basta para clientes e organizadores; se o alvo também é admin da plataforma, só quem
+ * gerencia admins (`admins:manage`, super admin) pode — senão o suporte derrubaria
+ * ou desprotegeria um super admin.
+ */
+export function assertCanManageUser(actor: Actor, target: { platformRole: PlatformRole }): void {
+  assertAdminPermission(actor, "users:manage");
+  if (target.platformRole === "ADMIN" && !adminHas(actor.adminRoles, "admins:manage"))
+    throw forbidden("Só um super admin pode agir sobre a conta de outro administrador.");
+}
+
 /** Garante que o ator é membro da organização com a permissão exigida. */
 export async function assertOrgPermission(client: Db | Tx, actor: Actor, organizationId: string, perm: OrgPermission) {
   assertActive(actor);

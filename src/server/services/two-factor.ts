@@ -8,7 +8,7 @@ import { decryptPII, encryptPII, hashToken } from "../crypto";
 import { AppError, forbidden, invalidState } from "../errors";
 import { verifyPassword } from "../auth/password";
 import { MFA_SETUP_PATH, mfaEnforced } from "../auth/mfa-policy";
-import { type Actor, assertAdminPermission } from "../auth/permissions";
+import { type Actor, assertAdminPermission, assertCanManageUser } from "../auth/permissions";
 import { enqueueEmail } from "../email/outbox";
 import { twoFactorResetEmail } from "../email/templates";
 import { authAppUrl } from "./email-verification";
@@ -227,8 +227,9 @@ export async function adminResetTwoFactor(db: Db, admin: Actor, targetUserId: st
     throw new AppError("VALIDATION", "Para a sua própria conta, use Minha conta › Segurança.");
   const reason = input.reason.trim();
   if (reason.length < 5) throw new AppError("VALIDATION", "Descreva o motivo da redefinição (mínimo de 5 caracteres).");
-  const target = await db.user.findUnique({ where: { id: targetUserId }, select: { email: true, totpEnabledAt: true, anonymizedAt: true } });
+  const target = await db.user.findUnique({ where: { id: targetUserId }, select: { email: true, totpEnabledAt: true, anonymizedAt: true, platformRole: true } });
   if (!target) throw new AppError("NOT_FOUND", "Usuário não encontrado.");
+  assertCanManageUser(admin, target);
   if (target.anonymizedAt) throw invalidState("Esta conta foi excluída pelo titular.");
   if (!target.totpEnabledAt) throw invalidState("Esta conta não tem verificação em duas etapas ativa.");
 
