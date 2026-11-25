@@ -1,6 +1,7 @@
 import "server-only";
 import { db as defaultDb, type Db } from "../db";
 import { AppError } from "../errors";
+import { audit } from "../audit";
 import { countAttempt, failureLimiter } from "../rate-limit";
 import { enqueueEmail } from "../email/outbox";
 import { accountLockedEmail } from "../email/templates";
@@ -49,7 +50,7 @@ export async function recordLoginFailure(ip: string | null, email: string, clien
   await failureLimiter.fail(k.ipEmail, LOGIN_LIMITS.ipEmail.windowMs, client);
   const accountFailures = await countAttempt(client, k.account, LOGIN_LIMITS.account.windowMs);
   // Exatamente na falha que bloqueia: uma vez por janela (o contador é atômico).
-  if (accountFailures === LOGIN_LIMITS.account.max) await notifyAccountLocked(client, email);
+  if (accountFailures === LOGIN_LIMITS.account.max) await onAccountLocked(client, email);
   if (k.ip) await failureLimiter.fail(k.ip, LOGIN_LIMITS.ip.windowMs, client);
 }
 
@@ -59,11 +60,22 @@ export async function recordLoginSuccess(ip: string | null, email: string, clien
   await failureLimiter.reset(k.account, client);
 }
 
-/** Avisa o titular (conta com senha, ativa). Para e-mail sem conta nada acontece. */
-async function notifyAccountLocked(client: Db, email: string) {
+/**
+ * Conta que existe: registra na auditoria (vira alerta de segurança, security-alerts.ts)
+ * e avisa o titular (conta com senha, ativa). Para e-mail sem conta nada acontece: não
+ * há a quem atribuir, e gravar o e-mail digitado guardaria dado de terceiro.
+ */
+async function onAccountLocked(client: Db, email: string) {
   const user = await client.user.findUnique({ where: { email: normalize(email) }, select: { id: true, email: true, status: true, googleSubject: true } });
+  if (!user) return;
+  await audit(client, {
+    action: "auth.login_locked",
+    entityType: "User",
+    entityId: user.id,
+    metadata: { failures: LOGIN_LIMITS.account.max, windowMinutes: LOGIN_LIMITS.account.windowMs / 60_000 },
+  });
   // Conta só do Google não entra com senha (o hash é aleatório): o aviso de senha não se aplica.
-  if (!user || user.status !== "ACTIVE" || user.googleSubject) return;
+  if (user.status !== "ACTIVE" || user.googleSubject) return;
   await enqueueEmail(client, {
     dedupeKey: `login-locked:${user.id}:${Date.now()}`,
     template: "ACCOUNT_LOGIN_LOCKED",

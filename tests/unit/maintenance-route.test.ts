@@ -15,6 +15,7 @@ vi.mock("@/server/tickets/wallet/passes", () => ({ syncWalletPasses: async () =>
 vi.mock("@/server/services/finance-log", () => ({ financeLog: vi.fn() }));
 vi.mock("@/server/email/outbox", () => ({ dispatchEmailOutbox: mocks.email }));
 vi.mock("@/server/services/ops-health", () => ({ operationalHealth: async () => [], raiseOperationalAlerts: async () => ({ problems: 0, queued: 0 }) }));
+vi.mock("@/server/services/security-alerts", () => ({ securityAlerts: async () => [], raiseSecurityAlerts: async () => ({ problems: 0, queued: 0 }) }));
 vi.mock("@/server/log", () => ({ logEvent: vi.fn() }));
 import { POST } from "@/app/api/cron/maintenance/route";
 

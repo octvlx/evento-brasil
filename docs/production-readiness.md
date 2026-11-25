@@ -42,7 +42,9 @@ criação do primeiro administrador (`npm run admin:promote`): `docs/deploy-prod
       mascarados) e alertas (`src/server/services/ops-health.ts`) para webhooks parados,
       reembolsos aguardando o admin, reembolsos presos, pagamentos para reembolso manual,
       e-mails com falha e invariantes violados — por e-mail (`ALERT_EMAILS`), no quadro da
-      home do `/admin` e em `GET /api/cron/health` para monitor externo.
+      home do `/admin` e em `GET /api/cron/health` para monitor externo. Alertas de
+      segurança (`src/server/services/security-alerts.ts`) pelo mesmo `ALERT_EMAILS`: 2FA
+      travado, contas bloqueadas, papéis de admin, ações sensíveis e reembolsos fora do padrão.
 - [ ] Rastreamento de erros da aplicação (ex.: Sentry): exige escolher o serviço e
       adicionar dependência.
 
