@@ -2,13 +2,13 @@ import type { MetadataRoute } from "next";
 import { connection } from "next/server";
 import { db } from "@/server/db";
 import { SITE_URL } from "@/lib/site";
-import { listSitemapEntries } from "@/server/services/catalog";
+import { listCityCategoryEntries, listSitemapEntries } from "@/server/services/catalog";
 import { listExternalSitemapEntries } from "@/server/services/external-events";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Depende do banco e da data atual: nunca pré-renderizar no build.
   await connection();
-  const [{ events, cities, organizers }, external] = await Promise.all([listSitemapEntries(db), listExternalSitemapEntries(db)]);
+  const [{ events, cities, organizers }, external, cityCategories] = await Promise.all([listSitemapEntries(db), listExternalSitemapEntries(db), listCityCategoryEntries(db)]);
   const now = new Date();
   const url = (path: string) => `${SITE_URL}${path}`;
   return [
@@ -22,6 +22,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: url("/termos-organizador"), changeFrequency: "yearly", priority: 0.2 },
     ...events.map((e) => ({ url: url(`/eventos/${e.slug}`), lastModified: e.updatedAt, changeFrequency: "daily" as const, priority: 0.8 })),
     ...cities.map((c) => ({ url: url(`/cidades/${c.slug}`), lastModified: now, changeFrequency: "daily" as const, priority: 0.7 })),
+    // Categoria × cidade: só pares com evento à venda.
+    ...cityCategories.map((c) => ({ url: url(`/cidades/${c.citySlug}/${c.categorySlug}`), lastModified: now, changeFrequency: "daily" as const, priority: 0.6 })),
     ...organizers.map((o) => ({ url: url(`/organizadores/${o.slug}`), lastModified: o.updatedAt, changeFrequency: "weekly" as const, priority: 0.5 })),
     // Eventos externos: só publicados, ativos, futuros e com cidade/UF (mesma regra do index).
     ...external.map((e) => ({ url: url(`/eventos-externos/${e.slug}`), lastModified: e.updatedAt, changeFrequency: "weekly" as const, priority: 0.4 })),
