@@ -4,6 +4,7 @@ import type { Db } from "../db";
 import { audit } from "../audit";
 import { PASSWORD_MESSAGES, newPasswordSchema } from "@/lib/password-policy";
 import { hashPassword, verifyPassword } from "../auth/password";
+import { clearAccountLoginLimit } from "../auth/login-limits";
 import { assertAcceptableNewPassword } from "../auth/breached-password";
 import { hashToken, randomToken } from "../crypto";
 import { env } from "../env";
@@ -133,7 +134,7 @@ export async function resetPassword(db: Db, raw: unknown) {
   // Recusas da senha proposta acontecem antes de consumir o token: o link continua valendo.
   await assertAcceptableNewPassword(parsed.data.password);
   const passwordHash = await hashPassword(parsed.data.password);
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${token.userId} FOR UPDATE`;
     const user = await tx.user.findUniqueOrThrow({
       where: { id: token.userId },
@@ -183,6 +184,10 @@ export async function resetPassword(db: Db, raw: unknown) {
       entityType: "User",
       entityId: token.userId,
     });
-    return { reset: true as const };
+    return { reset: true as const, email: user.email };
   });
+  // Depois do commit: quem provou a posse do e-mail volta a poder entrar mesmo após
+  // tentativas distribuídas de terceiros contra a conta.
+  await clearAccountLoginLimit(result.email, db);
+  return { reset: result.reset };
 }
