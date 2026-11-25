@@ -1,6 +1,7 @@
 // Job agendado (ex.: a cada minuto): expira reservas vencidas e convites de
 // transferência de ingresso vencidos, encerra eventos finalizados, registra a
-// liberação da cota de meia-entrada (L7c), reconcilia pagamentos/reembolsos com o
+// liberação da cota de meia-entrada (L7c), enfileira o lembrete dos eventos das
+// próximas 24 h, reconcilia pagamentos/reembolsos com o
 // provedor e verifica os invariantes financeiros e, no máximo uma vez por hora,
 // expurga dados pessoais vencidos (prazos provisórios em src/server/retention.ts).
 // Por último verifica a saúde operacional e os alertas de segurança (ops-health.ts,
@@ -24,6 +25,7 @@ import { operationalHealth, raiseOperationalAlerts } from "@/server/services/ops
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { raiseSecurityAlerts, securityAlerts } from "@/server/services/security-alerts";
 import { runRetentionPurgeIfDue } from "@/server/services/retention-purge";
+import { enqueueEventReminders } from "@/server/services/event-reminders";
 import { expireTicketTransfers } from "@/server/services/transfers";
 import { runExternalSyncIfDue } from "@/server/services/external-events";
 import { syncWalletPasses } from "@/server/tickets/wallet/passes";
@@ -69,6 +71,8 @@ export async function POST(req: Request) {
     const checks = await securityAlerts(db);
     return { codes: checks.map((c) => c.code), ...(await raiseSecurityAlerts(db, checks)) };
   });
+  // Lembrete por e-mail a quem tem ingresso, até 24 h antes do início (antes do envio).
+  const reminders = await step("enqueueEventReminders", () => enqueueEventReminders(db));
   const emailDelivery = await step("dispatchEmailOutbox", () => dispatchEmailOutbox(db));
   const retention = await step("runRetentionPurgeIfDue", () => runRetentionPurgeIfDue(db));
   // Eventos externos: coleta limitada das fontes ativas, no máximo a cada 6 h por fonte.
@@ -81,6 +85,7 @@ export async function POST(req: Request) {
       halfPriceReleases,
       expiredTransfers,
       walletPasses,
+      reminders,
       reconciliation: reconciliation && { ...reconciliation, errors: reconciliation.errors.length },
       retention,
       externalSync,

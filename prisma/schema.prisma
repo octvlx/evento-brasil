@@ -521,6 +521,9 @@ model Event {
   // Marcador do cron: a releaseAt cuja liberação da cota já foi auditada. Se a data do
   // evento muda, a releaseAt muda e o cron audita de novo. Nunca é a garantia da regra.
   halfPriceReleaseAuditedFor DateTime?       @db.Timestamptz(3)
+  // Marcador do cron: o início (startsAt) para o qual o lembrete por e-mail já foi
+  // enfileirado. Se a data do evento muda, o lembrete sai de novo para a nova data.
+  reminderQueuedFor          DateTime?       @db.Timestamptz(3)
   // Limite de ingressos por conta neste evento (R4, Decreto 13.108/2026). Nulo = sem
   // limite; CHECK > 0. Contagem e exceções ficam no serviço (L4b).
   maxTicketsPerAccount       Int?
