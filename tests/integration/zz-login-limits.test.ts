@@ -99,3 +99,44 @@ describe("limites do login com senha", () => {
     await expect(assertLoginAllowed(ip(), user.email, db)).resolves.toBeUndefined();
   });
 });
+
+describe("aviso ao titular quando a conta bloqueia", () => {
+  const notices = () => db.emailOutbox.findMany({ where: { template: "ACCOUNT_LOGIN_LOCKED" } });
+
+  it("um e-mail na falha que bloqueia, nenhum antes nem nas seguintes da mesma janela", async () => {
+    const user = await makeUser();
+    for (let i = 0; i < LOGIN_LIMITS.account.max - 1; i++) await wrongAttempt(ip(), user.email);
+    expect(await notices()).toHaveLength(0);
+    await wrongAttempt(ip(), user.email);
+    const [mail] = await notices();
+    expect(mail.recipient).toBe(user.email);
+    // Já bloqueada: novas tentativas são recusadas antes de contar, sem novo aviso.
+    await expect(wrongAttempt(ip(), user.email)).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    await recordLoginFailure(ip(), user.email, db);
+    expect(await notices()).toHaveLength(1);
+  });
+
+  it("o aviso não leva senha nem IP e aponta para a redefinição", async () => {
+    const user = await makeUser();
+    const from = ip();
+    for (let i = 0; i < LOGIN_LIMITS.account.max; i++) await recordLoginFailure(i === 0 ? from : ip(), user.email, db);
+    const queue = await db.emailOutbox.findFirstOrThrow({ where: { template: "ACCOUNT_LOGIN_LOCKED" } });
+    const raw = JSON.stringify(queue);
+    expect(raw).not.toContain(from);
+    const { accountLockedEmail } = await import("@/server/email/templates");
+    const msg = accountLockedEmail("password", "https://app.test/esqueci-minha-senha", { google: false });
+    expect(msg.text).toContain("https://app.test/esqueci-minha-senha");
+    expect(msg.subject).toContain("Tentativas de acesso bloqueadas");
+  });
+
+  it("e-mail sem conta, conta suspensa ou só do Google: nenhum aviso", async () => {
+    for (let i = 0; i < LOGIN_LIMITS.account.max; i++) await recordLoginFailure(ip(), "ninguem-" + email(), db);
+    const suspended = await makeUser();
+    await db.user.update({ where: { id: suspended.id }, data: { status: "SUSPENDED" } });
+    const google = await makeUser();
+    await db.user.update({ where: { id: google.id }, data: { googleSubject: "google-sub-" + google.id } });
+    for (const target of [suspended.email, google.email])
+      for (let i = 0; i < LOGIN_LIMITS.account.max; i++) await recordLoginFailure(ip(), target, db);
+    expect(await notices()).toHaveLength(0);
+  });
+});
