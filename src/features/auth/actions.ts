@@ -20,6 +20,7 @@ import { GOOGLE_PENDING_COOKIE } from "@/server/auth/google";
 import { env, isLiveProduction } from "@/server/env";
 import { AppError, toActionResult, type ActionResult } from "@/server/errors";
 import { failureLimiter, rateLimit } from "@/server/rate-limit";
+import { assertLoginAllowed, recordLoginFailure, recordLoginSuccess } from "@/server/auth/login-limits";
 import { clientIp } from "@/server/client-ip";
 import { createSession, deleteSession } from "@/server/auth/sessions";
 import {
@@ -54,12 +55,11 @@ export async function loginAction(
     password: formData.get("password"),
   });
   if (!parsed.success) return { error: "Informe e-mail e senha válidos." };
-  const key = `login:${await clientKey()}:${parsed.data.email}`;
-  const WINDOW = 15 * 60_000;
+  const ip = await clientIp();
   const next = safeNext(formData.get("next")?.toString());
   let mfaPending = false;
   try {
-    await failureLimiter.assert(key, 8, WINDOW);
+    await assertLoginAllowed(ip, parsed.data.email);
     const user = await authenticate(
       db,
       parsed.data.email,
@@ -67,10 +67,10 @@ export async function loginAction(
       { production: isLiveProduction() },
     );
     if (!user) {
-      await failureLimiter.fail(key, WINDOW);
+      await recordLoginFailure(ip, parsed.data.email);
       return { error: "E-mail ou senha incorretos." };
     }
-    await failureLimiter.reset(key);
+    await recordLoginSuccess(ip, parsed.data.email);
     const session = await createSession(
       db,
       user.id,
