@@ -21,6 +21,7 @@ vi.mock("@/server/payments/mercadopago-oauth", () => ({
 }));
 
 import { MercadoPagoAdapter } from "@/server/payments/mercadopago";
+import { PaymentNotYetFoundError } from "@/server/payments/types";
 
 const findUnique = vi.fn();
 const db = { payment: { findUnique, findFirst: vi.fn() } } as unknown as Db;
@@ -139,7 +140,23 @@ describe("confirmação de pagamentos do Checkout Pro", () => {
       throw new Error("unexpected " + u);
     });
     expect(await adapter().findCheckoutPayment("k")).toBeNull();
-    await expect(adapter().findPaymentByReference("k")).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    // Inconclusivo (PROVIDER_ERROR), mas marcado como espera esperada para a reconciliação não logar erro.
+    const err = await adapter().findPaymentByReference("k").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PaymentNotYetFoundError);
+    expect(err).toMatchObject({ code: "PROVIDER_ERROR" });
+  });
+
+  it("preferência sem data de vencimento continua erro comum, não espera", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const u = url(input);
+      if (u.includes("/merchant_orders/search")) return Response.json({ elements: [] });
+      if (u.includes("/v1/payments/search")) return Response.json({ results: [] });
+      if (u.includes("/checkout/preferences/")) return Response.json({ external_reference: "local-payment", expiration_date_to: null });
+      throw new Error("unexpected " + u);
+    });
+    const err = await adapter().findPaymentByReference("k").catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(err).not.toBeInstanceOf(PaymentNotYetFoundError);
   });
 
   it("falha temporária da API é inconclusiva (erro), nunca 'sem pagamento'", async () => {
