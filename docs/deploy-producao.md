@@ -88,7 +88,11 @@ vendedores ficam ilegíveis, e não há como recuperar.
   `x-cron-secret: <CRON_SECRET>`. Ele expira reservas, encerra eventos, envia a fila
   de e-mails e reprocessa webhooks. Sem o cron, nenhum e-mail sai. Também envia os
   alertas para `ALERT_EMAILS` (webhook parado, reembolso com falha aguardando o admin,
-  pagamento para reembolso manual, e-mails com falha), no máximo 1 por problema a cada 6 h.
+  pagamento para reembolso manual, e-mails com falha), no máximo 1 por problema a cada 6 h,
+  e os alertas de segurança (`src/server/services/security-alerts.ts`: 2FA travado por
+  código errado depois da senha certa, contas bloqueadas por senha errada, papéis de admin
+  alterados, ações administrativas sensíveis, reembolsos de valor alto, manuais ou em
+  volume fora do padrão), no máximo 1 por tipo a cada hora, só com contagens.
 - ☐ **Monitor externo** (ex.: UptimeRobot) a cada 5 min: `GET <APP_URL>/api/cron/health`
   com o mesmo header. Responde 503 com problema crítico. Configure também o aviso de
   falha do próprio agendador do cron: se o cron parar, ninguém mais recebe alerta.

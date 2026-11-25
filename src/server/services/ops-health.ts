@@ -175,25 +175,42 @@ export function alertRecipients(): string[] {
     .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
 }
 
+/** Variações do envio: os alertas de segurança (security-alerts.ts) usam janela de 1 h e outro texto. */
+export interface AlertDelivery {
+  repeatHours: number;
+  /** Prefixo da chave de deduplicação e categoria do log. */
+  kind: "ops-alert" | "security-alert";
+  template: string;
+  /** Última linha do e-mail. */
+  footer: string;
+}
+
+const OPS_DELIVERY: AlertDelivery = {
+  repeatHours: ALERT_REPEAT_HOURS,
+  kind: "ops-alert",
+  template: "OPS_ALERT",
+  footer: `Enquanto o problema continuar, este aviso se repete a cada ${ALERT_REPEAT_HOURS} h.`,
+};
+
 /**
  * Registra cada problema no log e enfileira o e-mail de alerta. A chave de
  * deduplicação inclui a janela de ALERT_REPEAT_HOURS: o mesmo problema avisa de novo
  * só na janela seguinte, enquanto persistir. Devolve quantos e-mails entraram na fila
  * (os já enfileirados na janela não contam).
  */
-export async function raiseOperationalAlerts(db: Db, checks: HealthCheck[], now = new Date()): Promise<{ problems: number; queued: number }> {
-  const window = Math.floor(now.getTime() / (ALERT_REPEAT_HOURS * 3_600_000));
+export async function raiseOperationalAlerts(db: Db, checks: HealthCheck[], now = new Date(), delivery: AlertDelivery = OPS_DELIVERY): Promise<{ problems: number; queued: number }> {
+  const window = Math.floor(now.getTime() / (delivery.repeatHours * 3_600_000));
   const to = alertRecipients();
   let queued = 0;
   for (const c of checks) {
-    logEvent(c.severity === "critical" ? "error" : "warn", "alerta", c.code, { count: c.count, oldestAt: c.oldestAt?.toISOString() ?? null });
+    logEvent(c.severity === "critical" ? "error" : "warn", delivery.kind === "ops-alert" ? "alerta" : "seguranca", c.code, { count: c.count, oldestAt: c.oldestAt?.toISOString() ?? null });
     for (const recipient of to) {
-      const dedupeKey = `ops-alert:${c.code}:${window}:${recipient}`;
+      const dedupeKey = `${delivery.kind}:${c.code}:${window}:${recipient}`;
       const existed = await db.emailOutbox.findUnique({ where: { dedupeKey }, select: { id: true } });
       if (existed) continue;
       await enqueueEmail(db, {
         dedupeKey,
-        template: "OPS_ALERT",
+        template: delivery.template,
         recipient,
         message: {
           ...transactionalEmail(
@@ -203,14 +220,14 @@ export async function raiseOperationalAlerts(db: Db, checks: HealthCheck[], now 
               `Quantidade: ${c.count}`,
               ...(c.oldestAt ? [`Mais antigo desde: ${c.oldestAt.toISOString()} (UTC)`] : []),
               `Código: ${c.code}`,
-              `Enquanto o problema continuar, este aviso se repete a cada ${ALERT_REPEAT_HOURS} h.`,
+              delivery.footer,
             ],
             env().APP_URL + c.href,
           ),
           subject: `[${c.severity === "critical" ? "ALERTA" : "atenção"}] ${c.title}`,
         },
         // Alerta velho não ajuda: se não sair na janela, é descartado.
-        expiresAt: new Date((window + 1) * ALERT_REPEAT_HOURS * 3_600_000),
+        expiresAt: new Date((window + 1) * delivery.repeatHours * 3_600_000),
       });
       queued++;
     }

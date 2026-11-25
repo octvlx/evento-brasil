@@ -3,8 +3,9 @@
 // liberação da cota de meia-entrada (L7c), reconcilia pagamentos/reembolsos com o
 // provedor e verifica os invariantes financeiros e, no máximo uma vez por hora,
 // expurga dados pessoais vencidos (prazos provisórios em src/server/retention.ts).
-// Por último verifica a saúde operacional e enfileira alertas (ops-health.ts) antes
-// do envio de e-mails, para o alerta sair na mesma passada.
+// Por último verifica a saúde operacional e os alertas de segurança (ops-health.ts,
+// security-alerts.ts) e enfileira os avisos antes do envio de e-mails, para o alerta
+// sair na mesma passada.
 // Protegido pelo CRON_SECRET: header x-cron-secret ou Authorization: Bearer (Vercel
 // Schedules, vercel.json); ver src/server/cron-auth.ts.
 // Cada etapa é idempotente e isolada: a falha de uma é registrada e não impede as
@@ -21,6 +22,7 @@ import { financeLog } from "@/server/services/finance-log";
 import { logEvent } from "@/server/log";
 import { operationalHealth, raiseOperationalAlerts } from "@/server/services/ops-health";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
+import { raiseSecurityAlerts, securityAlerts } from "@/server/services/security-alerts";
 import { runRetentionPurgeIfDue } from "@/server/services/retention-purge";
 import { expireTicketTransfers } from "@/server/services/transfers";
 import { runExternalSyncIfDue } from "@/server/services/external-events";
@@ -62,6 +64,11 @@ export async function POST(req: Request) {
     const checks = await operationalHealth(db, new Date(), violations);
     return { checks, ...(await raiseOperationalAlerts(db, checks)) };
   });
+  // Segurança: 2FA travado, contas bloqueadas, papéis de admin, reembolsos fora do padrão.
+  const security = await step("securityAlerts", async () => {
+    const checks = await securityAlerts(db);
+    return { codes: checks.map((c) => c.code), ...(await raiseSecurityAlerts(db, checks)) };
+  });
   const emailDelivery = await step("dispatchEmailOutbox", () => dispatchEmailOutbox(db));
   const retention = await step("runRetentionPurgeIfDue", () => runRetentionPurgeIfDue(db));
   // Eventos externos: coleta limitada das fontes ativas, no máximo a cada 6 h por fonte.
@@ -79,6 +86,7 @@ export async function POST(req: Request) {
       externalSync,
       invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
       alerts: health && { problems: health.checks.map((c) => ({ code: c.code, severity: c.severity, count: c.count })), emailsQueued: health.queued },
+      securityAlerts: security && { codes: security.codes, emailsQueued: security.queued },
       failedSteps: failed,
       at: new Date().toISOString(),
     },
