@@ -50,8 +50,9 @@ export default function HomePage() {
 
       {/* 2. Busca compacta: um campo só (artista, evento, cidade, local ou "Rock em São Paulo"). */}
       <section aria-labelledby="busca-titulo" className="mx-auto mt-6 max-w-7xl px-4 sm:px-6">
-        <div className="bg-hero relative overflow-hidden rounded-3xl px-3 py-3 sm:px-5 sm:py-4">
-          <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
+        {/* Sem overflow-hidden: cortaria a lista de sugestões, que passa da borda do bloco. */}
+        <div className="bg-hero relative rounded-3xl px-3 py-3 sm:px-5 sm:py-4">
+          <div className="bg-dots pointer-events-none absolute inset-0 rounded-3xl" aria-hidden />
           <p className="relative mx-auto mb-2 max-w-3xl font-display text-base font-bold leading-tight text-white sm:text-lg">
             Encontre seu <span className="text-lime">próximo evento</span>
           </p>
@@ -107,7 +108,7 @@ export default function HomePage() {
 
       <section className="mx-auto mt-16 max-w-7xl px-4 sm:px-6">
         <div className="bg-hero relative overflow-hidden rounded-3xl p-8 text-white sm:p-12">
-          <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
+          <div className="bg-dots pointer-events-none absolute inset-0 rounded-3xl" aria-hidden />
           <div className="relative max-w-2xl">
             <p className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-lime">
               <BadgePercent className="size-4" aria-hidden /> Para produtores, casas e coletivos
