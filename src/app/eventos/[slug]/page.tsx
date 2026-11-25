@@ -17,6 +17,8 @@ import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
 import { getPaymentAdapter } from "@/server/payments";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
+import { FavoriteEventButton } from "@/features/favorites/toggle-buttons";
+import { isEventFavorite } from "@/server/services/favorites";
 import { getPublicEvent, relatedEvents, trackingLinkCouponCode } from "@/server/services/catalog";
 import { EventGrid } from "@/components/site/event-card";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
@@ -73,6 +75,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   // Igual a retainedFixedFeeCents: só retém com provedor que permite (hoje, o simulado).
   const retainedFixed = !fixedFee.refundable && fixedFee.cents > 0 && getPaymentAdapter().isSimulated ? fixedFee.cents : 0;
   const user = await getCurrentUser();
+  const favorite = user ? await isEventFavorite(db, user.id, event.id) : false;
   // Cupom pré-aplicado pelo link rastreado desta visita (cookie eb_attr), se for deste evento.
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
   const linkCoupon = attribution?.trackingLinkId ? await trackingLinkCouponCode(db, attribution.trackingLinkId, event.id) : null;
@@ -313,6 +316,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
           </section>
 
           <div className="flex flex-wrap gap-3">
+            {!ended && <FavoriteEventButton id={event.id} initial={favorite} loggedIn={!!user} />}
             <a href={whatsappShareUrl(`Bora? ${event.title}`, url)} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline" })}>
               <Share2 aria-hidden /> Compartilhar no WhatsApp
             </a>

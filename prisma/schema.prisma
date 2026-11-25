@@ -93,6 +93,8 @@ model User {
 
   organizationDeletionsRequested OrganizationDeletionRequest[] @relation("OrgDeletionRequester")
   organizationDeletionsDecided   OrganizationDeletionRequest[] @relation("OrgDeletionDecider")
+  eventFavorites                 EventFavorite[]
+  organizerFollows               OrganizerFollow[]
 }
 
 // Endereço salvo somente quando o comprador informa no checkout.
@@ -258,6 +260,7 @@ model Organization {
   cancellations      CancellationRequest[]
   termsAcceptances   TermsAcceptance[]
   deletionRequests   OrganizationDeletionRequest[]
+  followers          OrganizerFollow[]
 
   @@index([status])
 }
@@ -521,6 +524,9 @@ model Event {
   // Marcador do cron: a releaseAt cuja liberação da cota já foi auditada. Se a data do
   // evento muda, a releaseAt muda e o cron audita de novo. Nunca é a garantia da regra.
   halfPriceReleaseAuditedFor DateTime?       @db.Timestamptz(3)
+  // Marcador do cron: quando os seguidores do organizador foram avisados deste evento.
+  // Uma vez só por evento (despublicar e publicar de novo não avisa outra vez).
+  followersNotifiedAt        DateTime?       @db.Timestamptz(3)
   // Limite de ingressos por conta neste evento (R4, Decreto 13.108/2026). Nulo = sem
   // limite; CHECK > 0. Contagem e exceções ficam no serviço (L4b).
   maxTicketsPerAccount       Int?
@@ -572,6 +578,7 @@ model Event {
   transfers        TicketTransfer[]
   changes          EventChange[]
   cancellations    CancellationRequest[]
+  favorites        EventFavorite[]
 
   // Alvo das FKs compostas de Coupon e TrackingLink (evento da mesma organização).
   @@unique([id, organizationId])
@@ -1839,4 +1846,33 @@ model EventReport {
   @@index([status, createdAt])
   @@index([eventId, status])
   @@index([reporterId, createdAt])
+}
+
+/// Evento salvo pelo comprador ("favoritos"). Apagado na exclusão da conta.
+model EventFavorite {
+  userId    String
+  eventId   String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@id([userId, eventId])
+  @@index([userId, createdAt])
+  @@index([eventId])
+}
+
+/// Pessoa que segue um organizador: recebe e-mail quando ele publica um evento novo.
+/// Apagado na exclusão da conta; deixar de seguir apaga a linha.
+model OrganizerFollow {
+  userId         String
+  organizationId String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, organizationId])
+  @@index([userId, createdAt])
+  @@index([organizationId])
 }

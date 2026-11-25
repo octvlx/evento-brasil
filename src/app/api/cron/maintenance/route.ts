@@ -24,6 +24,7 @@ import { operationalHealth, raiseOperationalAlerts } from "@/server/services/ops
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { raiseSecurityAlerts, securityAlerts } from "@/server/services/security-alerts";
 import { runRetentionPurgeIfDue } from "@/server/services/retention-purge";
+import { notifyFollowersOfNewEvents } from "@/server/services/favorites";
 import { expireTicketTransfers } from "@/server/services/transfers";
 import { runExternalSyncIfDue } from "@/server/services/external-events";
 import { syncWalletPasses } from "@/server/tickets/wallet/passes";
@@ -59,6 +60,8 @@ export async function POST(req: Request) {
   for (const e of reconciliation?.errors ?? []) {
     financeLog("error", `reconciliation.${e.kind}_failed`, { orderId: e.orderId }, { entityId: e.id, message: e.message });
   }
+  // Quem segue o organizador: aviso de evento novo (enfileira antes do envio de e-mails).
+  const followerNotices = await step("notifyFollowersOfNewEvents", () => notifyFollowersOfNewEvents(db));
   // Alertas: problemas que precisam de alguém (não falham o cron; o próprio problema já é o aviso).
   const health = await step("operationalHealth", async () => {
     const checks = await operationalHealth(db, new Date(), violations);
@@ -83,6 +86,7 @@ export async function POST(req: Request) {
       walletPasses,
       reconciliation: reconciliation && { ...reconciliation, errors: reconciliation.errors.length },
       retention,
+      followerNotices,
       externalSync,
       invariantViolations: violations.map((v) => ({ code: v.code, count: v.ids.length })),
       alerts: health && { problems: health.checks.map((c) => ({ code: c.code, severity: c.severity, count: c.count })), emailsQueued: health.queued },

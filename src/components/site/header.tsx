@@ -79,6 +79,7 @@ async function UserMenu() {
           </p>
           <MenuLink href="/meus-ingressos">Meus ingressos</MenuLink>
           <MenuLink href="/meus-pedidos">Meus pedidos</MenuLink>
+          <MenuLink href="/favoritos">Favoritos</MenuLink>
           <MenuLink href="/minha-conta">Minha conta</MenuLink>
           {isOrganizer && <MenuLink href="/organizador">Painel do organizador</MenuLink>}
           {isStaff && <MenuLink href="/check-in">Check-in</MenuLink>}

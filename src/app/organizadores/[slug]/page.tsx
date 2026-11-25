@@ -7,6 +7,9 @@ import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { db } from "@/server/db";
 import { getPublicOrganizer, pastOrganizerEvents } from "@/server/services/catalog";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
+import { getCurrentUser } from "@/server/auth/current";
+import { FollowOrganizerButton } from "@/features/favorites/toggle-buttons";
+import { isFollowingOrganizer } from "@/server/services/favorites";
 
 export async function generateMetadata({ params }: PageProps<"/organizadores/[slug]">): Promise<Metadata> {
   const { slug } = await params;
@@ -37,6 +40,8 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
   if (!data) notFound();
   const { org, events } = data;
   const past = await pastOrganizerEvents(db, org.id);
+  const user = await getCurrentUser();
+  const following = user ? await isFollowingOrganizer(db, user.id, org.id) : false;
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       {org.coverUrl && (
@@ -52,7 +57,7 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
         ) : (
           <div className="bg-hero grid size-20 shrink-0 place-items-center rounded-2xl font-display text-3xl font-extrabold text-white">{org.name.slice(0, 1)}</div>
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="flex items-center gap-2 font-display text-3xl font-extrabold tracking-tight">
             {org.name} <BadgeCheck className="size-6 text-secondary" aria-label="Organizador verificado" />
           </h1>
@@ -74,6 +79,10 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
               </a>
             )}
           </div>
+        </div>
+        <div className="sm:self-start">
+          <FollowOrganizerButton id={org.id} initial={following} loggedIn={!!user} />
+          <p className="mt-1 max-w-48 text-xs text-muted-foreground">Receba um e-mail quando houver evento novo.</p>
         </div>
       </div>
       <h2 className="mb-5 mt-10 font-display text-2xl font-extrabold">Próximos eventos</h2>

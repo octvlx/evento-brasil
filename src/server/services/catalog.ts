@@ -650,3 +650,14 @@ export async function listSitemapEntries(db: Db, now = new Date()) {
   ]);
   return { events, cities, organizers };
 }
+
+/** Eventos salvos pela pessoa que ainda estão no ar (inclui privado salvo pelo link), por data. */
+export async function favoriteEvents(db: Db, userId: string, now = new Date()) {
+  const rows = await db.event.findMany({
+    where: { ...reachableEventWhere(now), favorites: { some: { userId } } },
+    select: cardSelect,
+    orderBy: { startsAt: "asc" },
+    take: 100,
+  });
+  return toCards(db, rows, now);
+}

@@ -131,6 +131,8 @@ async function anonymizeAccountTx(tx: Tx, userId: string, unusablePassword: stri
     tx.totpRecoveryCode.deleteMany({ where: { userId } }),
     tx.organizationMember.deleteMany({ where: { userId } }),
     tx.eventStaffAssignment.deleteMany({ where: { userId } }),
+    tx.eventFavorite.deleteMany({ where: { userId } }),
+    tx.organizerFollow.deleteMany({ where: { userId } }),
     tx.emailOutbox.deleteMany({ where: { recipient: { equals: user.email, mode: "insensitive" } } }),
     // Convites de equipe ainda abertos para este e-mail (o fato do convite fica na auditoria).
     tx.organizationInvitation.deleteMany({ where: { email: { equals: user.email, mode: "insensitive" }, acceptedAt: null } }),

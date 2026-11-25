@@ -12,6 +12,7 @@ export default function robots(): MetadataRoute.Robots {
         "/ingressos",
         "/meus-ingressos",
         "/meus-pedidos",
+        "/favoritos",
         "/minha-conta",
         "/entrar",
         "/registrar",
