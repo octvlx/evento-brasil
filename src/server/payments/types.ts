@@ -37,6 +37,19 @@ export class ProviderRejectedError extends AppError {
   }
 }
 
+/**
+ * Busca por referência sem pagamento encontrado, mas ainda sem poder afirmar a
+ * ausência (ex.: preferência do checkout aberta ou vencida há menos de um dia).
+ * Inconclusivo como qualquer PROVIDER_ERROR, porém esperado em todo checkout
+ * abandonado: a reconciliação tenta de novo mais tarde sem registrar como falha.
+ */
+export class PaymentNotYetFoundError extends AppError {
+  constructor(public readonly retryAfter: Date | null) {
+    super("PROVIDER_ERROR", "Não foi possível concluir a operação com o Mercado Pago.");
+    this.name = "PaymentNotYetFoundError";
+  }
+}
+
 export type ProviderMethod = "PIX" | "CREDIT_CARD";
 
 export type ProviderPaymentStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "CANCELLED" | "REFUNDED" | "DISPUTED" | "CHARGED_BACK";

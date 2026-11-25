@@ -8,7 +8,7 @@ import { createOrder, expireStaleOrders } from "@/server/services/orders";
 import { confirmReturnedPayment, handlePaymentWebhook, startPayment } from "@/server/services/payments";
 import { checkFinancialInvariants, reconcilePayments } from "@/server/services/reconciliation";
 import { adminRefundOrder, confirmRefundTx, OverRefundError, processRefund, requestCustomerRefund } from "@/server/services/refunds";
-import { PaymentNotStartedError } from "@/server/payments/types";
+import { PaymentNotStartedError, PaymentNotYetFoundError } from "@/server/payments/types";
 import { adapter, buy, buyAndPay, db, gateQr, makeEvent, makeOrg, makeUser, orderInput, resetDb, ticketType } from "../support/fixtures";
 
 beforeEach(resetDb);
@@ -366,6 +366,24 @@ describe("reconciliação", () => {
     expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PAID");
     expect(await db.payment.findUniqueOrThrow({ where: { id: ghost.id } })).toMatchObject({ status: "FAILED", failureReason: "provider_create_not_found" });
     // O pedido sem cobrança segue o fluxo normal de expiração da reserva.
+    await expireStaleOrders(db, minutesFromNow(16));
+  });
+
+  it("checkout abandonado dentro da janela fica aguardando sem erro; falha real do provedor continua erro", async () => {
+    const { event, tt } = await setup();
+    const order = await buy(await makeUser(), event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
+    const pending = await db.payment.create({
+      data: { orderId: order.id, provider: adapter.id, method: "CREDIT_CARD", amountCents: order.totalCents, isSimulated: true, idempotencyKey: `${order.id}:CREDIT_CARD:1` },
+    });
+    const withLookup = (lookup: () => Promise<never>) => Object.assign(Object.create(adapter), { findPaymentByReference: lookup });
+
+    const waiting = await reconcilePayments(db, withLookup(async () => { throw new PaymentNotYetFoundError(minutesFromNow(60)); }), minutesFromNow(11));
+    expect(waiting).toMatchObject({ paymentsAwaitingProvider: 1, paymentsLinked: 0, paymentsClosedNotFound: 0, errors: [] });
+    expect(await db.payment.findUniqueOrThrow({ where: { id: pending.id } })).toMatchObject({ status: "PENDING", providerPaymentId: null });
+
+    const broken = await reconcilePayments(db, withLookup(async () => { throw new Error("timeout"); }), minutesFromNow(11));
+    expect(broken.paymentsAwaitingProvider).toBe(0);
+    expect(broken.errors).toEqual([expect.objectContaining({ kind: "payment-link", id: pending.id, orderId: order.id })]);
     await expireStaleOrders(db, minutesFromNow(16));
   });
 

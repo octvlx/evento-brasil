@@ -6,7 +6,7 @@
 // detecta (sem corrigir em silêncio) qualquer inconsistência.
 import "server-only";
 import type { Db } from "../db";
-import type { PaymentProviderAdapter } from "../payments/types";
+import { PaymentNotYetFoundError, type PaymentProviderAdapter } from "../payments/types";
 import { financeLog } from "./finance-log";
 import { applyPaymentSnapshot, isForeignWebhook, syncPaymentFromProvider, type ApplyOutcome } from "./payments";
 import { resumeRefund, retryFailedRefunds } from "./refunds";
@@ -17,6 +17,8 @@ export interface ReconciliationReport {
   settledPaymentsSynced: number;
   paymentsLinked: number;
   paymentsClosedNotFound: number;
+  /** Sem id do provedor e ainda não encontrados, dentro da janela de espera (checkout abandonado): sem erro. */
+  paymentsAwaitingProvider: number;
   paymentsNeedReview: number;
   refundsResumed: number;
   /** Reembolsos FAILED reprocessados automaticamente nesta rodada (e quantos deram certo). */
@@ -47,6 +49,7 @@ export async function reconcilePayments(
     settledPaymentsSynced: 0,
     paymentsLinked: 0,
     paymentsClosedNotFound: 0,
+    paymentsAwaitingProvider: 0,
     paymentsNeedReview: 0,
     refundsResumed: 0,
     refundsRetried: 0,
@@ -138,7 +141,9 @@ export async function reconcilePayments(
       await applyPaymentSnapshot(db, adapter, snapshot);
       report.paymentsLinked++;
     } catch (err) {
-      fail("payment-link", p.id, err, p.orderId);
+      // Checkout abandonado dentro da janela: tenta de novo na próxima rodada, sem log de erro.
+      if (err instanceof PaymentNotYetFoundError) report.paymentsAwaitingProvider++;
+      else fail("payment-link", p.id, err, p.orderId);
     }
   }
 

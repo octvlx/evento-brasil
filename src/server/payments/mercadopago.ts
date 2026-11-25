@@ -11,6 +11,7 @@ import {
 } from "./mercadopago-oauth";
 import {
   PaymentNotStartedError,
+  PaymentNotYetFoundError,
   ProviderRejectedError,
   type CreatePaymentInput,
   type PaymentProviderAdapter,
@@ -501,9 +502,11 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       throw providerError();
     }
     const expiresAt = providerDate(preference.data.expiration_date_to);
-    if (!expiresAt || Date.now() <= expiresAt.getTime() + 24 * 60 * 60 * 1000) {
-      throw providerError();
-    }
+    // Sem data de vencimento não há quando concluir: segue como falha a investigar.
+    if (!expiresAt) throw providerError();
+    const definitiveAt = new Date(expiresAt.getTime() + 24 * 60 * 60 * 1000);
+    // Checkout abandonado ainda na janela: esperado, não é falha do provedor.
+    if (Date.now() <= definitiveAt.getTime()) throw new PaymentNotYetFoundError(definitiveAt);
     return null;
   }
 
