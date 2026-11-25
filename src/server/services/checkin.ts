@@ -10,6 +10,7 @@ import { deriveWalletTotpKey, hashToken, qrTokenHash, safeEqual, totpCode } from
 import { AppError, forbidden, notFound } from "../errors";
 import { parseDynamicQrPayload, parseQrPayload, parseWalletQrPayload, qrStepFresh, verifyDynamicQrSignature, WALLET_TOTP_DIGITS } from "@/lib/qr-payload";
 import { env } from "../env";
+import { countAttempt } from "../rate-limit";
 import { ticketPublicKey } from "./tickets";
 
 export interface CheckinResponse {
@@ -30,11 +31,42 @@ export interface CheckinResponse {
 }
 
 /** Motivo de um INVALID que a portaria precisa entender (o QR é do ingresso, mas não vale). */
-type InvalidNote = "STALE" | "STATIC_REFUSED";
+type InvalidNote = "STALE" | "STATIC_REFUSED" | "WALLET_LOCKED";
 const INVALID_NOTES: Record<InvalidNote, string> = {
   STALE: "QR EXPIRADO (print ou foto) — peça para abrir o ingresso no celular",
   STATIC_REFUSED: "QR FIXO (PDF, carteira ou print) não vale — peça para abrir o ingresso no celular",
+  WALLET_LOCKED: "QR DA CARTEIRA BLOQUEADO (muitos códigos errados) — peça para abrir o ingresso no celular",
 };
+
+/**
+ * Códigos errados do Google Wallet (EB3) por ingresso. O TOTP tem 8 dígitos e a leitura já
+ * é limitada por operador (checkInAction), então adivinhar é inviável; este teto fecha a
+ * força bruta distribuída entre operadores e aparelhos. Ao atingir o teto, o QR da carteira
+ * daquele ingresso para de valer até a janela vencer (o QR do celular, EB2, continua) e a
+ * trava vai para a auditoria, que vira alerta de segurança (security-alerts.ts).
+ */
+export const WALLET_TOTP_LIMIT = { max: 10, windowMs: 15 * 60_000 } as const;
+export const WALLET_TOTP_LOCKED_AUDIT = "checkin.wallet_totp_locked";
+const walletTotpKey = (code: string) => `checkin-wallet-totp:${code}`;
+
+async function walletTotpLocked(tx: Tx, code: string, now: Date) {
+  const bucket = await tx.rateLimitBucket.findUnique({ where: { key: hashToken(walletTotpKey(code)) } });
+  return !!bucket && bucket.resetAt > now && bucket.count >= WALLET_TOTP_LIMIT.max;
+}
+
+async function recordWalletTotpFailure(tx: Tx, actor: Actor, ticket: { id: string; code: string; eventId: string; event: { organizationId: string } }) {
+  const failures = await countAttempt(tx, walletTotpKey(ticket.code), WALLET_TOTP_LIMIT.windowMs);
+  // Exatamente na falha que trava: uma vez por janela (o contador é atômico).
+  if (failures !== WALLET_TOTP_LIMIT.max) return;
+  await audit(tx, {
+    actorUserId: actor.id,
+    organizationId: ticket.event.organizationId,
+    action: WALLET_TOTP_LOCKED_AUDIT,
+    entityType: "IssuedTicket",
+    entityId: ticket.id,
+    metadata: { eventId: ticket.eventId, failures, windowMinutes: WALLET_TOTP_LIMIT.windowMs / 60_000 },
+  });
+}
 
 /** QR fixo (EB1) ainda aceito? Só para transição (QR_STATIC_ACCEPTED=true); o padrão é recusar. */
 // Lido a cada chamada (não do env() em cache): os testes ligam e desligam a transição.
@@ -121,11 +153,11 @@ async function signingVersion(ticket: { code: string; tokenVersion: number }, ve
  * QR rotativo lido na portaria: do celular (EB2, assinatura ECDSA) ou do Google Wallet (EB3,
  * TOTP). Os dois viram { código, passo, verificação por versão da chave }.
  */
-function parseRotatingQr(raw: string): { code: string; step: number; verify: (version: number) => Promise<boolean> | boolean } | null {
+function parseRotatingQr(raw: string): { code: string; step: number; wallet: boolean; verify: (version: number) => Promise<boolean> | boolean } | null {
   const phone = parseDynamicQrPayload(raw);
-  if (phone) return { code: phone.code, step: phone.step, verify: (v) => verifyDynamicQrSignature(ticketPublicKey({ code: phone.code, tokenVersion: v }), phone.code, phone.step, phone.signature) };
+  if (phone) return { code: phone.code, step: phone.step, wallet: false, verify: (v) => verifyDynamicQrSignature(ticketPublicKey({ code: phone.code, tokenVersion: v }), phone.code, phone.step, phone.signature) };
   const wallet = parseWalletQrPayload(raw);
-  if (wallet) return { code: wallet.code, step: wallet.step, verify: (v) => safeEqual(totpCode(deriveWalletTotpKey(wallet.code, v), wallet.step, WALLET_TOTP_DIGITS), wallet.totp) };
+  if (wallet) return { code: wallet.code, step: wallet.step, wallet: true, verify: (v) => safeEqual(totpCode(deriveWalletTotpKey(wallet.code, v), wallet.step, WALLET_TOTP_DIGITS), wallet.totp) };
   return null;
 }
 
@@ -174,8 +206,14 @@ export async function checkInTicket(
       const dynamic = parseRotatingQr(rawPayload);
       if (dynamic) {
         const found = await tx.issuedTicket.findUnique({ where: { code: dynamic.code }, include: ticketForView });
+        if (found && dynamic.wallet && (await walletTotpLocked(tx, found.code, now))) {
+          // Travado vale até para o código certo: senão a força bruta só esperaria acertar.
+          await record("INVALID", found.eventId === eventId ? found.id : null);
+          return { result: "INVALID", note: "WALLET_LOCKED" };
+        }
         const signedBy = found ? await signingVersion(found, dynamic.verify) : null;
         if (!found || signedBy === null) {
+          if (found && dynamic.wallet) await recordWalletTotpFailure(tx, actor, found);
           await record("INVALID", null);
           return { result: "INVALID" };
         }
