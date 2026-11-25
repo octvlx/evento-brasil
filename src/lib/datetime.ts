@@ -118,14 +118,14 @@ export function localDayRange(base: Date, timeZone: string, days = 0, span = 1):
   return { from, to: zonedLocalToUtc(`${endKey}T00:00`, timeZone) };
 }
 
-/** Próximo fim de semana (sexta 18h → segunda 0h, horário local). Se já for fim de semana, o atual. */
+/** Próximo fim de semana (sexta 0h → segunda 0h, horário local: sexta inteira conta). Se já for fim de semana, o atual. */
 export function weekendRange(now: Date, timeZone: string): { from: Date; to: Date } {
   const key = zonedDateKey(now, timeZone);
   const dow = new Date(`${key}T12:00:00Z`).getUTCDay(); // 0=dom … 6=sáb
   const toFriday = dow === 0 ? -2 : dow === 6 ? -1 : 5 - dow;
   const friday = localDayRange(now, timeZone, toFriday).from;
   const fridayKey = zonedDateKey(friday, timeZone);
-  const from = new Date(Math.max(now.getTime(), zonedLocalToUtc(`${fridayKey}T18:00`, timeZone).getTime()));
+  const from = new Date(Math.max(now.getTime(), zonedLocalToUtc(`${fridayKey}T00:00`, timeZone).getTime()));
   const to = localDayRange(friday, timeZone, 3).from;
   return { from, to };
 }
