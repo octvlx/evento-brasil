@@ -2,7 +2,7 @@
 // e o parser da Duoticket, só com amostras locais.
 import { describe, expect, it, vi } from "vitest";
 import { parseDuoticketEvent, parseDuoticketListing } from "@/server/external/adapters/duoticket";
-import { assertFetchableUrl, isBlockedAddress, safeFetchHtml } from "@/server/external/safe-fetch";
+import { assertFetchableUrl, isBlockedAddress, pinnedHttpsFetch, publicOnlyLookup, safeFetchHtml } from "@/server/external/safe-fetch";
 import { cleanText, htmlToLines } from "@/server/external/text";
 import { duoEventHtml, duoListingHtml } from "../support/external-fixtures";
 
@@ -14,7 +14,25 @@ describe("bloqueio de endereços internos", () => {
   it.each(["127.0.0.1", "10.0.0.5", "172.16.3.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"])("%s é bloqueado", (ip) => {
     expect(isBlockedAddress(ip)).toBe(true);
   });
-  it.each(["104.18.10.10", "8.8.8.8", "2606:4700::1"])("%s é público", (ip) => {
+  it.each([
+    "::ffff:7f00:1", // mapeado em hexadecimal (127.0.0.1)
+    "::127.0.0.1", // IPv4 compatível (obsoleto)
+    "64:ff9b::a9fe:a9fe", // NAT64 para 169.254.169.254
+    "64:ff9b::10.0.0.1",
+    "64:ff9b:1::1", // NAT64 de uso local
+    "2002:7f00:1::1", // 6to4 de 127.0.0.1
+    "2002:c0a8:101::1", // 6to4 de 192.168.1.1
+    "2001::1", // Teredo
+    "2001:db8::1", // documentação
+    "100::1", // descarte
+    "fec0::1", // site-local
+    "ff02::1",
+    "fe80::1%eth0",
+    "não-é-ip",
+  ])("%s é bloqueado (faixas IPv6 especiais)", (ip) => {
+    expect(isBlockedAddress(ip)).toBe(true);
+  });
+  it.each(["104.18.10.10", "8.8.8.8", "2606:4700::1", "64:ff9b::808:808", "2002:808:808::1", "2a03:2880:f10c:83:face:b00c:0:25de"])("%s é público", (ip) => {
     expect(isBlockedAddress(ip)).toBe(false);
   });
 
@@ -28,6 +46,38 @@ describe("bloqueio de endereços internos", () => {
     await expect(assertFetchableUrl("https://duoticket.com.br:8443/", opts)).rejects.toMatchObject({ kind: "blocked" });
     await expect(assertFetchableUrl("https://duoticket.com.br/", { allowedHosts: HOSTS, resolveHost: async () => ["10.0.0.7"] })).rejects.toMatchObject({ kind: "blocked" });
     await expect(assertFetchableUrl("https://duoticket.com.br/evento/1/x", opts)).resolves.toBeInstanceOf(URL);
+  });
+});
+
+describe("endereço conferido na conexão (rebinding de DNS)", () => {
+  type Answer = { address: string; family: number }[];
+  const lookupWith = (answer: Answer) =>
+    publicOnlyLookup((_host, _opts, cb) => cb(null, answer));
+  const call = (fn: ReturnType<typeof publicOnlyLookup>, all: boolean) =>
+    new Promise<{ err: NodeJS.ErrnoException | null; address: unknown }>((resolve) =>
+      fn("alvo.example", { all }, ((err: NodeJS.ErrnoException | null, address: unknown) => resolve({ err, address })) as never),
+    );
+
+  it("recusa na conexão quando o DNS passa a apontar para rede interna", async () => {
+    const r = await call(lookupWith([{ address: "169.254.169.254", family: 4 }]), false);
+    expect(r.err?.code).toBe("EBLOCKED");
+    const mixed = await call(lookupWith([{ address: "8.8.8.8", family: 4 }, { address: "::1", family: 6 }]), true);
+    expect(mixed.err?.code).toBe("EBLOCKED");
+  });
+
+  it("devolve o endereço público no formato que o socket pede", async () => {
+    expect(await call(lookupWith([{ address: "8.8.8.8", family: 4 }]), false)).toEqual({ err: null, address: "8.8.8.8" });
+    expect(await call(lookupWith([{ address: "8.8.8.8", family: 4 }]), true)).toEqual({ err: null, address: [{ address: "8.8.8.8", family: 4 }] });
+  });
+
+  it("checagem prévia enganada (DNS público) e conexão em localhost: bloqueado, sem conectar", async () => {
+    // Simula o rebinding: a checagem prévia vê um IP público; na conexão, "localhost" resolve para 127.0.0.1.
+    await expect(
+      safeFetchHtml("https://localhost/", { allowedHosts: ["localhost"], resolveHost: async () => ["104.18.10.10"], retries: 0 }),
+    ).rejects.toMatchObject({ kind: "blocked" });
+    await expect(
+      pinnedHttpsFetch(new URL("https://localhost/"), { method: "GET", redirect: "manual", headers: {}, signal: AbortSignal.timeout(5_000), cache: "no-store" }),
+    ).rejects.toMatchObject({ code: "EBLOCKED" });
   });
 });
 

@@ -1,14 +1,17 @@
 import "server-only";
+import dns from "node:dns";
 import { lookup } from "node:dns/promises";
+import https from "node:https";
 import net from "node:net";
+import { Readable } from "node:stream";
 
 // Busca HTTP para coleta de fontes externas. Tudo que vem de fora é não confiável:
 // - só HTTPS e só para os hosts autorizados da fonte (inclusive em cada redirecionamento);
 // - o host precisa resolver para endereços públicos (bloqueia localhost, redes privadas,
 //   link-local, metadados de nuvem etc.);
 // - timeout por requisição, tamanho máximo da resposta e tentativas com espera progressiva.
-// Limitação conhecida: o DNS é conferido antes da conexão (sem fixar o IP), então um
-// rebinding entre a checagem e a conexão não é impedido aqui; a lista de hosts fecha o risco.
+// - o endereço é conferido de novo NA CONEXÃO (lookup próprio do https, pinnedHttpsFetch):
+//   um rebinding de DNS entre a checagem prévia e a conexão não alcança a rede interna.
 
 export class ExternalFetchError extends Error {
   constructor(
@@ -62,14 +65,87 @@ export function isBlockedAddress(ip: string): boolean {
     );
   }
   if (v === 6) {
-    const s = ip.toLowerCase();
-    if (s === "::" || s === "::1") return true;
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s);
-    if (mapped) return isBlockedAddress(mapped[1]);
-    return /^(fc|fd|fe8|fe9|fea|feb|ff)/.test(s);
+    const g = ipv6Groups(ip);
+    if (!g) return true;
+    const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    const zeros = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+    // IPv4 embutido: mapeado (::ffff:a.b.c.d, também em hexadecimal) e NAT64 (64:ff9b::/96).
+    if (zeros(0, 5) && g[5] === 0xffff) return isBlockedAddress(v4(g[6], g[7]));
+    if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return isBlockedAddress(v4(g[6], g[7]));
+    // 6to4 (2002::/16) leva o IPv4 nos bits 16–48.
+    if (g[0] === 0x2002) return isBlockedAddress(v4(g[1], g[2]));
+    // Teredo (2001::/32) e documentação (2001:db8::/32).
+    if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true;
+    // Só unicast global (2000::/3) é público: ::, ::1, ::a.b.c.d, 100::/64, fc00::/7,
+    // fe80::/10, ff00::/8 e o resto ficam bloqueados.
+    return (g[0] & 0xe000) !== 0x2000;
   }
   return true;
 }
+
+/** Os 8 grupos de 16 bits de um IPv6 (aceita "::", IPv4 no fim e zona %eth0); null se inválido. */
+function ipv6Groups(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/%.*$/, "");
+  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (dotted) {
+    const [a, b, c, d] = dotted.slice(1).map(Number);
+    if ([a, b, c, d].some((x) => x > 255)) return null;
+    s = s.slice(0, dotted.index) + ((a << 8) | b).toString(16) + ":" + ((c << 8) | d).toString(16);
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part ? part.split(":").map((h) => (/^[0-9a-f]{1,4}$/.test(h) ? parseInt(h, 16) : NaN)) : []);
+  const head = parse(halves[0]);
+  const tail = halves.length === 2 ? parse(halves[1]) : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  const groups = [...head, ...Array<number>(halves.length === 2 ? missing : 0).fill(0), ...tail];
+  return groups.every((x) => Number.isInteger(x)) ? groups : null;
+}
+
+type LookupAll = (
+  hostname: string,
+  options: dns.LookupAllOptions,
+  callback: (err: NodeJS.ErrnoException | null, addresses: dns.LookupAddress[]) => void,
+) => void;
+
+/**
+ * `lookup` para o https que só conecta em endereço público: a conferência acontece no
+ * momento da conexão, com o mesmo resultado de DNS que o socket usa (fecha o rebinding).
+ */
+export function publicOnlyLookup(resolve: LookupAll = dns.lookup as LookupAll): net.LookupFunction {
+  return (hostname, options, callback) => {
+    resolve(hostname, { family: options.family, hints: options.hints, all: true, verbatim: true }, (err, addresses) => {
+      if (err) return callback(err, "", 4);
+      if (!addresses.length || addresses.some((a) => isBlockedAddress(a.address))) {
+        const blocked: NodeJS.ErrnoException = Object.assign(new Error(`O host ${hostname} aponta para endereço não permitido.`), { code: "EBLOCKED" });
+        return callback(blocked, "", 4);
+      }
+      // Com `all` (seleção automática de família do Node) o socket espera a lista inteira.
+      if (options.all) return (callback as unknown as (e: null, list: dns.LookupAddress[]) => void)(null, addresses);
+      callback(null, addresses[0].address, addresses[0].family);
+    });
+  };
+}
+
+type FetchLike = (url: URL, init: { method: "GET"; redirect: "manual"; headers: Record<string, string>; signal: AbortSignal; cache: "no-store" }) => Promise<Response>;
+
+/** GET por https com o endereço conferido na conexão. Sem descompressão: pede `identity`. */
+export const pinnedHttpsFetch: FetchLike = (url, init) =>
+  new Promise((resolve, reject) => {
+    const req = https.request(url, { method: "GET", headers: { ...init.headers, "accept-encoding": "identity" }, lookup: publicOnlyLookup(), signal: init.signal }, (res) => {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(res.headers)) {
+        for (const one of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(key, one);
+      }
+      const status = res.statusCode ?? 502;
+      const nullBody = status === 204 || status === 205 || status === 304;
+      if (nullBody) res.resume();
+      resolve(new Response(nullBody ? null : (Readable.toWeb(res) as ReadableStream<Uint8Array>), { status, headers }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
 
 async function defaultResolve(host: string): Promise<string[]> {
   const records = await lookup(host, { all: true, verbatim: true });
@@ -131,7 +207,7 @@ export interface FetchedResource {
  */
 export async function safeFetchResource(raw: string, options: SafeFetchOptions & { accept: RegExp }): Promise<FetchedResource> {
   const o = { ...defaults, ...options };
-  const doFetch = o.fetchImpl ?? fetch;
+  const doFetch: FetchLike = o.fetchImpl ?? pinnedHttpsFetch;
   const sleep = o.sleep ?? sleepDefault;
   let lastError: ExternalFetchError | null = null;
 
@@ -151,6 +227,7 @@ export async function safeFetchResource(raw: string, options: SafeFetchOptions &
             cache: "no-store",
           });
         } catch (error) {
+          if ((error as NodeJS.ErrnoException | null)?.code === "EBLOCKED") throw new ExternalFetchError((error as Error).message, "blocked");
           const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
           throw new ExternalFetchError(timeout ? "Tempo esgotado." : "Falha de rede.", timeout ? "timeout" : "network");
         }
