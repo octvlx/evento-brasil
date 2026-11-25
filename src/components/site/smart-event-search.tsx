@@ -7,6 +7,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, Loader2, MapPin, Search, Sparkles, Tag, Ticket, X } from "lucide-react";
+import { CITY_COOKIE, CITY_SOURCE_COOKIE } from "@/lib/city-preference";
 import { SEARCH_MAX_LENGTH } from "@/lib/search-query";
 import { cn } from "@/lib/utils";
 
@@ -109,7 +110,9 @@ function SearchBox({ variant, label, initialQuery, initialCity, placeholder = SE
     if (usingChoice && chosen.citySlug) {
       params.set("cidade", chosen.citySlug);
       // Mesma preferência que o antigo seletor guardava (seção "Perto de você").
-      document.cookie = `eb_city=${encodeURIComponent(chosen.citySlug)}; path=/; max-age=31536000; samesite=lax`;
+      document.cookie = `${CITY_COOKIE}=${encodeURIComponent(chosen.citySlug)}; path=/; max-age=31536000; samesite=lax`;
+      // Escolha manual substitui a cidade que veio da localização.
+      document.cookie = `${CITY_SOURCE_COOKIE}=; path=/; max-age=0; samesite=lax`;
     }
     setOpen(false);
     onNavigate?.();

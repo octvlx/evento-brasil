@@ -11,6 +11,8 @@ import { CategoryChips } from "@/components/site/category-chips";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
 import { PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
+import { CITY_COOKIE, CITY_SOURCE_COOKIE } from "@/lib/city-preference";
+import { UseLocationButton } from "@/components/site/use-location-button";
 import { jsonLdHtml, siteJsonLd } from "@/lib/structured-data";
 import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
@@ -132,13 +134,14 @@ export default function HomePage() {
   );
 }
 
-function Section({ title, subtitle, href, children }: { title: string; subtitle?: string; href?: string; children: React.ReactNode }) {
+function Section({ title, subtitle, href, action, children }: { title: string; subtitle?: string; href?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="mx-auto mt-14 max-w-7xl px-4 sm:px-6">
       <div className="mb-5 flex items-end justify-between gap-4">
         <div>
           <h2 className="font-display text-xl font-extrabold sm:text-2xl">{title}</h2>
           {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
+          {action}
         </div>
         {href && (
           <Link href={href} className="flex shrink-0 items-center gap-1 text-sm font-semibold text-secondary hover:underline">
@@ -185,16 +188,25 @@ async function Featured() {
 }
 
 async function NearbySection() {
-  const slug = (await cookies()).get("eb_city")?.value;
+  const jar = await cookies();
+  const slug = jar.get(CITY_COOKIE)?.value;
+  const fromLocation = jar.get(CITY_SOURCE_COOKIE)?.value === "localizacao";
   await connection();
   const city = slug ? await getPublicCity(db, slug) : null;
   const target = city ?? (await getPublicCity(db, "sao-paulo-sp"));
-  if (!target) return null;
+  const locate = <UseLocationButton className="mt-3" />;
+  if (!target)
+    return (
+      <Section title="Perto de você" subtitle="Use sua localização ou escolha a cidade na busca" action={locate}>
+        {null}
+      </Section>
+    );
   const events = await eventsInCity(db, target.slug, 4);
   // Completa com eventos externos publicados da cidade (cidade só com externos não aparece vazia).
   const external = events.length < 4 ? await listPublicExternalEvents(db, { cityId: target.id, take: 4 - events.length }) : [];
+  const subtitle = !city ? "Use sua localização ou escolha a cidade na busca" : fromLocation ? "Com base na sua localização" : "Com base na cidade escolhida";
   return (
-    <Section title={`Perto de você em ${target.name}`} subtitle={city ? "Com base na cidade escolhida" : "Escolha sua cidade no topo para personalizar"} href={`/cidades/${target.slug}`}>
+    <Section title={`Perto de você em ${target.name}`} subtitle={subtitle} href={`/cidades/${target.slug}`} action={locate}>
       {external.length ? (
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {events.map((e) => (
