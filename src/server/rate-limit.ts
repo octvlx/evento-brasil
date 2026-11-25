@@ -1,6 +1,6 @@
 import "server-only";
 import { hashToken } from "./crypto";
-import { db as defaultDb, type Db } from "./db";
+import { db as defaultDb, type Db, type Tx } from "./db";
 import { AppError } from "./errors";
 
 // Limitador com janela fixa guardado no Postgres (tabela RateLimitBucket), para
@@ -13,7 +13,7 @@ const limited = () => new AppError("RATE_LIMITED", "Muitas tentativas. Aguarde a
  * Soma 1 ao contador da chave e devolve o total da janela atual. Um único
  * INSERT ... ON CONFLICT: chamadas simultâneas nunca se perdem nem se duplicam.
  */
-async function hit(client: Db, key: string, windowMs: number): Promise<number> {
+async function hit(client: Db | Tx, key: string, windowMs: number): Promise<number> {
   const now = new Date();
   const resetAt = new Date(now.getTime() + windowMs);
   const rows = await client.$queryRaw<{ count: number }[]>`
@@ -24,6 +24,14 @@ async function hit(client: Db, key: string, windowMs: number): Promise<number> {
       "resetAt" = CASE WHEN "RateLimitBucket"."resetAt" <= ${now} THEN EXCLUDED."resetAt" ELSE "RateLimitBucket"."resetAt" END
     RETURNING "count"`;
   return Number(rows[0].count);
+}
+
+/**
+ * Soma 1 e devolve o total da janela, sem recusar: para quem decide o bloqueio por conta
+ * própria, inclusive dentro de uma transação (o contador entra no mesmo commit).
+ */
+export function countAttempt(client: Db | Tx, key: string, windowMs: number): Promise<number> {
+  return hit(client, key, windowMs);
 }
 
 /** Conta toda chamada (ex.: cadastro, leituras de check-in). */
@@ -40,7 +48,7 @@ export const failureLimiter = {
   async fail(key: string, windowMs: number, client: Db = defaultDb) {
     await hit(client, key, windowMs);
   },
-  async reset(key: string, client: Db = defaultDb) {
+  async reset(key: string, client: Db | Tx = defaultDb) {
     await client.rateLimitBucket.deleteMany({ where: { key: hashToken(key) } });
   },
 };

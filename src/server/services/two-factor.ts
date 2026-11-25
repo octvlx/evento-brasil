@@ -14,6 +14,7 @@ import { twoFactorResetEmail } from "../email/templates";
 import { authAppUrl } from "./email-verification";
 import { SESSION_TTL_MS } from "../auth/sessions";
 import { base32Encode, generateTotpSecret, otpauthUri, verifyTotp } from "../auth/totp";
+import { countAttempt, failureLimiter } from "../rate-limit";
 
 // Verificação em duas etapas (TOTP) — obrigatória para administradores e donos
 // de organização quando mfaEnforced(). Regras:
@@ -26,6 +27,14 @@ import { base32Encode, generateTotpSecret, otpauthUri, verifyTotp } from "../aut
 
 export const RECOVERY_CODE_COUNT = 10;
 export const MAX_MFA_ATTEMPTS = 5;
+/**
+ * Teto por usuário, somando todas as sessões pendentes: sem ele, quem tem a senha
+ * repetiria login → 4 códigos → novo login, de vários IPs, sem limite. Toda tentativa
+ * conta (inclusive a certa) e o acerto zera; passado o teto, nenhum código é conferido.
+ */
+export const MAX_MFA_USER_ATTEMPTS = 10;
+export const MFA_USER_WINDOW_MS = 60 * 60_000;
+const mfaUserKey = (userId: string) => `mfa-user:${userId}`;
 /** Tempo para escanear o QR e confirmar o primeiro código. */
 export const ENROLLMENT_TTL_MS = 15 * 60_000;
 
@@ -133,6 +142,14 @@ export async function completeMfaLogin(db: Db, sessionToken: string, code: strin
       return { userId: session.userId, usedRecoveryCode: false };
     }
 
+    const userAttempts = await countAttempt(tx, mfaUserKey(session.userId), MFA_USER_WINDOW_MS);
+    if (userAttempts > MAX_MFA_USER_ATTEMPTS) {
+      await tx.session.deleteMany({ where: { id: session.id } });
+      if (userAttempts === MAX_MFA_USER_ATTEMPTS + 1)
+        await audit(tx, { actorUserId: session.userId, action: "mfa.user_locked", entityType: "User", entityId: session.userId, metadata: { attempts: MAX_MFA_USER_ATTEMPTS } });
+      return { error: new AppError("RATE_LIMITED", "Muitas tentativas com código incorreto nesta conta. Entre novamente com e-mail e senha daqui a 1 hora.") };
+    }
+
     let accepted = false;
     let usedRecoveryCode = false;
     const step = verifyTotp(decryptPII(session.user.totpSecretEncrypted), code, now, session.user.totpLastStep);
@@ -163,6 +180,7 @@ export async function completeMfaLogin(db: Db, sessionToken: string, code: strin
     }
 
     await tx.session.update({ where: { id: session.id }, data: { mfaPending: false, mfaAttempts: 0, expiresAt: new Date(now.getTime() + SESSION_TTL_MS) } });
+    await failureLimiter.reset(mfaUserKey(session.userId), tx);
     if (usedRecoveryCode) {
       const remaining = await tx.totpRecoveryCode.count({ where: { userId: session.userId, usedAt: null } });
       await audit(tx, { actorUserId: session.userId, action: "mfa.recovery_code_used", entityType: "User", entityId: session.userId, metadata: { remaining } });
