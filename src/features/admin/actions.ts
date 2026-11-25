@@ -20,6 +20,7 @@ import { adminDeleteAccount } from "@/server/services/account-deletion";
 import { adminDeleteOrganization, rejectOrganizationDeletionRequest } from "@/server/services/organization-deletion";
 import { rateLimit } from "@/server/rate-limit";
 import { decideEventReports } from "@/server/services/event-reports";
+import { setReviewHidden } from "@/server/services/reviews";
 import {
   adminAutoCoverExternalEvent,
   adminFeatureExternalEvents,
@@ -55,6 +56,7 @@ export const suspendOrganizationAction = async (id: string, suspended: boolean, 
 export const autoPublishAction = async (id: string, value: boolean) => run((a) => setAutoPublish(db, a, id, value));
 export const moderateEventAction = async (id: string, decision: "APPROVE" | "REJECT", note?: string) => run((a) => moderateEvent(db, a, id, decision, note));
 export const featureEventAction = async (id: string, featured: boolean) => run((a) => setEventFeatured(db, a, id, featured));
+export const setReviewHiddenAction = async (id: string, hidden: boolean, reason?: string) => run((a) => setReviewHidden(db, a, String(id), hidden === true, reason ? String(reason) : undefined));
 /** "me" = o próprio admin; null = liberar; outro id = atribuir a esse admin. */
 export const assignCancellationAction = async (id: string, assignee: string | null) =>
   run((a) => assignCancellationRequest(db, a, id, assignee === "me" ? a.id : assignee ? String(assignee) : null));

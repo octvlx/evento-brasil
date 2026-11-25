@@ -93,6 +93,8 @@ model User {
 
   organizationDeletionsRequested OrganizationDeletionRequest[] @relation("OrgDeletionRequester")
   organizationDeletionsDecided   OrganizationDeletionRequest[] @relation("OrgDeletionDecider")
+  eventReviews                   EventReview[]                 @relation("ReviewAuthor")
+  eventReviewsHidden             EventReview[]                 @relation("ReviewHider")
 }
 
 // Endereço salvo somente quando o comprador informa no checkout.
@@ -258,6 +260,7 @@ model Organization {
   cancellations      CancellationRequest[]
   termsAcceptances   TermsAcceptance[]
   deletionRequests   OrganizationDeletionRequest[]
+  reviews            EventReview[]
 
   @@index([status])
 }
@@ -521,6 +524,8 @@ model Event {
   // Marcador do cron: a releaseAt cuja liberação da cota já foi auditada. Se a data do
   // evento muda, a releaseAt muda e o cron audita de novo. Nunca é a garantia da regra.
   halfPriceReleaseAuditedFor DateTime?       @db.Timestamptz(3)
+  // Marcador do cron: quando o convite para avaliar foi enfileirado (uma vez por evento).
+  reviewInviteSentAt         DateTime?       @db.Timestamptz(3)
   // Limite de ingressos por conta neste evento (R4, Decreto 13.108/2026). Nulo = sem
   // limite; CHECK > 0. Contagem e exceções ficam no serviço (L4b).
   maxTicketsPerAccount       Int?
@@ -572,6 +577,7 @@ model Event {
   transfers        TicketTransfer[]
   changes          EventChange[]
   cancellations    CancellationRequest[]
+  reviews          EventReview[]
 
   // Alvo das FKs compostas de Coupon e TrackingLink (evento da mesma organização).
   @@unique([id, organizationId])
@@ -1839,4 +1845,33 @@ model EventReport {
   @@index([status, createdAt])
   @@index([eventId, status])
   @@index([reporterId, createdAt])
+}
+
+/// Avaliação pós-evento: nota de 1 a 5 e comentário opcional de quem entrou no evento
+/// (ingresso com check-in), até 30 dias depois do fim. Uma por pessoa e evento; editável
+/// no prazo. O admin pode ocultar (auditado). Apagada na exclusão da conta.
+/// CHECKs na migração: nota 1–5, comentário até 1000 caracteres, ocultação completa.
+model EventReview {
+  id             String    @id @default(cuid())
+  eventId        String
+  organizationId String
+  userId         String
+  rating         Int
+  comment        String?
+  hiddenAt       DateTime? @db.Timestamptz(3)
+  hiddenById     String?
+  hiddenReason   String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation("ReviewAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  hiddenBy     User?        @relation("ReviewHider", fields: [hiddenById], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, userId])
+  @@index([organizationId, createdAt])
+  @@index([eventId, createdAt])
+  @@index([userId])
+  @@index([hiddenById])
 }

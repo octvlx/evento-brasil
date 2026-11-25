@@ -7,6 +7,9 @@ import { EventGrid, EventGridSkeleton } from "@/components/site/event-card";
 import { db } from "@/server/db";
 import { getPublicOrganizer, pastOrganizerEvents } from "@/server/services/catalog";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
+import { Stars } from "@/features/reviews/review-form";
+import { organizerReviewSummary } from "@/server/services/reviews";
+import { formatDateShort } from "@/lib/datetime";
 
 export async function generateMetadata({ params }: PageProps<"/organizadores/[slug]">): Promise<Metadata> {
   const { slug } = await params;
@@ -36,7 +39,7 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
   const data = await getPublicOrganizer(db, slug);
   if (!data) notFound();
   const { org, events } = data;
-  const past = await pastOrganizerEvents(db, org.id);
+  const [past, reviews] = await Promise.all([pastOrganizerEvents(db, org.id), organizerReviewSummary(db, org.id)]);
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       {org.coverUrl && (
@@ -59,6 +62,15 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
           {org.city && (
             <p className="text-sm text-muted-foreground">
               {org.city.name} – {org.city.state}
+            </p>
+          )}
+          {reviews.count > 0 && reviews.average != null && (
+            <p className="mt-1 flex items-center gap-2 text-sm" data-testid="organizer-rating">
+              <Stars value={reviews.average} />
+              <span className="font-semibold">{reviews.average.toLocaleString("pt-BR", { minimumFractionDigits: 1 })}</span>
+              <a href="#avaliacoes" className="text-muted-foreground hover:underline">
+                ({reviews.count} {reviews.count === 1 ? "avaliação" : "avaliações"} de quem foi)
+              </a>
             </p>
           )}
           {org.description && <p className="mt-2 max-w-3xl text-sm">{org.description}</p>}
@@ -84,6 +96,28 @@ async function Content({ params }: { params: Promise<{ slug: string }> }) {
             Eventos anteriores
           </h2>
           <EventGrid events={past} emptyText="" />
+        </section>
+      )}
+      {reviews.recent.length > 0 && (
+        <section id="avaliacoes" aria-labelledby="avaliacoes-titulo" className="mt-12 scroll-mt-24">
+          <h2 id="avaliacoes-titulo" className="mb-1 font-display text-2xl font-extrabold">
+            Avaliações
+          </h2>
+          <p className="mb-5 text-sm text-muted-foreground">Só quem entrou no evento pode avaliar.</p>
+          <ul className="grid gap-4 md:grid-cols-2">
+            {reviews.recent.map((r) => (
+              <li key={r.id} className="rounded-2xl border border-border bg-card p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Stars value={r.rating} />
+                  <span className="text-xs text-muted-foreground">{formatDateShort(r.createdAt)}</span>
+                </div>
+                <p className="mt-3 whitespace-pre-line text-sm">{r.comment}</p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {r.author} · <a href={`/eventos/${r.event.slug}`} className="hover:underline">{r.event.title}</a>
+                </p>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </div>

@@ -7,6 +7,7 @@ vi.mock("@/server/payments", () => ({ getPaymentAdapter: () => ({}) }));
 vi.mock("@/server/services/events", () => ({ completeEndedEvents: mocks.complete }));
 vi.mock("@/server/services/orders", () => ({ expireStaleOrders: async () => 0 }));
 vi.mock("@/server/services/half-price", () => ({ recordHalfPriceReleases: async () => 0 }));
+vi.mock("@/server/services/reviews", () => ({ sendReviewInvites: async () => ({ events: 0, queued: 0 }) }));
 vi.mock("@/server/services/transfers", () => ({ expireTicketTransfers: async () => 0 }));
 vi.mock("@/server/services/reconciliation", () => ({ reconcilePayments: mocks.reconcile, checkFinancialInvariants: async () => [] }));
 vi.mock("@/server/services/retention-purge", () => ({ runRetentionPurgeIfDue: async () => null }));

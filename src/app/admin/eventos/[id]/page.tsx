@@ -14,6 +14,8 @@ import { formatDateTimeShort, formatEventDateTime } from "@/lib/datetime";
 import { effectiveEventStatus } from "@/lib/event-lifecycle";
 import { EVENT_STATUS, ORDER_STATUS, toneToBadge } from "@/lib/labels";
 import { formatBRL } from "@/lib/money";
+import { AdminReviewHide } from "@/features/reviews/admin-review-hide";
+import { adminEventReviews } from "@/server/services/reviews";
 
 export const metadata: Metadata = { title: "Evento — admin", robots: { index: false } };
 
@@ -42,9 +44,10 @@ async function Content({ params, searchParams }: { params: Promise<{ id: string 
   });
   if (!event) notFound();
   // Sem valores: a moderação (events:moderate) não tem acesso ao financeiro; só contagens.
-  const [history, orderStats] = await Promise.all([
+  const [history, orderStats, reviews] = await Promise.all([
     entityHistory(db, admin, "Event", event.id, parsePage(sp.historico)),
     db.order.groupBy({ by: ["status"], where: { eventId: event.id }, _count: { _all: true } }),
+    adminEventReviews(db, admin, event.id),
   ]);
   const status = effectiveEventStatus(event);
   const st = EVENT_STATUS[status];
@@ -107,6 +110,29 @@ async function Content({ params, searchParams }: { params: Promise<{ id: string 
           </ul>
         </section>
       </div>
+
+      {reviews.length > 0 && (
+        <section aria-labelledby="reviews-title" className="mb-6">
+          <h2 id="reviews-title" className="mb-2 text-sm font-bold">
+            Avaliações ({reviews.length})
+          </h2>
+          <ul className="divide-y divide-border rounded-2xl border border-border bg-card text-sm">
+            {reviews.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-start justify-between gap-3 p-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">
+                    {r.rating}/5 · {r.user.name} <span className="text-xs font-normal text-muted-foreground">{formatDateTimeShort(r.createdAt)}</span>{" "}
+                    {r.hiddenAt && <Badge variant="danger">Oculta</Badge>}
+                  </p>
+                  {r.comment && <p className="mt-1 whitespace-pre-line text-muted-foreground">{r.comment}</p>}
+                  {r.hiddenAt && <p className="mt-1 text-xs text-destructive">Motivo: {r.hiddenReason}</p>}
+                </div>
+                {r.comment && <AdminReviewHide id={r.id} hidden={!!r.hiddenAt} />}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <HistoryTable history={history} path={`/admin/eventos/${event.id}`} auditHref={adminHas(admin.adminRoles, "audit:read") ? auditLinkFor("Event", event.id) : undefined} />
     </>

@@ -17,6 +17,8 @@ import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
 import { getPaymentAdapter } from "@/server/payments";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
+import { ReviewForm } from "@/features/reviews/review-form";
+import { REVIEW_COMMENT_MAX, reviewEligibility } from "@/server/services/reviews";
 import { getPublicEvent, relatedEvents, trackingLinkCouponCode } from "@/server/services/catalog";
 import { EventGrid } from "@/components/site/event-card";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
@@ -77,6 +79,8 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   const attribution = decodeAttribution((await cookies()).get(ATTR_COOKIE)?.value);
   const linkCoupon = attribution?.trackingLinkId ? await trackingLinkCouponCode(db, attribution.trackingLinkId, event.id) : null;
   const now = new Date();
+  // Avaliação: só depois do fim, para quem entrou no evento (check-in), por 30 dias.
+  const reviewCheck = ended && user ? await reviewEligibility(db, user.id, event.id, now) : null;
   const city = event.venue?.city ?? event.city;
   const tz = event.timezone;
   const base = process.env.APP_URL ?? "http://localhost:3000";
@@ -354,7 +358,16 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
                   .
                 </p>
               </div>
-            ) : (
+            ) : null}
+            {ended && reviewCheck?.eligible && (
+              <section id="avaliar" aria-labelledby="avaliar-titulo" className="mt-4 scroll-mt-24 rounded-xl border border-border p-4">
+                <h3 id="avaliar-titulo" className="mb-2 font-display text-base font-bold">
+                  Como foi o evento?
+                </h3>
+                <ReviewForm eventId={event.id} existing={reviewCheck.existing} maxLength={REVIEW_COMMENT_MAX} />
+              </section>
+            )}
+            {ended ? null : (
             <TicketSelector
               eventId={event.id}
               eventSlug={event.slug}
