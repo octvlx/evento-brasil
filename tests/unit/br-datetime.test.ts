@@ -88,7 +88,7 @@ describe("fusos horários", () => {
     expect(today.from.toISOString()).toBe("2026-10-28T03:00:00.000Z");
     expect(today.to.toISOString()).toBe("2026-10-29T03:00:00.000Z");
     const wk = weekendRange(now, "America/Sao_Paulo");
-    expect(wk.from.toISOString()).toBe("2026-10-30T21:00:00.000Z"); // sexta 18h
+    expect(wk.from.toISOString()).toBe("2026-10-30T03:00:00.000Z"); // sexta 0h (sexta inteira)
     expect(wk.to.toISOString()).toBe("2026-11-02T03:00:00.000Z"); // segunda 0h
   });
 });
