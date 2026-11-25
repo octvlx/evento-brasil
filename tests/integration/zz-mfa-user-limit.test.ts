@@ -92,3 +92,39 @@ describe("teto de tentativas de 2FA por usuário", () => {
     await expect(completeMfaLogin(db, s.token, codeAt(other.secret, when), when)).resolves.toMatchObject({ userId: other.user.id });
   });
 });
+
+describe("aviso ao titular quando o 2FA bloqueia", () => {
+  const notices = () => db.emailOutbox.findMany({ where: { template: "MFA_LOGIN_LOCKED" } });
+
+  it("um e-mail na falha que esgota o teto; nenhum antes e nenhum a mais depois", async () => {
+    const { user } = await enrolled();
+    await wrongCodes(user.id, MAX_MFA_USER_ATTEMPTS - 1);
+    expect(await notices()).toHaveLength(0);
+    await wrongCodes(user.id, 1);
+    const [mail] = await notices();
+    expect(mail.recipient).toBe(user.email);
+    // Bloqueado: a tentativa seguinte é recusada sem conferir código e sem novo aviso.
+    const s = await createSession(db, user.id);
+    await expect(completeMfaLogin(db, s.token, "000000", new Date())).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    expect(await notices()).toHaveLength(1);
+  });
+
+  it("o acerto antes do teto não avisa", async () => {
+    const { user, secret } = await enrolled();
+    await wrongCodes(user.id, MAX_MFA_USER_ATTEMPTS - 1);
+    const when = new Date(T0.getTime() + 60_000);
+    vi.setSystemTime(when);
+    const s = await createSession(db, user.id);
+    await completeMfaLogin(db, s.token, codeAt(secret, when), when);
+    expect(await notices()).toHaveLength(0);
+  });
+
+  it("o texto pede para trocar a senha (ou a do Google) e não leva código", async () => {
+    const { accountLockedEmail } = await import("@/server/email/templates");
+    const own = accountLockedEmail("two_factor", "https://app.test/esqueci-minha-senha", { google: false });
+    expect(own.text).toContain("troque-a agora pelo link abaixo");
+    expect(own.text).toContain("https://app.test/esqueci-minha-senha");
+    const google = accountLockedEmail("two_factor", "https://myaccount.google.com/security", { google: true });
+    expect(google.text).toContain("senha do Google");
+  });
+});

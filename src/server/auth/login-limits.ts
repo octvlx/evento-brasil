@@ -1,7 +1,10 @@
 import "server-only";
 import { db as defaultDb, type Db } from "../db";
 import { AppError } from "../errors";
-import { failureLimiter } from "../rate-limit";
+import { countAttempt, failureLimiter } from "../rate-limit";
+import { enqueueEmail } from "../email/outbox";
+import { accountLockedEmail } from "../email/templates";
+import { authAppUrl } from "../services/email-verification";
 
 // Limites de falhas no login com senha. Só falhas contam (failureLimiter). Três chaves:
 // - IP + e-mail: o limite curto de sempre (digitação errada, robô simples);
@@ -44,7 +47,9 @@ export async function assertLoginAllowed(ip: string | null, email: string, clien
 export async function recordLoginFailure(ip: string | null, email: string, client: Db = defaultDb) {
   const k = keys(ip, email);
   await failureLimiter.fail(k.ipEmail, LOGIN_LIMITS.ipEmail.windowMs, client);
-  await failureLimiter.fail(k.account, LOGIN_LIMITS.account.windowMs, client);
+  const accountFailures = await countAttempt(client, k.account, LOGIN_LIMITS.account.windowMs);
+  // Exatamente na falha que bloqueia: uma vez por janela (o contador é atômico).
+  if (accountFailures === LOGIN_LIMITS.account.max) await notifyAccountLocked(client, email);
   if (k.ip) await failureLimiter.fail(k.ip, LOGIN_LIMITS.ip.windowMs, client);
 }
 
@@ -52,6 +57,19 @@ export async function recordLoginSuccess(ip: string | null, email: string, clien
   const k = keys(ip, email);
   await failureLimiter.reset(k.ipEmail, client);
   await failureLimiter.reset(k.account, client);
+}
+
+/** Avisa o titular (conta com senha, ativa). Para e-mail sem conta nada acontece. */
+async function notifyAccountLocked(client: Db, email: string) {
+  const user = await client.user.findUnique({ where: { email: normalize(email) }, select: { id: true, email: true, status: true, googleSubject: true } });
+  // Conta só do Google não entra com senha (o hash é aleatório): o aviso de senha não se aplica.
+  if (!user || user.status !== "ACTIVE" || user.googleSubject) return;
+  await enqueueEmail(client, {
+    dedupeKey: `login-locked:${user.id}:${Date.now()}`,
+    template: "ACCOUNT_LOGIN_LOCKED",
+    recipient: user.email,
+    message: accountLockedEmail("password", new URL("/esqueci-minha-senha", authAppUrl()).toString(), { google: false }),
+  });
 }
 
 /** Senha redefinida pelo link do e-mail: o titular provou a posse, a conta volta a aceitar login. */

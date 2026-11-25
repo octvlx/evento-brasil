@@ -149,3 +149,35 @@ export function passwordChangedEmail(kind: "changed" | "reset", resetUrl: string
     text: [...lines, "Não fui eu: " + resetUrl].join("\n"),
   };
 }
+
+/**
+ * Aviso ao titular de que a conta bloqueou novas tentativas: muitas senhas erradas
+ * (`password`) ou muitos códigos de verificação errados depois da senha certa
+ * (`two_factor`, sinal de senha vazada). Nunca leva senha, código, IP ou token.
+ */
+export function accountLockedEmail(reason: "password" | "two_factor", actionUrl: string, opts: { google: boolean }) {
+  const lines =
+    reason === "password"
+      ? [
+          "Olá!",
+          `Houve muitas tentativas de entrar na sua conta ${BRAND.name} com senha incorreta, e novas tentativas ficam bloqueadas por até 1 hora.`,
+          "Se foi você, aguarde ou redefina a senha pelo link abaixo, que libera o acesso na hora.",
+          "Se não foi você, sua conta continua protegida. Use uma senha forte que você não usa em outros sites e ative a verificação em duas etapas em Minha conta › Segurança.",
+          `${BRAND.signature}.`,
+        ]
+      : [
+          "Olá!",
+          `Alguém entrou com a senha certa da sua conta ${BRAND.name}, mas errou o código de verificação em duas etapas várias vezes. Novas tentativas ficam bloqueadas por até 1 hora.`,
+          opts.google
+            ? "Se não foi você, sua senha do Google pode estar com outra pessoa: troque-a agora na sua Conta do Google."
+            : "Se não foi você, sua senha provavelmente está com outra pessoa: troque-a agora pelo link abaixo. A verificação em duas etapas impediu o acesso.",
+          `${BRAND.signature}.`,
+        ];
+  const title = reason === "password" ? "Tentativas de acesso bloqueadas" : "Código de verificação errado várias vezes";
+  const label = reason === "password" ? "Redefinir senha" : opts.google ? "Abrir minha conta" : "Trocar minha senha";
+  return {
+    subject: `${BRAND.name} — ${title}`,
+    html: emailLayout(title, lines.map((line) => "<p>" + escapeHtml(line) + "</p>").join(""), { label, url: actionUrl }),
+    text: [...lines, label + ": " + actionUrl].join("\n"),
+  };
+}

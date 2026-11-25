@@ -10,7 +10,7 @@ import { verifyPassword } from "../auth/password";
 import { MFA_SETUP_PATH, mfaEnforced } from "../auth/mfa-policy";
 import { type Actor, assertAdminPermission, assertCanManageUser } from "../auth/permissions";
 import { enqueueEmail } from "../email/outbox";
-import { twoFactorResetEmail } from "../email/templates";
+import { accountLockedEmail, twoFactorResetEmail } from "../email/templates";
 import { authAppUrl } from "./email-verification";
 import { SESSION_TTL_MS } from "../auth/sessions";
 import { base32Encode, generateTotpSecret, otpauthUri, verifyTotp } from "../auth/totp";
@@ -132,7 +132,7 @@ export async function completeMfaLogin(db: Db, sessionToken: string, code: strin
     await tx.$queryRaw`SELECT id FROM "Session" WHERE "tokenHash" = ${hashToken(sessionToken)} FOR UPDATE`;
     const session = await tx.session.findUnique({
       where: { tokenHash: hashToken(sessionToken) },
-      select: { id: true, userId: true, mfaPending: true, mfaAttempts: true, expiresAt: true, user: { select: { status: true, totpSecretEncrypted: true, totpEnabledAt: true, totpLastStep: true } } },
+      select: { id: true, userId: true, mfaPending: true, mfaAttempts: true, expiresAt: true, user: { select: { email: true, googleSubject: true, status: true, totpSecretEncrypted: true, totpEnabledAt: true, totpLastStep: true } } },
     });
     const expired = () => new AppError("UNAUTHENTICATED", "A verificação expirou. Entre novamente com e-mail e senha.");
     if (!session || !session.mfaPending || session.expiresAt <= now || session.user.status !== "ACTIVE") throw expired();
@@ -169,6 +169,17 @@ export async function completeMfaLogin(db: Db, sessionToken: string, code: strin
     }
 
     if (!accepted) {
+      // A falha que esgota o teto por usuário avisa o titular: a senha certa com código
+      // errado repetido é sinal de senha vazada. Uma vez por janela (contador atômico).
+      if (userAttempts === MAX_MFA_USER_ATTEMPTS) {
+        const google = !!session.user.googleSubject;
+        await enqueueEmail(tx, {
+          dedupeKey: `mfa-locked:${session.userId}:${now.getTime()}`,
+          template: "MFA_LOGIN_LOCKED",
+          recipient: session.user.email,
+          message: accountLockedEmail("two_factor", google ? "https://myaccount.google.com/security" : new URL("/esqueci-minha-senha", authAppUrl()).toString(), { google }),
+        });
+      }
       const attempts = session.mfaAttempts + 1;
       if (attempts >= MAX_MFA_ATTEMPTS) {
         await tx.session.deleteMany({ where: { id: session.id } });
