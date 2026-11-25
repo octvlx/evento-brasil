@@ -163,7 +163,7 @@ export async function reconcilePayments(
 }
 
 export type OrderPaymentCheck = "updated" | "unchanged" | "unavailable";
-const NO_PROGRESS: ApplyOutcome[] = ["no_change", "already_processed", "unknown_payment"];
+const NO_PROGRESS: ApplyOutcome[] = ["no_change", "already_processed", "unknown_payment", "account_mismatch"];
 
 /**
  * Reconsulta sob demanda as tentativas de um pedido que aguarda pagamento, sem depender

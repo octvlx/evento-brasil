@@ -241,6 +241,7 @@ export async function confirmReturnedPayment(db: Db, adapter: PaymentProviderAda
 export type ApplyOutcome =
   | "unknown_payment"
   | "amount_mismatch"
+  | "account_mismatch"
   | "paid"
   | "late_paid"
   | "late_payment_refund"
@@ -258,14 +259,34 @@ export type ApplyOutcome =
 export async function applyPaymentSnapshot(db: Db, adapter: PaymentProviderAdapter, snapshot: ProviderPaymentSnapshot): Promise<ApplyOutcome> {
   const linked = await db.payment.findUnique({
     where: { provider_providerPaymentId: { provider: adapter.id, providerPaymentId: snapshot.providerPaymentId } },
-    select: { id: true, orderId: true, order: { select: { eventId: true } } },
+    select: { id: true, orderId: true, order: { select: { eventId: true, organizationId: true } } },
   });
   // A referência externa é o nosso Payment.id (uma tentativa = uma preferência do Checkout Pro).
   const ref = linked ?? await db.payment.findFirst({
     where: { id: snapshot.externalReference, provider: adapter.id },
-    select: { id: true, orderId: true, order: { select: { eventId: true } } },
+    select: { id: true, orderId: true, order: { select: { eventId: true, organizationId: true } } },
   });
   if (!ref) return "unknown_payment";
+  // O dinheiro precisa ter ido para a conta da organização do pedido. Sem isso, outra
+  // conta conectada poderia criar um pagamento com a nossa referência externa e o valor
+  // certo (o `user_id` do aviso nem é assinado) e emitir ingressos sem pagar o organizador.
+  if (adapter.receivingAccountId) {
+    const expected = await adapter.receivingAccountId(ref.order.organizationId);
+    if (!expected || snapshot.collectorAccountId !== expected) {
+      await audit(db, {
+        organizationId: ref.order.organizationId,
+        action: "payment.collector_mismatch",
+        entityType: "Payment",
+        entityId: ref.id,
+        metadata: { providerPaymentId: snapshot.providerPaymentId, collector: snapshot.collectorAccountId ?? null, expected },
+      });
+      financeLog("error", "payment.collector_mismatch", { orderId: ref.orderId, paymentId: ref.id, providerPaymentId: snapshot.providerPaymentId }, {
+        provider: adapter.id,
+        status: snapshot.status,
+      });
+      return "account_mismatch";
+    }
+  }
   let followUpRefundId: string | null = null;
 
   const outcome = await db.$transaction(async (tx): Promise<ApplyOutcome> => {

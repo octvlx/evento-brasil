@@ -118,6 +118,8 @@ const preferenceSchema = z.object({
 const paymentSchema = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
   external_reference: z.string().min(1),
+  // Vendedor que recebeu o pagamento: conferido contra a conta da organização do pedido.
+  collector_id: z.union([z.string(), z.number()]).transform(String).nullish(),
   status: z.string().min(1),
   status_detail: z.string().nullish(),
   currency_id: z.literal("BRL"),
@@ -282,6 +284,7 @@ function toSnapshot(raw: unknown): ProviderPaymentSnapshot {
     pixCopyPaste: payment.point_of_interaction?.transaction_data?.qr_code ?? undefined,
     pixQrCodeBase64: payment.point_of_interaction?.transaction_data?.qr_code_base64 ?? undefined,
     expiresAt: providerDate(expiration),
+    collectorAccountId: payment.collector_id ?? null,
   };
 }
 
@@ -628,6 +631,16 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
       this.db.payment.findFirst({ where: { provider: this.id, providerPaymentId }, select: { id: true } }),
     ]);
     return !account && !payment;
+  }
+
+  /**
+   * Toda cobrança da organização é criada com o token da conta conectada dela, então o
+   * `collector_id` legítimo é sempre essa conta. Revogada continua valendo: avisos
+   * tardios e estornos de vendas antigas ainda chegam por ela.
+   */
+  async receivingAccountId(organizationId: string) {
+    const account = await this.db.mercadoPagoAccount.findUnique({ where: { organizationId }, select: { mercadoPagoUserId: true } });
+    return account?.mercadoPagoUserId ?? null;
   }
 
   private async accessTokenForPayment(providerPaymentId: string) {

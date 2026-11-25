@@ -90,6 +90,11 @@ export interface ProviderPaymentSnapshot {
   pixCopyPaste?: string;
   pixQrCodeBase64?: string;
   expiresAt?: Date;
+  /**
+   * Conta que recebeu o dinheiro (no Mercado Pago, `collector_id`). Ausente quando o
+   * provedor não tem esse conceito (simulado); null quando deveria vir e não veio.
+   */
+  collectorAccountId?: string | null;
 }
 
 export interface RefundResult {
@@ -129,6 +134,12 @@ export interface PaymentProviderAdapter {
    * consultado depois que o processamento falhou; true = marcar como ignorado.
    */
   isForeignWebhook?(event: { providerPaymentId: string; payload: unknown }): Promise<boolean>;
+  /**
+   * Opcional: conta do provedor que recebe as vendas da organização (a que cria as
+   * cobranças dela). Com este método, um pagamento só vale para um pedido se o
+   * `collectorAccountId` do snapshot for esta conta; null = organização sem conta.
+   */
+  receivingAccountId?(organizationId: string): Promise<string | null>;
   /**
    * Opcional: localiza no provedor um pagamento pela nossa chave de idempotência
    * (referência externa). Usado na reconciliação quando o processo caiu entre a
