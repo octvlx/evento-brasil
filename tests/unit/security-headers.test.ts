@@ -24,6 +24,8 @@ describe("cabeçalhos de segurança", () => {
     expect(header("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
     expect(header("Permissions-Policy")).toContain("camera=(self)");
     expect(header("Permissions-Policy")).toContain("microphone=()");
+    // "Usar minha localização" na home: só a própria origem pode pedir.
+    expect(header("Permissions-Policy")).toContain("geolocation=(self)");
     expect(header("Strict-Transport-Security")).toBe("max-age=63072000; includeSubDomains");
   });
 });
