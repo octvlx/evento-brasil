@@ -23,7 +23,7 @@ vi.mock("@/server/payments/mercadopago-oauth", () => ({
   getMercadoPagoAccessTokenForUser: oauth.getForUser,
 }));
 
-import { MercadoPagoAdapter } from "@/server/payments/mercadopago";
+import { MercadoPagoAdapter, WEBHOOK_TS_TOLERANCE_MS } from "@/server/payments/mercadopago";
 import { PaymentNotStartedError, ProviderRejectedError } from "@/server/payments/types";
 
 const db = {
@@ -408,7 +408,7 @@ describe("Mercado Pago Checkout Pro adapter", () => {
 
   it("verifies the signed webhook manifest and binds the seller account ID", async () => {
     const requestId = "request-123";
-    const timestamp = "1720000000000";
+    const timestamp = String(Date.now());
     const manifest = `id:987;request-id:${requestId};ts:${timestamp};`;
     const signature = createHmac("sha256", "webhook-secret").update(manifest).digest("hex");
     const verification = await adapter().verifyWebhook({
@@ -441,6 +441,25 @@ describe("Mercado Pago Checkout Pro adapter", () => {
     const unsigned = await ipn("data.id=987&type=payment");
     expect(unsigned).toMatchObject({ valid: false });
     expect(unsigned).not.toHaveProperty("ignore");
+  });
+
+  it("recusa ts fora da janela (aviso capturado e reenviado) e aceita ts em segundos", async () => {
+    const signed = (ts: string) => {
+      const signature = createHmac("sha256", "webhook-secret").update(`id:987;request-id:r-1;ts:${ts};`).digest("hex");
+      return adapter().verifyWebhook({
+        headers: new Headers({ "x-request-id": "r-1", "x-signature": `ts=${ts},v1=${signature}` }),
+        rawBody: JSON.stringify({ id: 1, type: "payment", user_id: 12345, data: { id: "987" } }),
+        url: new URL("https://events.example/api/webhooks/mercadopago?data.id=987"),
+      });
+    };
+    const now = Date.now();
+    const tooOld = now - WEBHOOK_TS_TOLERANCE_MS.past - 60_000;
+    const future = now + WEBHOOK_TS_TOLERANCE_MS.future + 60_000;
+    expect(await signed(String(tooOld))).toEqual({ valid: false, reason: "timestamp fora da tolerância" });
+    expect(await signed(String(future))).toEqual({ valid: false, reason: "timestamp fora da tolerância" });
+    expect(await signed("abc")).toMatchObject({ valid: false });
+    expect(await signed(String(now - WEBHOOK_TS_TOLERANCE_MS.past + 60_000))).toMatchObject({ valid: true });
+    expect(await signed(String(Math.floor(now / 1000)))).toMatchObject({ valid: true });
   });
 
   it("does not enable payments without a webhook signing secret", () => {

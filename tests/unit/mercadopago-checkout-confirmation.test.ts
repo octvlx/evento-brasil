@@ -150,7 +150,7 @@ describe("confirmação de pagamentos do Checkout Pro", () => {
 
   it("webhook de merchant_order não é tratado como id de pagamento", async () => {
     const requestId = "request-1";
-    const ts = "1720000000000";
+    const ts = String(Date.now());
     const signature = createHmac("sha256", "webhook-secret").update(`id:45752367877;request-id:${requestId};ts:${ts};`).digest("hex");
     const verification = await adapter().verifyWebhook({
       headers: new Headers({ "x-request-id": requestId, "x-signature": `ts=${ts},v1=${signature}` }),

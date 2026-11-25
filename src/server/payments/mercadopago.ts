@@ -299,6 +299,19 @@ const SNAPSHOT_PRIORITY: Record<ProviderPaymentStatus, number> = {
   EXPIRED: 7,
 };
 
+/**
+ * Janela aceita para o `ts` assinado do webhook: limita o reenvio de um aviso capturado.
+ * O passado é largo (1 h) para não recusar reentregas atrasadas do próprio Mercado Pago;
+ * mesmo recusado, o pagamento ainda é confirmado pela reconciliação.
+ */
+export const WEBHOOK_TS_TOLERANCE_MS = { past: 60 * 60_000, future: 5 * 60_000 } as const;
+
+/** `ts` do x-signature em milissegundos (o Mercado Pago manda ms; aceita também segundos). */
+function webhookTimestampMs(ts: string): number | null {
+  if (!/^\d{9,13}$/.test(ts)) return null;
+  return ts.length >= 13 ? Number(ts) : Number(ts) * 1000;
+}
+
 export class MercadoPagoAdapter implements PaymentProviderAdapter {
   readonly id = "mercadopago";
   readonly isSimulated = false;
@@ -588,6 +601,11 @@ export class MercadoPagoAdapter implements PaymentProviderAdapter {
     const expected = createHmac("sha256", this.webhookSecret).update(manifest).digest("hex");
     if (!safeEqual(signatureValue, expected)) {
       return { valid: false, reason: "assinatura inválida" };
+    }
+    const signedAt = webhookTimestampMs(timestamp);
+    const age = signedAt === null ? NaN : Date.now() - signedAt;
+    if (!(age <= WEBHOOK_TS_TOLERANCE_MS.past && age >= -WEBHOOK_TS_TOLERANCE_MS.future)) {
+      return { valid: false, reason: "timestamp fora da tolerância" };
     }
 
     let rawPayload: unknown;
