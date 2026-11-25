@@ -255,8 +255,23 @@ async function FeaturedOrganizers() {
 
 async function Weekend() {
   await connection();
-  return <EventGrid events={await weekendEvents(db, 8)} emptyText="Nenhum evento neste fim de semana ainda." />;
+  const events = await weekendEvents(db, WEEKEND_MAX);
+  // Completa com eventos externos publicados do mesmo fim de semana (mesma janela de /eventos?data=fim-de-semana).
+  const external = events.length < WEEKEND_MAX ? await listPublicExternalEvents(db, { date: "fim-de-semana", take: WEEKEND_MAX - events.length }) : [];
+  if (!external.length) return <EventGrid events={events} emptyText="Nenhum evento neste fim de semana ainda." />;
+  return (
+    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {events.map((e) => (
+        <EventCard key={e.slug} event={e} />
+      ))}
+      {external.map((e) => (
+        <ExternalEventCard key={`ext-${e.slug}`} event={e} />
+      ))}
+    </div>
+  );
 }
+
+const WEEKEND_MAX = 8;
 
 /** Mesma altura do carrossel (cards + linha de controles): sem salto ao carregar. */
 function CarouselSkeleton() {
