@@ -27,6 +27,8 @@ async function setup() {
   const customer = await makeUser();
   const { order } = await buyAndPay(customer, event.id, [{ ticketTypeId: event.ticketTypes[0].id, quantity: 3 }]);
   const tickets = await db.issuedTicket.findMany({ where: { orderId: order.id }, orderBy: { code: "asc" } });
+  // Os aparelhos baixaram a lista 15 min antes das leituras offline (sem lista não há offline).
+  for (const u of [staff, otherStaff]) await checkinOfflinePackage(db, u, event.id, new Date(Date.now() - 15 * 60_000));
   return { owner, staff, otherStaff, unassigned, event, tickets, customer };
 }
 
@@ -53,6 +55,30 @@ describe("check-in offline: lista baixada", () => {
     await expect(checkinOfflinePackage(db, customer, event.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await cancelEvent(db, adapter, owner, event.id, "Chuva");
     await expect(checkinOfflinePackage(db, owner, event.id)).rejects.toMatchObject({ code: "INVALID_STATE" });
+  });
+});
+
+describe("check-in offline: hora informada pelo aparelho", () => {
+  it("QR antigo com a hora dele: sem lista baixada por quem envia, vale a hora do servidor e não entra", async () => {
+    const { owner, staff, event, tickets } = await setup();
+    const old = new Date(Date.now() - 3 * 3600_000).toISOString();
+    // O dono nunca baixou a lista: a hora do aparelho é ignorada e o QR de 3 h atrás está vencido.
+    const r = await syncOfflineCheckins(db, owner, event.id, [{ payload: gateQr(tickets[0], new Date(old)), scannedAt: old, localResult: "ADMITTED" }]);
+    expect(r.items[0].result).not.toBe("ADMITTED");
+    expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } })).status).toBe("VALID");
+    // A lista de outra pessoa não vale para quem não baixou; a do próprio só cobre depois do download.
+    const r2 = await syncOfflineCheckins(db, staff, event.id, [{ payload: gateQr(tickets[0], new Date(old)), scannedAt: old, localResult: "ADMITTED" }]);
+    expect(r2.items[0].result).not.toBe("ADMITTED");
+    expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } })).status).toBe("VALID");
+  });
+
+  it("leitura dentro da validade da lista baixada usa a hora do aparelho", async () => {
+    const { staff, event, tickets } = await setup();
+    const at = new Date(Date.now() - 10 * 60_000).toISOString();
+    const r = await syncOfflineCheckins(db, staff, event.id, [{ payload: gateQr(tickets[0], new Date(at)), scannedAt: at, localResult: "ADMITTED" }]);
+    expect(r.items[0].result).toBe("ADMITTED");
+    expect((await db.issuedTicket.findUniqueOrThrow({ where: { id: tickets[0].id } })).checkedInAt?.toISOString()).toBe(at);
+    expect(await db.auditLog.count({ where: { action: "checkin.offline_package_downloaded", actorUserId: staff.id, entityId: event.id } })).toBe(1);
   });
 });
 

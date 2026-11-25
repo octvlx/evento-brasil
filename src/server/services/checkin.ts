@@ -297,6 +297,10 @@ export const OFFLINE_PACKAGE_TTL_MS = 12 * 3600_000;
 export const OFFLINE_SYNC_MAX = 500;
 /** Hora informada pelo aparelho: aceita até 24 h no passado; fora disso vale a hora do servidor. */
 const OFFLINE_MAX_AGE_MS = 24 * 3600_000;
+/** Folga para o relógio do aparelho um pouco atrás do servidor na hora do download. */
+const OFFLINE_CLOCK_SKEW_MS = 5 * 60_000;
+/** Auditoria do download da lista: a sincronização só aceita a hora do aparelho dentro de uma delas. */
+const OFFLINE_PACKAGE_AUDIT = "checkin.offline_package_downloaded";
 
 /** SHA-256 (hex) do token do QR: é o que a lista offline guarda, nunca o token (o mesmo hash do banco). */
 export const offlineTokenHash = qrTokenHash;
@@ -336,10 +340,20 @@ export async function checkinOfflinePackage(db: Db, actor: Actor, eventId: strin
     where: { eventId },
     select: { code: true, tokenVersion: true, validationTokenHash: true, status: true, holderName: true, ticketType: { select: { name: true, kind: true } }, order: { select: { isSimulated: true } } },
   });
+  const validUntil = new Date(now.getTime() + OFFLINE_PACKAGE_TTL_MS);
+  // Quem baixou e quando: na sincronização, a hora informada pelo aparelho só vale se
+  // cair na validade de uma lista que esta pessoa baixou (sem lista não há leitura offline).
+  await audit(db, {
+    actorUserId: actor.id,
+    action: OFFLINE_PACKAGE_AUDIT,
+    entityType: "Event",
+    entityId: eventId,
+    metadata: { generatedAt: now.toISOString(), validUntil: validUntil.toISOString(), tickets: rows.length },
+  });
   return {
     eventId,
     generatedAt: now.toISOString(),
-    validUntil: new Date(now.getTime() + OFFLINE_PACKAGE_TTL_MS).toISOString(),
+    validUntil: validUntil.toISOString(),
     opensAt: opensAt!.toISOString(),
     staticAccepted: staticQrAccepted(),
     tickets: rows.map((t) => ({
@@ -387,15 +401,34 @@ export async function syncOfflineCheckins(db: Db, actor: Actor, eventId: string,
   if (raw.length > OFFLINE_SYNC_MAX) throw new AppError("VALIDATION", `Envie no máximo ${OFFLINE_SYNC_MAX} leituras por vez.`);
   const results = new Set<string>(Object.keys(MESSAGES));
   const items: OfflineSyncItem[] = [];
+  const windows = await offlinePackageWindows(db, actor.id, eventId, now);
   for (const e of raw as Partial<OfflineEntry>[]) {
     const payload = typeof e?.payload === "string" ? e.payload.slice(0, 200) : "";
     const localResult = (typeof e?.localResult === "string" && results.has(e.localResult) ? e.localResult : "INVALID") as CheckinResult;
     const t = typeof e?.scannedAt === "string" ? new Date(e.scannedAt) : new Date(NaN);
-    const at = Number.isFinite(t.getTime()) && t.getTime() <= now.getTime() && now.getTime() - t.getTime() <= OFFLINE_MAX_AGE_MS ? t : now;
+    // A hora do aparelho vira o "agora" da validação (inclusive a frescura do QR dinâmico),
+    // então só vale dentro da validade de uma lista que esta pessoa baixou; senão, a do servidor.
+    const ms = t.getTime();
+    const plausible = Number.isFinite(ms) && ms <= now.getTime() && now.getTime() - ms <= OFFLINE_MAX_AGE_MS;
+    const at = plausible && windows.some((w) => ms >= w.from - OFFLINE_CLOCK_SKEW_MS && ms <= w.until) ? t : now;
     const r = await checkInTicket(db, actor, eventId, payload, at, { offline: true, skipCounters: true, localResult });
     items.push({ payload, localResult, result: r.result, message: r.message, conflict: r.divergence === "ADMITTED_BUT_REJECTED", divergence: r.divergence, code: r.ticket?.code, holderName: r.ticket?.holderName });
   }
   return { items, counters: await counters(db, eventId) };
+}
+
+/** Validades das listas offline que esta pessoa baixou para o evento (a partir da auditoria). */
+async function offlinePackageWindows(db: Db, actorId: string, eventId: string, now: Date): Promise<{ from: number; until: number }[]> {
+  const rows = await db.auditLog.findMany({
+    where: { actorUserId: actorId, action: OFFLINE_PACKAGE_AUDIT, entityType: "Event", entityId: eventId, createdAt: { gte: new Date(now.getTime() - OFFLINE_MAX_AGE_MS - OFFLINE_PACKAGE_TTL_MS) } },
+    select: { metadata: true },
+  });
+  return rows.flatMap(({ metadata }) => {
+    const m = (metadata ?? {}) as { generatedAt?: unknown; validUntil?: unknown };
+    const from = typeof m.generatedAt === "string" ? Date.parse(m.generatedAt) : NaN;
+    const until = typeof m.validUntil === "string" ? Date.parse(m.validUntil) : NaN;
+    return Number.isFinite(from) && Number.isFinite(until) ? [{ from, until }] : [];
+  });
 }
 
 export async function checkinHistory(db: Db, actor: Actor, eventId: string, limit = 50) {
