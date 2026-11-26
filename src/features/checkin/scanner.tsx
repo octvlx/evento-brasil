@@ -544,7 +544,7 @@ export function Scanner({ eventId, userId, initialCounters }: { eventId: string;
                 )}
                 {result.ticket.qrReplaced && <p className="mt-2 text-sm">Este QR foi substituído na transferência. Peça ao titular atual o QR novo.</p>}
                 <p className="text-sm opacity-90">
-                  {result.ticket.ticketTypeName} · {result.ticket.code}
+                  {result.ticket.ticketTypeName}{result.ticket.seat ? ` · Assento ${result.ticket.seat}` : ""} · {result.ticket.code}
                 </p>
                 {result.result === "DUPLICATE" && result.ticket.checkedInAt && (
                   <p className="mt-2 text-sm">Entrada registrada às {new Date(result.ticket.checkedInAt).toLocaleTimeString("pt-BR")}</p>

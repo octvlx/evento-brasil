@@ -10,6 +10,8 @@
 // cupom trava TODOS de uma vez, em ordem de id (`lockCoupons`), antes de
 // alterar qualquer contador — e nunca trava Event/Order depois de um cupom.
 import "server-only";
+import { SEAT_OF_TICKET } from "@/lib/seat-label";
+import { claimSeatsTx, releaseSeatsTx } from "./seat-holds";
 import type { OrderStatus } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import { createOrderSchema, type CreateOrderInput } from "@/features/schemas";
@@ -81,6 +83,8 @@ export async function releaseOrderTx(
     where: { orderId, status: "ACTIVE" },
     data: { status: "RELEASED", releasedAt: now, releaseReason: reason },
   });
+  // Lugar marcado: os assentos voltam a ficar livres (a escolha fica em OrderItem.seatIds).
+  await releaseSeatsTx(tx, orderId);
   const halfQuantity = reservations.filter((r) => r.ticketType.kind === "HALF_PRICE").reduce((s, r) => s + r.quantity, 0);
   if (halfQuantity) {
     // A meia volta ao saldo da cota (L7c); o estado é o de depois da devolução.
@@ -192,7 +196,14 @@ export async function acquireLateInventoryTx(tx: Tx, order: OrderWithItems, now 
     });
     return false;
   }
+  // Lugar marcado: os mesmos assentos, se ainda livres; senão o fluxo tardio reembolsa.
   for (const item of order.items) {
+    if (!item.seatIds.length) continue;
+    const free = await tx.seat.count({ where: { id: { in: item.seatIds }, ticketTypeId: item.ticketTypeId, orderItemId: null, blocked: false } });
+    if (free !== item.seatIds.length) return false;
+  }
+  for (const item of order.items) {
+    if (item.seatIds.length) await claimSeatsTx(tx, item.id, item.ticketTypeId, item.seatIds);
     await tx.ticketType.update({ where: { id: item.ticketTypeId }, data: { quantitySold: { increment: item.quantity } } });
   }
   await tx.order.update({ where: { id: order.id }, data: { status: "PAID", paidAt: now } });
@@ -390,6 +401,10 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
           throw new AppError("SOLD_OUT", `Não há ingressos "${t.name}" suficientes disponíveis.`);
         if (t.requiresAttendeeInfo && item.attendees?.length !== item.quantity)
           throw new AppError("VALIDATION", `Informe os dados de cada participante de "${t.name}".`);
+        const seats = item.seatIds ?? [];
+        if (t.seated && (seats.length !== item.quantity || new Set(seats).size !== seats.length))
+          throw new AppError("VALIDATION", `Escolha ${item.quantity === 1 ? "o assento" : `os ${item.quantity} assentos`} de "${t.name}".`);
+        if (!t.seated && seats.length) throw new AppError("VALIDATION", `"${t.name}" não tem lugar marcado.`);
         requested += item.quantity;
         if (t.kind === "HALF_PRICE") halfRequested += item.quantity;
       }
@@ -497,6 +512,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
                 serviceFeePerUnitCents: l.serviceFeePerUnitCents,
                 quantity: l.quantity,
                 attendees: merged.get(t.id)!.attendees ?? Prisma.JsonNull,
+                seatIds: t.seated ? (merged.get(t.id)!.seatIds ?? []) : [],
               };
             }),
           },
@@ -507,6 +523,8 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
       for (const l of fees.lines) {
         await tx.ticketType.update({ where: { id: l.ticketTypeId }, data: { quantityReserved: { increment: l.quantity } } });
       }
+      // Lugar marcado: cada ingresso ocupa o assento escolhido (falha desfaz o pedido inteiro).
+      for (const item of order.items) if (item.seatIds.length) await claimSeatsTx(tx, item.id, item.ticketTypeId, item.seatIds);
       // Uso do cupom reservado; vira resgatado em finalizePaidOrderTx (inclusive se gratuito).
       if (coupon) await tx.coupon.update({ where: { id: coupon.id }, data: { timesReserved: { increment: 1 } } });
       if (halfRequested > 0) {
@@ -575,7 +593,7 @@ export async function getOrderForBuyer(db: Db, actor: Actor, orderId: string) {
       payments: { orderBy: { createdAt: "desc" } },
       refunds: { orderBy: { createdAt: "desc" } },
       event: { include: { venue: { include: { city: true } }, city: true, organization: { select: { name: true, slug: true } } } },
-      tickets: { include: { ticketType: { select: { name: true } } }, orderBy: [{ orderItemId: "asc" }, { sequence: "asc" }] },
+      tickets: { include: { ticketType: { select: { name: true } }, orderItem: SEAT_OF_TICKET }, orderBy: [{ orderItemId: "asc" }, { sequence: "asc" }] },
     },
   });
   if (!order) throw notFound("Pedido não encontrado.");

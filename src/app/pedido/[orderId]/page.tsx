@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { seatOf } from "@/lib/seat-label";
 import Link from "next/link";
 import { Suspense } from "react";
 import { CalendarClock, CheckCircle2, Clock, Download, FileText, RotateCcw, Ticket, XCircle } from "lucide-react";
@@ -203,7 +204,10 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
                   <Link href={`/ingressos/${t.code}`} className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 hover:border-secondary">
                     <Ticket className="size-6 text-secondary" aria-hidden />
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold">{t.ticketType.name}</p>
+                      <p className="font-semibold">
+                        {t.ticketType.name}
+                        {seatOf(t) && <span className="text-secondary"> · Assento {seatOf(t)}</span>}
+                      </p>
                       <p className="truncate text-sm text-muted-foreground">{t.holderName}</p>
                       {t.status === "REVOKED" && <p className="text-xs text-muted-foreground">{revocationText(t.revocationReason)}</p>}
                     </div>

@@ -12,6 +12,7 @@ import { TermsReaccept } from "@/features/auth/terms-reaccept";
 import { startCheckoutDraftAction } from "./review-actions";
 import { usePersistentCartState } from "./persistent-cart";
 import { isCouponError } from "./status-view";
+import { SeatPicker, type PickedSeat } from "@/features/seats/seat-picker";
 
 export interface SelectorTicket {
   id: string;
@@ -31,6 +32,8 @@ export interface SelectorTicket {
   unavailableReason: "SOLD_OUT" | "HALF_QUOTA_EXHAUSTED" | "RESERVED_FOR_HALF_PRICE" | null;
   onSale: boolean;
   requiresAttendeeInfo: boolean;
+  /** Lugar marcado: o comprador escolhe os assentos; a quantidade é o número escolhido. */
+  seated?: boolean;
 }
 
 interface Props {
@@ -51,6 +54,8 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
   const router = useRouter();
   const [qty, setQty] = usePersistentCartState<Record<string, number>>(eventId, "quantities", {});
   const [attendees, setAttendees] = usePersistentCartState<Record<string, string[]>>(eventId, "attendees", {});
+  const [seats, setSeats] = usePersistentCartState<Record<string, PickedSeat[]>>(eventId, "seats", {});
+  const [seatsOpen, setSeatsOpen] = useState<string | null>(null);
   const [buyerName, setBuyerName] = useState(user?.name ?? "");
   const [buyerEmail, setBuyerEmail] = useState(user?.email ?? "");
   const [halfDecl, setHalfDecl] = usePersistentCartState(eventId, "halfPrice", false);
@@ -87,6 +92,15 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
     setError(null);
   };
 
+  const pickSeats = (t: SelectorTicket, list: PickedSeat[]) => {
+    setKey(crypto.randomUUID());
+    setSeats((s) => ({ ...s, [t.id]: list }));
+    setQty((q) => ({ ...q, [t.id]: list.length }));
+    setError(null);
+  };
+  // Lugar marcado com menos assentos que o mínimo por pedido: ainda não dá para seguir.
+  const seatShort = lines.find((t) => t.seated && (seats[t.id]?.length ?? 0) < t.minPerOrder);
+
   const submit = () => {
     setError(null);
     setCouponError(null);
@@ -99,6 +113,7 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
           ticketTypeId: t.id,
           quantity: qty[t.id],
           attendees: t.requiresAttendeeInfo ? Array.from({ length: qty[t.id] }, (_, i) => ({ name: attendees[t.id]?.[i] ?? "" })) : undefined,
+          seatIds: t.seated ? (seats[t.id] ?? []).map((s) => s.id) : undefined,
         })),
         buyerName: buyerName.trim() || user?.name || "Visitante",
         buyerEmail: buyerEmail.trim() || user?.email || "visitante@checkout.invalid",
@@ -143,6 +158,10 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
                 </div>
                 {!t.onSale || soldOut || (!paymentsAvailable && t.priceCents > 0) ? (
                   <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{soldOut ? soldOutLabel : !t.onSale ? "Fora do período" : "Indisponível"}</span>
+                ) : t.seated ? (
+                  <Button type="button" variant={n ? "outline" : "default"} size="sm" className="shrink-0" onClick={() => setSeatsOpen(seatsOpen === t.id ? null : t.id)} aria-expanded={seatsOpen === t.id}>
+                    {n ? `${n} ${n === 1 ? "assento" : "assentos"}` : "Escolher assentos"}
+                  </Button>
                 ) : (
                   <div className="flex shrink-0 items-center gap-2" role="group" aria-label={`Quantidade de ${t.name}`}>
                     <Button type="button" variant="outline" size="icon" onClick={() => change(t, -1)} disabled={n === 0} aria-label="Diminuir">
@@ -162,6 +181,11 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
                 <p className="mt-2 text-xs font-semibold text-muted-foreground">Ingressos restantes reservados para meia-entrada até {halfReleaseLabel}</p>
               )}
               {t.onSale && !soldOut && t.available <= 10 && <p className="mt-2 text-xs font-semibold text-warning">Restam poucas unidades</p>}
+              {t.seated && t.onSale && !soldOut && seatsOpen === t.id && (
+                <SeatPicker ticketTypeId={t.id} max={Math.min(t.maxPerOrder, t.available)} selected={seats[t.id] ?? []} onChange={(list) => pickSeats(t, list)} />
+              )}
+              {t.seated && seatsOpen !== t.id && n > 0 && <p className="mt-2 text-xs text-muted-foreground">Assentos: {(seats[t.id] ?? []).map((s) => s.label || "escolhido").join(", ")}</p>}
+              {t.seated && n > 0 && n < t.minPerOrder && <p className="mt-2 text-xs font-semibold text-warning">Escolha ao menos {t.minPerOrder} assentos.</p>}
               {t.requiresAttendeeInfo && n > 0 && (
                 <div className="mt-3 space-y-2">
                   {Array.from({ length: n }, (_, i) => (
@@ -294,7 +318,7 @@ export function TicketSelector({ eventId, tickets, buyerPaysFee, user, halfRelea
       {termsRequired && <TermsReaccept checked={acceptTerms} onChange={setAcceptTerms} />}
       {error && <Alert variant="danger">{error}</Alert>}
 
-      <Button size="lg" className="w-full" variant="accent" onClick={submit} disabled={pending || totals.count === 0 || (hasHalf && !halfDecl) || (termsRequired && !acceptTerms)}>
+      <Button size="lg" className="w-full" variant="accent" onClick={submit} disabled={pending || totals.count === 0 || !!seatShort || (hasHalf && !halfDecl) || (termsRequired && !acceptTerms)}>
         {pending ? "Salvando seleção…" : totals.count === 0 ? "Selecione os ingressos" : "Continuar para revisão"}
       </Button>
       <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">

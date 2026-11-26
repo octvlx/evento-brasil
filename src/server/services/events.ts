@@ -37,7 +37,7 @@ export function assertEventTransition(from: EventStatus, to: EventStatus) {
   if (!EVENT_TRANSITIONS[from].includes(to)) throw invalidState(`Transição de evento inválida: ${from} → ${to}.`);
 }
 
-const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
+export const EDITABLE: readonly EventStatus[] = ["DRAFT", "PENDING_REVIEW", "PUBLISHED"];
 
 /** Evento suspenso pela plataforma: o organizador não edita nem publica até a reativação. */
 export function assertNotSuspended(event: { suspendedAt: Date | null; suspensionReason: string | null }) {
@@ -167,7 +167,7 @@ async function venueCapacityOf(tx: Tx, locationType: "VENUE" | "ONLINE", venueId
  * O "antes" e o "depois" usam a MESMA data e local: mudança só de data nunca é barrada
  * (é auditada em `half_price.stock_changed`). Chamar com a trava do evento tomada.
  */
-function guardStockChange(before: { input: HalfPriceEventInput; types: HalfPriceTypeInput[] }, afterTypes: HalfPriceTypeInput[], afterCapacity: number, now: Date): HalfPriceState {
+export function guardStockChange(before: { input: HalfPriceEventInput; types: HalfPriceTypeInput[] }, afterTypes: HalfPriceTypeInput[], afterCapacity: number, now: Date): HalfPriceState {
   const stateBefore = computeHalfPriceState(before.input, before.types, now);
   const stateGuard = computeHalfPriceState({ ...before.input, capacity: afterCapacity }, afterTypes, now);
   const message = stockChangeError(stateBefore, stateGuard);
@@ -327,7 +327,9 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
       if (!tt) throw notFound("Tipo de ingresso não encontrado.");
       if (tt.priceCents !== input.priceCents || tt.kind !== input.kind)
         await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents, input.kind === "HALF_PRICE");
-      if (input.quantityTotal < tt.quantitySold + tt.quantityReserved)
+      // Lugar marcado: o estoque é o número de assentos à venda (editado na grade).
+      if (tt.seated) data.quantityTotal = tt.quantityTotal;
+      if (data.quantityTotal < tt.quantitySold + tt.quantityReserved)
         throw new AppError("VALIDATION", `Quantidade mínima: ${tt.quantitySold + tt.quantityReserved} (vendidos + reservados).`);
       if (tt.quantitySold > 0 && tt.kind !== input.kind) throw new AppError("VALIDATION", "Não é possível mudar o tipo após vendas.");
       // L7c: estoque, tipo, visibilidade ou preço não podem invadir a cota legal de meia-entrada.

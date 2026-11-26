@@ -651,6 +651,8 @@ model TicketType {
   salesEndAt           DateTime?  @db.Timestamptz(3)
   requiresAttendeeInfo Boolean    @default(false)
   isHidden             Boolean    @default(false)
+  /// Lugar marcado: o comprador escolhe assentos (Seat); quantityTotal = assentos não bloqueados.
+  seated               Boolean    @default(false)
   sortOrder            Int        @default(0)
   createdAt            DateTime   @default(now()) @db.Timestamptz(3)
   updatedAt            DateTime   @updatedAt @db.Timestamptz(3)
@@ -660,6 +662,7 @@ model TicketType {
   orderItems   OrderItem[]
   tickets      IssuedTicket[]
   coupons      CouponTicketType[]
+  seats        Seat[]
 
   @@index([eventId, sortOrder])
 }
@@ -797,10 +800,14 @@ model OrderItem {
   quantity               Int
   // [{ name, email?, document? }] quando o tipo exige dados do participante.
   attendees              Json?
+  /// Lugar marcado: assentos escolhidos, na ordem dos ingressos (sequence 1, 2…). Cópia
+  /// usada no pagamento tardio para tentar retomar os mesmos lugares.
+  seatIds                String[]   @default([])
 
   order      Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   ticketType TicketType     @relation(fields: [ticketTypeId], references: [id])
   tickets    IssuedTicket[]
+  seats      Seat[]
 
   @@unique([orderId, ticketTypeId])
 }
@@ -1847,4 +1854,31 @@ model EventReport {
   @@index([status, createdAt])
   @@index([eventId, status])
   @@index([reporterId, createdAt])
+}
+
+/// Assento numerado de um tipo de ingresso com lugar marcado (grade: fileira × número).
+/// Ocupado quando orderItemId está preenchido: pelo pedido pendente (reserva) ou pago.
+/// O ingresso emitido com (orderItemId, sequence) é o dono do assento. Expirar ou cancelar
+/// o pedido pendente solta o assento; reembolso não (o estoque também não volta).
+/// CHECKs na migração: ocupação completa (item e sequência juntos) e bloqueado nunca ocupado.
+model Seat {
+  id           String   @id @default(cuid())
+  eventId      String
+  ticketTypeId String
+  row          String
+  number       Int
+  label        String
+  blocked      Boolean  @default(false)
+  orderItemId  String?
+  sequence     Int?
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+  orderItem  OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@unique([ticketTypeId, row, number])
+  @@unique([ticketTypeId, label])
+  @@unique([orderItemId, sequence])
+  @@index([eventId])
 }

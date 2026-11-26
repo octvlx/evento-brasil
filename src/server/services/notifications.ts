@@ -1,6 +1,7 @@
 // Notificações pós-confirmação. Executadas fora da transação; falhas de envio
 // não afetam o estado do pedido (podem ser reenviadas).
 import "server-only";
+import { SEAT_OF_TICKET, seatOf } from "@/lib/seat-label";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Db, Tx } from "../db";
 import { enqueueEmail, dispatchEmailOutbox } from "../email/outbox";
@@ -30,6 +31,7 @@ import {
 /** Dados do ingresso usados no PDF e nas carteiras. */
 export const PDF_TICKET_INCLUDE = {
   ticketType: { select: { name: true } },
+  orderItem: SEAT_OF_TICKET,
   order: { select: { publicCode: true, isSimulated: true } },
   event: {
     include: {
@@ -77,7 +79,7 @@ export function toPdfTicket(
     code: t.code,
     validationToken,
     holderName: t.holderName,
-    ticketTypeName: t.ticketType.name,
+    ticketTypeName: seatOf(t) ? `${t.ticketType.name} · Assento ${seatOf(t)}` : t.ticketType.name,
     orderCode: t.order.publicCode,
     isSimulated: t.order.isSimulated,
     event: {

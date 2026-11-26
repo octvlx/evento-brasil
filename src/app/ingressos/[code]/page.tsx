@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SEAT_OF_TICKET, seatOf } from "@/lib/seat-label";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -35,7 +36,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
   const user = await requireUser(`/ingressos/${code}`);
   const t = await db.issuedTicket.findUnique({
     where: { code },
-    include: { ticketType: true, order: { select: { id: true, publicCode: true, isSimulated: true, status: true } }, event: { include: { venue: { include: { city: true } }, city: true } } },
+    include: { ticketType: true, orderItem: SEAT_OF_TICKET, order: { select: { id: true, publicCode: true, isSimulated: true, status: true } }, event: { include: { venue: { include: { city: true } }, city: true } } },
   });
   if (!t) notFound();
   // Histórico de transferências do ingresso (poucas linhas: limite de aceites definido no evento).
@@ -83,6 +84,7 @@ async function TicketContent({ params }: { params: Promise<{ code: string }> }) 
       <article className="overflow-hidden rounded-3xl border border-border bg-card shadow-xl [print-color-adjust:exact] print:mx-auto print:max-w-md print:shadow-none">
         <div className="bg-hero p-6 text-white">
           <p className="text-xs font-semibold uppercase tracking-widest text-white/70">{t.ticketType.name}</p>
+          {seatOf(t) && <p className="mt-1 inline-block rounded-full bg-lime px-3 py-0.5 text-sm font-bold text-night" data-testid="ticket-seat">Assento {seatOf(t)}</p>}
           <h1 className="mt-1 font-display text-2xl font-extrabold leading-tight">{t.event.title}</h1>
           <p className="mt-2 text-sm text-white/85 first-letter:uppercase">
             {formatDateLong(t.event.startsAt, tz)} · {formatTime(t.event.startsAt, tz)} ({timezoneLabel(t.event.startsAt, tz)})

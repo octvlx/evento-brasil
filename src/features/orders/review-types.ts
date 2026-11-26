@@ -6,5 +6,5 @@ export interface CheckoutReviewData {
   halfPriceNotice: string | null;
   event: { title: string; slug: string; dateLabel: string; venueLabel: string; locationLabel: string };
   tickets: { id: string; name: string; kind: string; priceCents: number; available: number; unavailableReason: "SOLD_OUT" | "HALF_QUOTA_EXHAUSTED" | "RESERVED_FOR_HALF_PRICE" | null; minPerOrder: number; maxPerOrder: number; requiresAttendeeInfo: boolean }[];
-  order: { id: string; publicCode: string; status: string; expiresAt: string; expiresLabel: string; grossSubtotalCents: number; items: { id: string; ticketTypeId: string; ticketTypeName: string; quantity: number; listUnitPriceCents: number; serviceFeePerUnitCents: number; lineSubtotalCents: number }[]; subtotalCents: number; serviceFeeCents: number; discountCents: number; totalCents: number; couponCode: string | null } | null;
+  order: { id: string; publicCode: string; status: string; expiresAt: string; expiresLabel: string; grossSubtotalCents: number; items: { id: string; ticketTypeId: string; ticketTypeName: string; seats?: string[]; quantity: number; listUnitPriceCents: number; serviceFeePerUnitCents: number; lineSubtotalCents: number }[]; subtotalCents: number; serviceFeeCents: number; discountCents: number; totalCents: number; couponCode: string | null } | null;
 }

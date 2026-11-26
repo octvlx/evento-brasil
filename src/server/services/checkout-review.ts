@@ -20,7 +20,8 @@ import { checkoutTermsGate, recordAcceptanceTx } from "./terms";
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const eventInclude = { venue: { include: { city: true } }, city: true, ticketTypes: { orderBy: { id: "asc" as const } } };
-const orderInclude = { items: { orderBy: { id: "asc" as const } } };
+// Assentos (lugar marcado) entram na revisão e na impressão digital: trocar de assento muda a revisão.
+const orderInclude = { items: { orderBy: { id: "asc" as const }, include: { seats: { select: { label: true, sequence: true }, orderBy: { sequence: "asc" as const } } } } };
 const ownershipError = () => forbidden("Carrinho não encontrado para esta conta.");
 function checkAccess(draft: CheckoutDraft | null, actor: Actor, token?: string) {
   assertActive(actor);

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { seatOf } from "@/lib/seat-label";
 import Link from "next/link";
 import { Suspense } from "react";
 import { ArrowRightLeft, CalendarDays, Inbox, Ticket } from "lucide-react";
@@ -103,6 +104,7 @@ async function Content({ searchParams }: { searchParams: Promise<{ transferir?: 
               <li key={t.id} id={`ingresso-${t.code}`} className="flex scroll-mt-24 flex-wrap items-center gap-2" data-testid="my-ticket">
                 <Link href={`/ingressos/${t.code}`} className="flex items-center gap-2 rounded-xl border border-border px-3 py-1.5 text-sm hover:border-secondary">
                   <Ticket className="size-4 text-secondary" aria-hidden /> {t.ticketType.name}
+                  {seatOf(t) && <span className="text-secondary"> · Assento {seatOf(t)}</span>}
                   <Badge variant={s.tone === "success" ? "success" : s.tone === "danger" ? "danger" : "default"}>{s.label}</Badge>
                 </Link>
                 {walletReady(t) && <WalletLinks apple={wallet.apple} google={wallet.google} ticketCode={t.code} compact />}

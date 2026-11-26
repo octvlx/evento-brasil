@@ -24,6 +24,7 @@ import type { AdTrackingInput } from "@/lib/ad-tracking";
 import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, duplicateEvent, submitEventForPublication, unpublishEvent, updateEvent, upsertTicketType } from "@/server/services/events";
 import { extendEventChangeWindow } from "@/server/services/event-changes";
+import { disableSeating, organizerSeatGrid, setSeatGrid, type SeatGridInput } from "@/server/services/seats";
 import { addEventImage, moveEventImage, removeEventImage, updateEventImageAlt } from "@/server/services/event-images";
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { recordWizardVisit, saveEventWizardStep, startEventDraft } from "@/server/services/event-wizard";
@@ -531,6 +532,33 @@ export async function cancelOrganizationDeletionAction(): Promise<ActionResult> 
   const user = await requireUser("/organizador/configuracoes");
   const res = await toActionResult(async () => {
     await cancelOrganizationDeletionRequest(db, user, await activeOrgId(user.id));
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+// ── Mapa de assentos (lugar marcado) ──
+
+export async function getSeatGridAction(ticketTypeId: string) {
+  const user = await requireUser("/organizador/eventos");
+  return toActionResult(() => organizerSeatGrid(db, user, String(ticketTypeId)));
+}
+
+export async function saveSeatGridAction(ticketTypeId: string, grid: SeatGridInput): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await setSeatGrid(db, user, String(ticketTypeId), grid);
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function disableSeatingAction(ticketTypeId: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await disableSeating(db, user, String(ticketTypeId));
     return undefined;
   });
   if (res.ok) refresh();
