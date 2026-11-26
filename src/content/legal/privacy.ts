@@ -46,6 +46,7 @@ export const PRIVACY_POLICY: LegalDocument = {
             "Prevenir fraudes, uso de robôs e cambismo, e garantir a segurança da conta e da portaria: legítimo interesse (art. 7º, IX) e prevenção à fraude (art. 11, II, \"g\", quando aplicável).",
             "Guardar registros para nos defender ou exercer direitos em processos: exercício regular de direitos (art. 7º, VI).",
             "Enviar mensagens sobre seus pedidos e ingressos: execução do contrato.",
+            "Medir audiência e desempenho do site (páginas mais vistas, origem das visitas, velocidade de carregamento), de forma agregada e sem cookies: legítimo interesse (art. 7º, IX).",
             "Mostrar eventos perto de você a partir da localização aproximada: consentimento (art. 7º, I), dado pela permissão do navegador. Você pode negar ou retirar a permissão a qualquer momento nas configurações do navegador e escolher a cidade na busca.",
           ],
         },
@@ -104,6 +105,7 @@ export const PRIVACY_POLICY: LegalDocument = {
       title: "8. Cookies",
       blocks: [
         "Usamos apenas cookies essenciais: o de sessão, que mantém você conectado, e os de preferência, como a cidade escolhida na busca ou encontrada pela sua localização (guardados por até 1 ano). Sem eles o site não funciona corretamente, por isso não pedimos consentimento para eles. Não usamos cookies de publicidade nem de rastreamento entre sites.",
+        "Para medir audiência e desempenho usamos o Vercel Web Analytics e o Speed Insights, que não usam cookies nem identificam você. Antes de sair do seu navegador, o endereço da página é limpo: códigos de pedido, ingresso, convite e transferência, tokens e outros parâmetros são removidos, e só ficam os de campanha (utm_*). Os números são vistos apenas de forma agregada.",
       ],
     },
     {
@@ -126,6 +128,5 @@ export const PRIVACY_POLICY: LegalDocument = {
     "Marco Civil da Internet, art. 15: hoje o sistema não guarda registros de acesso (IP) além do aceite de termos. Confirmar se a obrigação se aplica.",
     "Base legal do CPF e da data de nascimento na primeira compra: confirmar a finalidade declarada (identificação, antifraude, nota fiscal).",
     "Organizador como controlador independente dos dados recebidos: confirmar a qualificação e alinhar com os termos do organizador.",
-    "Vercel Web Analytics e Speed Insights estão ativos: mencionar (na seção 8 ou numa nova) a coleta de métricas de uso e desempenho, sem cookies, com URLs sem tokens nem identificadores (src/lib/analytics-redact.ts). Texto novo exige versão nova.",
   ],
 };
