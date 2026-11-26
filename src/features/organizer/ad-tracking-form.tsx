@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button";
 import type { AdTrackingIds } from "@/lib/ad-tracking";
 import { setEventAdTrackingAction } from "./actions";
 
-const FIELDS: { key: keyof AdTrackingIds; label: string; placeholder: string; help: string }[] = [
-  { key: "metaPixelId", label: "Meta Pixel (Facebook e Instagram)", placeholder: "123456789012345", help: "Gerenciador de Eventos do Meta → Fontes de dados → ID do pixel." },
-  { key: "ga4MeasurementId", label: "Google Analytics 4", placeholder: "G-ABC123XYZ", help: "Administrador → Fluxos de dados → ID da métrica." },
-  { key: "googleAdsTag", label: "Google Ads (conversão)", placeholder: "AW-123456789/AbCdEfGhIj", help: "Metas → Conversões → tag do evento: ID (AW-…) e, para contar vendas, o rótulo depois da barra." },
+const FIELDS: { field: keyof AdTrackingIds; label: string; placeholder: string; help: string }[] = [
+  { field: "metaPixelId", label: "Meta Pixel (Facebook e Instagram)", placeholder: "123456789012345", help: "Gerenciador de Eventos do Meta → Fontes de dados → ID do pixel." },
+  { field: "ga4MeasurementId", label: "Google Analytics 4", placeholder: "G-ABC123XYZ", help: "Administrador → Fluxos de dados → ID da métrica." },
+  { field: "googleAdsTag", label: "Google Ads (conversão)", placeholder: "AW-123456789/AbCdEfGhIj", help: "Metas → Conversões → tag do evento: ID (AW-…) e, para contar vendas, o rótulo depois da barra." },
 ];
 
 /** IDs de medição do organizador. Carregados só para compradores que aceitarem os cookies de medição. */
@@ -36,14 +36,14 @@ export function AdTrackingForm({ eventId, initial, locked }: { eventId: string; 
       </p>
       <div className="grid gap-4 md:grid-cols-3">
         {FIELDS.map((f) => (
-          <div key={f.key}>
-            <label htmlFor={`ad-${f.key}`} className="mb-1 block text-sm font-semibold">
+          <div key={f.field}>
+            <label htmlFor={`ad-${f.field}`} className="mb-1 block text-sm font-semibold">
               {f.label}
             </label>
             <input
-              id={`ad-${f.key}`}
-              value={values[f.key]}
-              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+              id={`ad-${f.field}`}
+              value={values[f.field]}
+              onChange={(e) => setValues((v) => ({ ...v, [f.field]: e.target.value }))}
               placeholder={f.placeholder}
               disabled={locked || pending}
               maxLength={60}
