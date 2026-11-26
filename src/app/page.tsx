@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { cookies } from "next/headers";
@@ -18,6 +19,9 @@ import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
 import { eventsInCity, featuredEvents, featuredOrganizers, getPublicCity, listCategories, recommendedEvents, weekendEvents } from "@/server/services/catalog";
 import { getCurrentUser } from "@/server/auth/current";
+
+// Título e descrição vêm do layout; aqui só o endereço canônico (sem ?cidade etc.).
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default function HomePage() {
   return (

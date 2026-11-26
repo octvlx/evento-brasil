@@ -30,6 +30,7 @@ import { commissionReturnedOnRefund, currentPlatformCommissionRule } from "@/ser
 export const metadata: Metadata = {
   title: "Publique seu evento",
   description: `Como publicar e vender ingressos na ${BRAND.name}: cadastro, aprovação, criação do evento, comissões e eventos gratuitos.`,
+  alternates: { canonical: "/publique-seu-evento" },
 };
 
 // Página explicativa para organizadores, aberta sem login. Só descreve o que existe no
