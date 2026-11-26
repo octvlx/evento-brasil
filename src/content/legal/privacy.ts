@@ -7,9 +7,9 @@ import type { LegalDocument } from "./types";
 export const PRIVACY_POLICY: LegalDocument = {
   kind: "PRIVACY",
   title: "Política de privacidade",
-  version: "1.0",
+  version: "1.1",
   path: "/privacidade",
-  updatedAt: "2026-11-23",
+  updatedAt: "2026-11-26",
   sections: [
     {
       title: "1. Quem trata seus dados",
@@ -30,6 +30,7 @@ export const PRIVACY_POLICY: LegalDocument = {
             "Pagamento: o identificador do pagamento no Mercado Pago e os dados da cobrança PIX enquanto ela está em aberto. Não recebemos nem guardamos dados de cartão.",
             "Aceite de termos: versão aceita, data, endereço IP e navegador, como prova do aceite.",
             "Organizadores: dados da organização, nome civil ou razão social, CPF ou CNPJ (guardado cifrado), contatos, membros da equipe e a conexão com a conta do Mercado Pago.",
+            "Localização aproximada, só se você tocar em \"Usar minha localização\" na página inicial e permitir no navegador: as coordenadas são arredondadas (precisão de cerca de 1 km) e usadas uma única vez para encontrar a cidade com eventos mais próxima. Elas não são guardadas, não aparecem nos registros do sistema e não são enviadas a terceiros; fica salva apenas a cidade encontrada, num cookie de preferência.",
             "Dados técnicos: cookies essenciais e controles contra abuso (como limite de tentativas de login), que guardam apenas um código derivado do IP, apagado em poucas horas.",
           ],
         },
@@ -45,6 +46,7 @@ export const PRIVACY_POLICY: LegalDocument = {
             "Prevenir fraudes, uso de robôs e cambismo, e garantir a segurança da conta e da portaria: legítimo interesse (art. 7º, IX) e prevenção à fraude (art. 11, II, \"g\", quando aplicável).",
             "Guardar registros para nos defender ou exercer direitos em processos: exercício regular de direitos (art. 7º, VI).",
             "Enviar mensagens sobre seus pedidos e ingressos: execução do contrato.",
+            "Mostrar eventos perto de você a partir da localização aproximada: consentimento (art. 7º, I), dado pela permissão do navegador. Você pode negar ou retirar a permissão a qualquer momento nas configurações do navegador e escolher a cidade na busca.",
           ],
         },
         "Não vendemos seus dados e não usamos cookies de publicidade.",
@@ -101,7 +103,7 @@ export const PRIVACY_POLICY: LegalDocument = {
     {
       title: "8. Cookies",
       blocks: [
-        "Usamos apenas cookies essenciais: o de sessão, que mantém você conectado, e os de preferência, como a cidade escolhida. Sem eles o site não funciona corretamente, por isso não pedimos consentimento para eles. Não usamos cookies de publicidade nem de rastreamento entre sites.",
+        "Usamos apenas cookies essenciais: o de sessão, que mantém você conectado, e os de preferência, como a cidade escolhida na busca ou encontrada pela sua localização (guardados por até 1 ano). Sem eles o site não funciona corretamente, por isso não pedimos consentimento para eles. Não usamos cookies de publicidade nem de rastreamento entre sites.",
       ],
     },
     {
