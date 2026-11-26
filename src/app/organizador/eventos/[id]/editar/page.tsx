@@ -16,6 +16,7 @@ import { EventGallery } from "@/features/organizer/event-gallery";
 import { EVENT_IMAGE_MIN_SIDE, listEventImages, MAX_EVENT_IMAGES } from "@/server/services/event-images";
 import { CouponsManager } from "@/features/organizer/coupons-manager";
 import { TrackingLinksManager } from "@/features/organizer/tracking-links-manager";
+import { AdTrackingForm } from "@/features/organizer/ad-tracking-form";
 import { eventFormOptions } from "@/features/organizer/form-data";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
@@ -194,6 +195,11 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
               coupons={coupons.filter((c) => !c.disabled).map((c) => ({ id: c.id, code: c.code }))}
               items={links.map((l) => ({ ...l, url: `${env().APP_URL}/r/${l.code}` }))}
             />
+          </Card>
+
+          <Card className="mb-6 p-6">
+            <h2 className="mb-4 font-display text-lg font-bold">Medição de anúncios</h2>
+            <AdTrackingForm eventId={event.id} locked={locked} initial={{ metaPixelId: event.metaPixelId, ga4MeasurementId: event.ga4MeasurementId, googleAdsTag: event.googleAdsTag }} />
           </Card>
         </>
       )}

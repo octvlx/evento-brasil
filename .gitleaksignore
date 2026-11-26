@@ -1,0 +1,6 @@
+# Falsos positivos do gitleaks, um por impressão digital (commit:arquivo:regra:linha).
+# Só valores que NÃO são segredos; um segredo real deve ser trocado no provedor e removido.
+#
+# Nome do campo do formulário ("key: \"ga4MeasurementId\"") lido como chave de API pela
+# regra generic-api-key; a propriedade foi renomeada no commit seguinte.
+545fe1cc8e4657b04ba06f4d6db8f756b3c4390b:src/features/organizer/ad-tracking-form.tsx:generic-api-key:10

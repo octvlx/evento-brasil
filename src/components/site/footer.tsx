@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CANCEL_HELP_HREF, PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
 import { BRAND } from "@/lib/brand";
 import { Logo } from "./logo";
+import { ConsentPreferencesButton } from "@/features/tracking/ad-tracking";
 
 export function SiteFooter() {
   return (
@@ -36,6 +37,7 @@ export function SiteFooter() {
             ["/privacidade", "Privacidade (LGPD)"],
             ["/ajuda#contato", "Atendimento ao cliente"],
           ]}
+          extra={<ConsentPreferencesButton className="rounded text-sm text-white/75 hover:text-white focus-visible:outline-lime" />}
         />
       </div>
       <div className="border-t border-white/10">
@@ -47,7 +49,7 @@ export function SiteFooter() {
   );
 }
 
-function FooterCol({ title, links }: { title: string; links: [string, string][] }) {
+function FooterCol({ title, links, extra }: { title: string; links: [string, string][]; extra?: React.ReactNode }) {
   return (
     <div>
       <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-lime">{title}</h2>
@@ -59,6 +61,7 @@ function FooterCol({ title, links }: { title: string; links: [string, string][] 
             </Link>
           </li>
         ))}
+        {extra && <li>{extra}</li>}
       </ul>
     </div>
   );

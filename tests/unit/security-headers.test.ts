@@ -8,10 +8,16 @@ describe("cabeçalhos de segurança", () => {
     expect(await nextConfig.headers!()).toEqual([{ source: "/:path*", headers: securityHeaders }]);
   });
 
-  it("CSP: só a própria origem para scripts, sem iframe de terceiros e com o OAuth do Mercado Pago liberado em form-action", () => {
+  it("CSP: scripts só da própria origem e da medição de anúncios (Meta e Google), iframes só do Google Ads e o OAuth do Mercado Pago em form-action", () => {
     const directives = Object.fromEntries(contentSecurityPolicy.split("; ").map((d) => [d.split(" ")[0], d]));
     expect(directives["default-src"]).toBe("default-src 'self'");
-    expect(directives["script-src"]).toBe("script-src 'self' 'unsafe-inline'");
+    expect(directives["script-src"]).toBe("script-src 'self' 'unsafe-inline' https://connect.facebook.net https://www.googletagmanager.com");
+    expect(directives["frame-src"]).toBe("frame-src https://www.googletagmanager.com https://td.doubleclick.net");
+    expect(directives["connect-src"]).toMatch(/^connect-src 'self' /);
+    expect(directives["connect-src"]).toContain("https://www.facebook.com");
+    // Sem curinga genérico: só os domínios listados.
+    expect(directives["connect-src"].split(" ")).not.toContain("https:");
+    expect(directives["connect-src"].split(" ")).not.toContain("*");
     expect(directives["object-src"]).toBe("object-src 'none'");
     expect(directives["frame-ancestors"]).toBe("frame-ancestors 'none'");
     expect(directives["form-action"]).toContain("https://auth.mercadopago.com.br");
