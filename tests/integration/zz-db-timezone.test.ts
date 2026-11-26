@@ -4,7 +4,7 @@
 // initdb local) para o teste valer também na CI, cujo servidor já roda em UTC.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
-import { createPrismaClient, withUtcSession } from "@/server/db";
+import { createPrismaClient, withExplicitSslMode, withUtcSession } from "@/server/db";
 import { db } from "../support/fixtures";
 
 const url = process.env.DATABASE_URL!;
@@ -67,5 +67,20 @@ describe("withUtcSession", () => {
     expect(new URL(withUtcSession("postgresql://u:p@h:5432/db?sslmode=require")).searchParams.get("sslmode")).toBe("require");
     expect(opts("postgresql://u:p@h/db?options=endpoint%3Dabc")).toBe("endpoint=abc -c TimeZone=UTC");
     expect(opts("postgresql://u:p@h/db?options=-c%20TimeZone%3DAmerica%2FSao_Paulo%20-c%20statement_timeout%3D5000")).toBe("-c statement_timeout=5000 -c TimeZone=UTC");
+  });
+});
+
+describe("withExplicitSslMode", () => {
+  const mode = (u: string) => new URL(withExplicitSslMode(u)).searchParams.get("sslmode");
+  it("escreve verify-full no lugar dos apelidos do pg 8, preservando o resto da URL", () => {
+    for (const m of ["require", "prefer", "verify-ca", "REQUIRE"]) expect(mode(`postgresql://u:p@h/db?sslmode=${m}`)).toBe("verify-full");
+    const neon = new URL(withExplicitSslMode("postgresql://u:p%40x@ep-x-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"));
+    expect(neon.searchParams.get("channel_binding")).toBe("require");
+    expect(neon.password).toBe("p%40x");
+    expect(neon.hostname).toBe("ep-x-pooler.sa-east-1.aws.neon.tech");
+  });
+  it("não mexe em disable, verify-full nem em URL sem sslmode (banco local)", () => {
+    for (const u of ["postgresql://u:p@localhost:5432/db", "postgresql://u:p@h/db?sslmode=disable", "postgresql://u:p@h/db?sslmode=verify-full"])
+      expect(withExplicitSslMode(u)).toBe(u);
   });
 });
