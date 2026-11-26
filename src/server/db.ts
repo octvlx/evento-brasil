@@ -21,9 +21,24 @@ export function withUtcSession(connectionString: string): string {
   return url.toString();
 }
 
+/**
+ * O `pg` 8 já trata `sslmode=prefer|require|verify-ca` como `verify-full` (certificado e
+ * nome do servidor conferidos), mas avisa em todo processo que isso muda no pg 9. A URL
+ * do Neon vem da integração da Vercel com `sslmode=require` e não pode ser editada, então
+ * o modo é escrito explicitamente aqui: mesma conexão de hoje, sem o aviso, e sem cair
+ * para uma verificação mais fraca quando o pg mudar. `disable` e URL sem sslmode (banco
+ * local) ficam como estão.
+ */
+export function withExplicitSslMode(connectionString: string): string {
+  const url = new URL(connectionString);
+  if (!/^(prefer|require|verify-ca)$/i.test(url.searchParams.get("sslmode") ?? "")) return connectionString;
+  url.searchParams.set("sslmode", "verify-full");
+  return url.toString();
+}
+
 export function createPrismaClient(connectionString = process.env.DATABASE_URL): PrismaClient {
   if (!connectionString) throw new Error("DATABASE_URL não definida");
-  return new PrismaClient({ adapter: new PrismaPg({ connectionString: withUtcSession(connectionString) }) });
+  return new PrismaClient({ adapter: new PrismaPg({ connectionString: withUtcSession(withExplicitSslMode(connectionString)) }) });
 }
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
