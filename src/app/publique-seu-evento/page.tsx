@@ -19,6 +19,7 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/primitives";
 import { commissionPerUnit } from "@/features/fees/policy";
+import { PayoutSimulator } from "@/features/fees/payout-simulator";
 import { BRAND } from "@/lib/brand";
 import { START_PUBLISHING_HREF } from "@/lib/help-links";
 import { formatBRL } from "@/lib/money";
@@ -347,6 +348,12 @@ async function Fees() {
         <p className="mt-5 text-xs text-white/70">
           {buyerPays ? "Valores antes da tarifa do Mercado Pago." : "“Valor para você” é antes da tarifa do Mercado Pago pelo processamento."} A comissão de cada pedido fica registrada no relatório de vendas.
         </p>
+      </div>
+      <div className="lg:col-span-2">
+        <PayoutSimulator
+          rule={{ percentBps: rule.percentBps, fixedCentsPerTicket: rule.fixedCentsPerTicket, bearer: rule.bearer }}
+          processingByOrganizer={rule.processingFeeBearer !== "PLATFORM"}
+        />
       </div>
     </div>
   );
