@@ -20,16 +20,29 @@ export interface ReconciliationReport {
   /** Sem id do provedor e ainda não encontrados, dentro da janela de espera (checkout abandonado): sem erro. */
   paymentsAwaitingProvider: number;
   paymentsNeedReview: number;
+  /** Sem id do provedor, consultados há pouco: esperam o intervalo antes de nova consulta. */
+  paymentsLinkBackedOff: number;
   refundsResumed: number;
   /** Reembolsos FAILED reprocessados automaticamente nesta rodada (e quantos deram certo). */
   refundsRetried: number;
   refundsRetrySucceeded: number;
   /** Reembolsos FAILED que esgotaram as tentativas ou foram bloqueados: exigem o admin. */
   refundsAwaitingAdminDecision: number;
-  errors: { kind: string; id: string; orderId?: string; message: string }[];
+  /** `since`: desde quando a cobrança está pendente (alerta de falha persistente, ops-health). */
+  errors: { kind: string; id: string; orderId?: string; message: string; since?: Date }[];
 }
 
 const WEBHOOK_GRACE_MS = 2 * 60_000;
+
+/**
+ * Intervalo entre consultas de uma cobrança sem id do provedor: cresce com a idade dela
+ * (1/6 da idade, entre 5 e 60 min). Checkout abandonado fica até 1 dia na janela de
+ * espera e uma falha do provedor pode durar horas: consultar a cada minuto só gastava
+ * chamadas ao provedor. A última consulta fica em `updatedAt`.
+ */
+export function linkCheckIntervalMs(createdAt: Date, now: Date): number {
+  return Math.min(60 * 60_000, Math.max(5 * 60_000, (now.getTime() - createdAt.getTime()) / 6));
+}
 
 /**
  * Idempotente: pode rodar a cada minuto (cron). Considera "parado" o que está
@@ -51,13 +64,15 @@ export async function reconcilePayments(
     paymentsClosedNotFound: 0,
     paymentsAwaitingProvider: 0,
     paymentsNeedReview: 0,
+    paymentsLinkBackedOff: 0,
     refundsResumed: 0,
     refundsRetried: 0,
     refundsRetrySucceeded: 0,
     refundsAwaitingAdminDecision: 0,
     errors: [],
   };
-  const fail = (kind: string, id: string, err: unknown, orderId?: string) => report.errors.push({ kind, id, orderId, message: String(err).slice(0, 300) });
+  const fail = (kind: string, id: string, err: unknown, orderId?: string, since?: Date) =>
+    report.errors.push({ kind, id, orderId, message: String(err).slice(0, 300), ...(since ? { since } : {}) });
 
   // 1. Webhooks registrados cujo processamento falhou (o provedor pode não reenviar).
   const hooks = await db.paymentWebhookEvent.findMany({
@@ -88,7 +103,7 @@ export async function reconcilePayments(
       await syncPaymentFromProvider(db, adapter, p.providerPaymentId!);
       report.paymentsSynced++;
     } catch (err) {
-      fail("payment", p.id, err, p.orderId);
+      fail("payment", p.id, err, p.orderId, p.createdAt);
     }
   }
 
@@ -116,11 +131,20 @@ export async function reconcilePayments(
   }
 
   // 3. Pagamentos sem id do provedor: o processo caiu entre criar no provedor e salvar o id.
+  // Consultadas há menos que o intervalo (linkCheckIntervalMs) esperam; as mais antigas
+  // primeiro, para as que esperam não tomarem o limite das que estão na vez.
   const unlinked = await db.payment.findMany({
     where: { provider: adapter.id, status: "PENDING", providerPaymentId: null, method: { not: "FREE" }, createdAt: { lt: cutoff } },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     take: limit,
   });
+  // Registra a consulta (só se a cobrança segue pendente e sem vínculo) para a próxima esperar.
+  const touch = (id: string) => db.payment.updateMany({ where: { id, status: "PENDING", providerPaymentId: null }, data: { updatedAt: now } });
   for (const p of unlinked) {
+    if (now.getTime() - p.updatedAt.getTime() < linkCheckIntervalMs(p.createdAt, now)) {
+      report.paymentsLinkBackedOff++;
+      continue;
+    }
     try {
       if (!adapter.findPaymentByReference) {
         // Sem como consultar com segurança: sinaliza para revisão manual, nunca marca como pago/falho às cegas.
@@ -141,9 +165,10 @@ export async function reconcilePayments(
       await applyPaymentSnapshot(db, adapter, snapshot);
       report.paymentsLinked++;
     } catch (err) {
-      // Checkout abandonado dentro da janela: tenta de novo na próxima rodada, sem log de erro.
+      // Checkout abandonado dentro da janela: tenta de novo depois do intervalo, sem log de erro.
       if (err instanceof PaymentNotYetFoundError) report.paymentsAwaitingProvider++;
-      else fail("payment-link", p.id, err, p.orderId);
+      else fail("payment-link", p.id, err, p.orderId, p.createdAt);
+      await touch(p.id);
     }
   }
 
