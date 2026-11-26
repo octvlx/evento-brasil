@@ -19,7 +19,6 @@ import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
 import { getPublicEvent, relatedEvents, trackingLinkCouponCode } from "@/server/services/catalog";
 import { EventGrid } from "@/components/site/event-card";
-import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { eventJsonLd, jsonLdHtml } from "@/lib/structured-data";
 import { formatAddress } from "@/lib/br";
 import { eventAddress, googleCalendarUrl, mapLinks } from "@/lib/event-links";
@@ -33,7 +32,7 @@ export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">)
   const { slug } = await params;
   const e = await db.event.findFirst({
     where: { slug, status: { in: ["PUBLISHED", "COMPLETED"] }, organization: { status: "APPROVED" } },
-    select: { title: true, summary: true, coverImageUrl: true, isUnlisted: true, city: { select: { name: true, state: true } } },
+    select: { title: true, summary: true, isUnlisted: true, city: { select: { name: true, state: true } } },
   });
   if (!e) return { title: "Evento não encontrado" };
   const where = e.city ? ` em ${e.city.name} – ${e.city.state}` : "";
@@ -41,7 +40,9 @@ export async function generateMetadata({ params }: PageProps<"/eventos/[slug]">)
     title: `${e.title}${where}`,
     description: e.summary ?? `Ingressos para ${e.title}${where}.`,
     alternates: { canonical: `/eventos/${slug}` },
-    openGraph: { title: e.title, description: e.summary ?? undefined, images: [e.coverImageUrl ?? DEFAULT_OG_IMAGE] },
+    // A imagem vem de ./opengraph-image (gerada com título, data, local e preço; a capa ao fundo).
+    openGraph: { title: e.title, description: e.summary ?? undefined },
+    twitter: { card: "summary_large_image" },
     // Evento privado: abre pelo link, mas não entra em buscadores.
     ...(e.isUnlisted ? { robots: { index: false, follow: false } } : {}),
   };
