@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { ArrowRight, Search } from "lucide-react";
@@ -58,6 +58,8 @@ async function CityContent({ params, searchParams }: { params: Promise<{ slug: s
   const categories = await listCategories(db);
   const categoria = categories.some((c) => c.slug === sp.categoria) ? sp.categoria : undefined;
   const data = PERIODS.find(([v]) => v === sp.data)?.[0];
+  // Só a categoria: vai para a página própria da categoria na cidade (um endereço por recorte).
+  if (categoria && !sp.data) permanentRedirect(`/cidades/${slug}/${categoria}`);
   const filtered = Boolean(categoria || data);
 
   return (
@@ -100,7 +102,7 @@ async function CityContent({ params, searchParams }: { params: Promise<{ slug: s
             ))}
           </nav>
           <div className="mt-4">
-            <CategoryChips tone="hero" categories={categories} active={categoria} hrefFor={(c) => cityHref(slug, { categoria: c, data })} />
+            <CategoryChips tone="hero" categories={categories} active={categoria} hrefFor={(c) => (c && !data ? `/cidades/${slug}/${c}` : cityHref(slug, { categoria: c, data }))} />
           </div>
         </div>
       </section>
@@ -125,7 +127,7 @@ async function Showcase({ slug, cityName }: { slug: string; cityName: string }) 
       <p className="mb-8 text-muted-foreground">{count === 1 ? "1 evento publicado" : `${count} eventos publicados`}</p>
       {(featured.length > 0 || externalFeatured.length > 0) && <EventShelf id="destaques" title={`Em destaque em ${cityName}`} events={featured} externalEvents={externalFeatured} />}
       {shelves.map((s) => (
-        <EventShelf key={s.category.slug} id={s.category.slug} title={s.category.name} count={s.total} href={cityHref(slug, { categoria: s.category.slug })} events={s.events} />
+        <EventShelf key={s.category.slug} id={s.category.slug} title={s.category.name} count={s.total} href={`/cidades/${slug}/${s.category.slug}`} events={s.events} />
       ))}
       <ExternalEventsSection events={external} title={total ? `Também em ${cityName} (ingressos em outros sites)` : `Em ${cityName} (ingressos em outros sites)`} />
       <div className="mt-12 text-center">

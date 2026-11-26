@@ -650,3 +650,68 @@ export async function listSitemapEntries(db: Db, now = new Date()) {
   ]);
   return { events, cities, organizers };
 }
+
+// ───────────────────────────── Páginas categoria × cidade (SEO) ─────────────────────────────
+
+const inCity = (citySlug: string): Prisma.EventWhereInput => ({ OR: [{ city: { slug: citySlug } }, { venue: { city: { slug: citySlug } } }] });
+
+/** Eventos de uma categoria numa cidade, com números para o texto da página. Null se a cidade ou a categoria não existir. */
+export async function cityCategoryOverview(db: Db, citySlug: string, categorySlug: string, now = new Date(), limit = 48) {
+  const [city, category] = await Promise.all([getPublicCity(db, citySlug, now), db.eventCategory.findUnique({ where: { slug: categorySlug }, select: { id: true, slug: true, name: true } })]);
+  if (!city || !category) return null;
+  const where: Prisma.EventWhereInput = { AND: [publicEventWhere(now), inCity(citySlug), { categoryId: category.id }] };
+  const [total, rows, cityGroups, otherCities] = await Promise.all([
+    db.event.count({ where }),
+    db.event.findMany({ where, select: cardSelect, orderBy: [{ startsAt: "asc" }, { id: "asc" }], take: limit }),
+    // Outras categorias com evento na mesma cidade (links internos).
+    db.event.groupBy({ by: ["categoryId"], where: { AND: [publicEventWhere(now), inCity(citySlug)] }, _count: { _all: true } }),
+    // A mesma categoria em outras cidades.
+    db.event.groupBy({ by: ["cityId"], where: { AND: [publicEventWhere(now), { categoryId: category.id }, { cityId: { not: city.id } }] }, _count: { _all: true } }),
+  ]);
+  const events = await toCards(db, rows, now);
+  const [categories, cities] = await Promise.all([
+    db.eventCategory.findMany({ where: { id: { in: cityGroups.map((g) => g.categoryId).filter((id) => id !== category.id) } }, select: { id: true, slug: true, name: true, sortOrder: true } }),
+    db.city.findMany({ where: { id: { in: otherCities.map((g) => g.cityId!).filter(Boolean) } }, select: { id: true, slug: true, name: true, state: true } }),
+  ]);
+  const countOf = (groups: { _count: { _all: number } }[], i: number) => groups[i]?._count._all ?? 0;
+  // Locais mais frequentes entre os eventos listados.
+  const venueCount = new Map<string, number>();
+  for (const e of events) if (e.venueName) venueCount.set(e.venueName, (venueCount.get(e.venueName) ?? 0) + 1);
+  const prices = events.map((e) => e.minPrice?.totalCents).filter((c): c is number => c != null);
+  return {
+    city,
+    category,
+    total,
+    events,
+    stats: {
+      firstStartsAt: events[0]?.startsAt ?? null,
+      lastStartsAt: events.at(-1)?.startsAt ?? null,
+      minPriceCents: prices.length ? Math.min(...prices) : null,
+      hasFree: prices.includes(0),
+      venues: [...venueCount.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt-BR")).slice(0, 5).map(([name]) => name),
+    },
+    otherCategories: categories
+      .map((c) => ({ slug: c.slug, name: c.name, sortOrder: c.sortOrder, count: countOf(cityGroups.filter((g) => g.categoryId === c.id), 0) }))
+      .sort((a, b) => a.sortOrder - b.sortOrder),
+    otherCities: cities
+      .map((c) => ({ ...c, count: countOf(otherCities.filter((g) => g.cityId === c.id), 0) }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt-BR"))
+      .slice(0, 12),
+  };
+}
+
+/** Pares cidade × categoria com evento público, para o sitemap. */
+export async function listCityCategoryEntries(db: Db, now = new Date()) {
+  const groups = await db.event.groupBy({ by: ["cityId", "categoryId"], where: { ...publicEventWhere(now), cityId: { not: null } } });
+  if (!groups.length) return [];
+  const [cities, categories] = await Promise.all([
+    db.city.findMany({ where: { id: { in: [...new Set(groups.map((g) => g.cityId!))] } }, select: { id: true, slug: true } }),
+    db.eventCategory.findMany({ where: { id: { in: [...new Set(groups.map((g) => g.categoryId))] } }, select: { id: true, slug: true } }),
+  ]);
+  const citySlug = new Map(cities.map((c) => [c.id, c.slug]));
+  const categorySlug = new Map(categories.map((c) => [c.id, c.slug]));
+  return groups
+    .map((g) => ({ citySlug: citySlug.get(g.cityId!)!, categorySlug: categorySlug.get(g.categoryId)! }))
+    .filter((e) => e.citySlug && e.categorySlug)
+    .sort((a, b) => a.citySlug.localeCompare(b.citySlug) || a.categorySlug.localeCompare(b.categorySlug));
+}

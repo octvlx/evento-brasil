@@ -125,7 +125,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
   const trail = [
     { name: "Início", href: "/" },
     ...(city ? [{ name: city.name, href: `/cidades/${city.slug}` }] : []),
-    { name: event.category.name, href: city ? `/cidades/${city.slug}?categoria=${event.category.slug}` : `/eventos?categoria=${event.category.slug}` },
+    { name: event.category.name, href: city ? `/cidades/${city.slug}/${event.category.slug}` : `/eventos?categoria=${event.category.slug}` },
   ];
   const breadcrumbLd = {
     "@context": "https://schema.org",

@@ -71,6 +71,24 @@ test("página de cidade e 404 para evento inexistente", async ({ page }) => {
   await expect(page.locator('meta[name="robots"][content*="noindex"]').first()).toBeAttached();
 });
 
+test("página da categoria na cidade: texto próprio, trilha, links e endereço antigo redireciona", async ({ page }) => {
+  await page.goto("/cidades/franca-sp?categoria=esportes");
+  await expect(page).toHaveURL(/\/cidades\/franca-sp\/esportes$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Esportes em Franca");
+  await expect(page.getByTestId("category-summary")).toContainText(/Há \d+ eventos? à venda/);
+  await expect(page.getByText(/Corrida Noturna/)).toBeVisible();
+  const trail = page.getByRole("navigation", { name: "Trilha de navegação" });
+  await expect(trail.getByRole("link", { name: "Franca" })).toHaveAttribute("href", "/cidades/franca-sp");
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", /\/cidades\/franca-sp\/esportes$/);
+  const ldTypes = await page.locator('script[type="application/ld+json"]').evaluateAll((els) => els.map((e) => JSON.parse(e.textContent ?? "{}")["@type"]));
+  expect(ldTypes).toEqual(expect.arrayContaining(["BreadcrumbList", "ItemList"]));
+  // Faixa da vitrine da cidade leva à página da categoria.
+  await page.goto("/cidades/franca-sp");
+  await expect(page.locator('a[href="/cidades/franca-sp/esportes"]').first()).toBeAttached();
+  const xml = await (await page.request.get("/sitemap.xml")).text();
+  expect(xml).toContain("/cidades/franca-sp/esportes</loc>");
+});
+
 test("reembolso: pedido mostra a situação e os ingressos ficam cancelados com o motivo", async ({ page }) => {
   await login(page, USERS.customer, "/eventos/festival-litoral-sonoro-rio-de-janeiro");
   await page.locator("li").filter({ hasText: "Lote promocional" }).getByRole("button", { name: "Aumentar" }).click();
