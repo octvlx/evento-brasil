@@ -381,10 +381,37 @@ describe("reconciliação", () => {
     expect(waiting).toMatchObject({ paymentsAwaitingProvider: 1, paymentsLinked: 0, paymentsClosedNotFound: 0, errors: [] });
     expect(await db.payment.findUniqueOrThrow({ where: { id: pending.id } })).toMatchObject({ status: "PENDING", providerPaymentId: null });
 
-    const broken = await reconcilePayments(db, withLookup(async () => { throw new Error("timeout"); }), minutesFromNow(11));
+    // Consultada agora: a próxima rodada espera o intervalo (5 min aqui) sem chamar o provedor.
+    const lookup = vi.fn(async () => { throw new Error("timeout"); });
+    const soon = await reconcilePayments(db, withLookup(lookup), minutesFromNow(13));
+    expect(soon).toMatchObject({ paymentsLinkBackedOff: 1, errors: [] });
+    expect(lookup).not.toHaveBeenCalled();
+
+    const broken = await reconcilePayments(db, withLookup(lookup), minutesFromNow(17));
     expect(broken.paymentsAwaitingProvider).toBe(0);
-    expect(broken.errors).toEqual([expect.objectContaining({ kind: "payment-link", id: pending.id, orderId: order.id })]);
+    expect(broken.errors).toEqual([expect.objectContaining({ kind: "payment-link", id: pending.id, orderId: order.id, since: pending.createdAt })]);
+    // A falha também espera o intervalo antes de chamar o provedor de novo.
+    expect((await reconcilePayments(db, withLookup(lookup), minutesFromNow(18))).paymentsLinkBackedOff).toBe(1);
+    expect(lookup).toHaveBeenCalledOnce();
     await expireStaleOrders(db, minutesFromNow(16));
+  });
+
+  it("intervalo entre consultas cresce com a idade da cobrança (5 a 60 min)", async () => {
+    const { linkCheckIntervalMs } = await import("@/server/services/reconciliation");
+    const t0 = new Date("2026-11-25T00:00:00Z");
+    const at = (min: number) => new Date(t0.getTime() + min * 60_000);
+    expect(linkCheckIntervalMs(t0, at(11))).toBe(5 * 60_000);
+    expect(linkCheckIntervalMs(t0, at(120))).toBe(20 * 60_000);
+    expect(linkCheckIntervalMs(t0, at(600))).toBe(60 * 60_000);
+    // Uma falha de 10 h: cerca de 25 consultas ao provedor, não 600.
+    let calls = 0;
+    for (let m = 11, last = -Infinity; m <= 600; m++) {
+      if ((m - last) * 60_000 >= linkCheckIntervalMs(t0, at(m))) {
+        calls++;
+        last = m;
+      }
+    }
+    expect(calls).toBeLessThan(40);
   });
 
   it("retoma reembolso parado em PROCESSING sem estornar duas vezes", async () => {

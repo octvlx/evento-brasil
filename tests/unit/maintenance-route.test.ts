@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ reconcile: vi.fn(), complete: vi.fn(), email: vi.fn() }));
+const mocks = vi.hoisted(() => ({ reconcile: vi.fn(), complete: vi.fn(), email: vi.fn(), health: vi.fn() }));
 vi.mock("@/server/db", () => ({ db: {} }));
 vi.mock("@/server/env", () => ({ env: () => ({ CRON_SECRET: "unit-test-secret" }) }));
 vi.mock("@/server/payments", () => ({ getPaymentAdapter: () => ({}) }));
@@ -15,7 +15,7 @@ vi.mock("@/server/services/external-events", () => ({ runExternalSyncIfDue: asyn
 vi.mock("@/server/tickets/wallet/passes", () => ({ syncWalletPasses: async () => ({ google: 0, apple: 0, pushes: 0, failed: 0, skipped: 0 }) }));
 vi.mock("@/server/services/finance-log", () => ({ financeLog: vi.fn() }));
 vi.mock("@/server/email/outbox", () => ({ dispatchEmailOutbox: mocks.email }));
-vi.mock("@/server/services/ops-health", () => ({ operationalHealth: async () => [], raiseOperationalAlerts: async () => ({ problems: 0, queued: 0 }) }));
+vi.mock("@/server/services/ops-health", () => ({ operationalHealth: mocks.health, raiseOperationalAlerts: async () => ({ problems: 0, queued: 0 }) }));
 vi.mock("@/server/services/security-alerts", () => ({ securityAlerts: async () => [], raiseSecurityAlerts: async () => ({ problems: 0, queued: 0 }) }));
 vi.mock("@/server/log", () => ({ logEvent: vi.fn() }));
 import { POST } from "@/app/api/cron/maintenance/route";
@@ -24,16 +24,27 @@ beforeEach(() => {
   mocks.complete.mockReset().mockResolvedValue(0);
   mocks.email.mockReset().mockResolvedValue({ sent: 0 });
   mocks.reconcile.mockReset().mockResolvedValue({ errors: [] });
+  mocks.health.mockReset().mockResolvedValue([]);
 });
 
 const request = () => new Request("http://localhost/api/cron/maintenance", { method: "POST", headers: { "x-cron-secret": "unit-test-secret" } });
 
 describe("cron: erros parciais de reconciliação", () => {
-  it("responde 500 e continua as etapas posteriores", async () => {
-    mocks.reconcile.mockResolvedValue({ errors: [{ kind: "payment", id: "p1", message: "provider unavailable" }] });
+  it("erro de um pagamento não reprova o cron: 200, segue as etapas e vai para o alerta", async () => {
+    const errors = [{ kind: "payment", id: "p1", message: "provider unavailable", since: new Date(0) }];
+    mocks.reconcile.mockResolvedValue({ errors });
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ failedSteps: [], reconciliation: { errors: 1 } });
+    expect(mocks.health).toHaveBeenCalledWith(expect.anything(), expect.any(Date), [], errors);
+    expect(mocks.email).toHaveBeenCalledOnce();
+  });
+  it("etapa quebrada inteira responde 500 e continua as etapas posteriores", async () => {
+    mocks.reconcile.mockRejectedValue(new Error("banco fora"));
     const response = await POST(request());
     expect(response.status).toBe(500);
-    expect(await response.json()).toMatchObject({ failedSteps: ["reconcilePayments"], reconciliation: { errors: 1 } });
+    expect(await response.json()).toMatchObject({ failedSteps: ["reconcilePayments"], reconciliation: null });
+    expect(mocks.health).toHaveBeenCalledWith(expect.anything(), expect.any(Date), [], []);
     expect(mocks.email).toHaveBeenCalledOnce();
   });
   it("responde 200 sem erros e protege o endpoint", async () => {

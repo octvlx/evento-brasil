@@ -36,14 +36,24 @@ export const HEALTH_THRESHOLDS = {
   refundApprovalStuckHours: 48,
   /** Denúncia de evento sem análise há mais que isto. */
   eventReportPendingHours: 24,
+  /** Cobrança pendente há mais que isto e o provedor ainda não responde a consulta. */
+  reconciliationFailingMinutes: 30,
 } as const;
 
 export const ALERT_REPEAT_HOURS = 6;
 
 const minutesAgo = (now: Date, m: number) => new Date(now.getTime() - m * 60_000);
 
-/** Problemas abertos agora. Lista vazia = tudo certo. `invariantViolations` vem do cron. */
-export async function operationalHealth(db: Db, now = new Date(), invariantViolations: { code: string; ids: string[] }[] = []): Promise<HealthCheck[]> {
+/**
+ * Problemas abertos agora. Lista vazia = tudo certo. `invariantViolations` e
+ * `reconciliationErrors` (os erros da reconciliação desta rodada) vêm do cron.
+ */
+export async function operationalHealth(
+  db: Db,
+  now = new Date(),
+  invariantViolations: { code: string; ids: string[] }[] = [],
+  reconciliationErrors: { kind: string; id: string; since?: Date }[] = [],
+): Promise<HealthCheck[]> {
   const T = HEALTH_THRESHOLDS;
   const [webhooks, failedRefunds, processing, flagged, unlinked, emails, approvals, reports] = await Promise.all([
     db.paymentWebhookEvent.aggregate({
@@ -87,6 +97,14 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
       _min: { createdAt: true },
     }),
   ]);
+  // Cobrança pendente (com ou sem id do provedor) que o provedor não deixa conferir há
+  // mais que o limite: o comprador pode ter pago sem o pedido confirmar. Falha passageira
+  // de uma cobrança recente não alerta; a reconciliação tenta de novo.
+  const failingSince = minutesAgo(now, T.reconciliationFailingMinutes);
+  const failing = new Map<string, Date>();
+  for (const e of reconciliationErrors) {
+    if ((e.kind === "payment" || e.kind === "payment-link") && e.since && e.since <= failingSince) failing.set(e.id, e.since);
+  }
   const states = await refundRetryStates(db, failedRefunds);
   const awaiting = failedRefunds.filter((r) => states.get(r.id)?.awaitingAdminDecision);
 
@@ -123,6 +141,14 @@ export async function operationalHealth(db: Db, now = new Date(), invariantViola
     count: flagged._count._all,
     oldestAt: flagged._min.updatedAt,
     href: "/admin/pagamentos",
+  });
+  add({
+    code: "RECONCILIATION_FAILING",
+    severity: "critical",
+    title: `Pagamentos pendentes que o provedor não deixa conferir há mais de ${T.reconciliationFailingMinutes} min (o comprador pode ter pago)`,
+    count: failing.size,
+    oldestAt: [...failing.values()].reduce<Date | null>((min, d) => (!min || d < min ? d : min), null),
+    href: "/admin/pagamentos#pagamentos-em-analise",
   });
   add({
     code: "PAYMENT_PROVIDER_LINK_MISSING",

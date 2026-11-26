@@ -10,7 +10,8 @@
 // Protegido pelo CRON_SECRET: header x-cron-secret ou Authorization: Bearer (Vercel
 // Schedules, vercel.json); ver src/server/cron-auth.ts.
 // Cada etapa é idempotente e isolada: a falha de uma é registrada e não impede as
-// demais; a resposta sai com 500 para o agendador alertar. Nada aqui é a única
+// demais; a resposta sai com 500 para o agendador alertar. Erro de um item da
+// reconciliação (um pagamento) não é falha da etapa: vira alerta se persistir. Nada aqui é a única
 // proteção: o término do evento já é reconhecido pelo relógio em todo o backend.
 import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { db } from "@/server/db";
@@ -51,8 +52,9 @@ export async function POST(req: Request) {
   const expiredTransfers = await step("expireTicketTransfers", () => expireTicketTransfers(db));
   // Carteiras: passes de ingressos reembolsados, cancelados, usados ou transferidos.
   const walletPasses = await step("syncWalletPasses", () => syncWalletPasses(db));
+  // Falha de um pagamento não reprova o cron: vai para o log financeiro e, se persistir,
+  // para o alerta RECONCILIATION_FAILING (ops-health). Só a etapa quebrada inteira é 500.
   const reconciliation = await step("reconcilePayments", () => reconcilePayments(db, getPaymentAdapter()));
-  if (reconciliation?.errors.length) failed.push("reconcilePayments");
   const violations = (await step("checkFinancialInvariants", () => checkFinancialInvariants(db))) ?? [];
   if (violations.length) {
     // Incidente: nunca corrigir automaticamente — registrar para análise humana.
@@ -63,7 +65,7 @@ export async function POST(req: Request) {
   }
   // Alertas: problemas que precisam de alguém (não falham o cron; o próprio problema já é o aviso).
   const health = await step("operationalHealth", async () => {
-    const checks = await operationalHealth(db, new Date(), violations);
+    const checks = await operationalHealth(db, new Date(), violations, reconciliation?.errors ?? []);
     return { checks, ...(await raiseOperationalAlerts(db, checks)) };
   });
   // Segurança: 2FA travado, contas bloqueadas, papéis de admin, reembolsos fora do padrão.

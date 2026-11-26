@@ -78,6 +78,21 @@ describe("operationalHealth", () => {
     const [check] = await operationalHealth(db, new Date(), [{ code: "X", ids: ["a", "b"] }]);
     expect(check).toMatchObject({ code: "INVARIANT_VIOLATION", count: 2, severity: "critical" });
   });
+
+  it("pagamento que o provedor não deixa conferir só alerta depois de 30 min pendente", async () => {
+    const now = new Date();
+    const errors = [
+      { kind: "payment-link", id: "p1", since: minutesAgo(45) },
+      { kind: "payment-link", id: "p1", since: minutesAgo(45) },
+      { kind: "payment", id: "p2", since: minutesAgo(90) },
+      { kind: "payment-link", id: "p3", since: minutesAgo(12) }, // recente: falha passageira
+      { kind: "settled-payment", id: "p4", since: minutesAgo(900) }, // pago: fila própria, sem alerta
+      { kind: "refund", id: "r1" },
+    ];
+    const checks = await operationalHealth(db, now, [], errors);
+    expect(checks).toEqual([expect.objectContaining({ code: "RECONCILIATION_FAILING", severity: "critical", count: 2, oldestAt: errors[2].since })]);
+    expect(await operationalHealth(db, now, [], [errors[3]])).toEqual([]);
+  });
 });
 
 describe("raiseOperationalAlerts", () => {
