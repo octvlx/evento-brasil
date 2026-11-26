@@ -10,6 +10,7 @@ import { CheckoutPanel } from "@/features/orders/checkout-panel";
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
+import { AdTracking } from "@/features/tracking/ad-tracking";
 import { checkoutStep } from "@/features/orders/status-view";
 import { formatEventDateTime } from "@/lib/datetime";
 import { getPaymentAdapter } from "@/server/payments";
@@ -53,6 +54,7 @@ async function Checkout({ params }: { params: Promise<{ orderId: string }> }) {
   const initialNow = Date.now();
   return (
     <div className="mt-6 grid gap-8 lg:grid-cols-[1fr_360px]">
+      {order.status === "PENDING_PAYMENT" && <AdTracking ids={{ metaPixelId: order.event.metaPixelId, ga4MeasurementId: order.event.ga4MeasurementId, googleAdsTag: order.event.googleAdsTag }} stage={{ kind: "checkout", eventId: order.eventId, valueCents: order.totalCents }} />}
       <div className="space-y-4">
         {draft && <Link className="inline-block text-sm font-semibold text-secondary underline" href={`/checkout/revisao/${draft.id}`}>Voltar à revisão da compra</Link>}
         {order.isSimulated && (

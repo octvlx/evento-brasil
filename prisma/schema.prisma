@@ -521,6 +521,11 @@ model Event {
   // Marcador do cron: a releaseAt cuja liberação da cota já foi auditada. Se a data do
   // evento muda, a releaseAt muda e o cron audita de novo. Nunca é a garantia da regra.
   halfPriceReleaseAuditedFor DateTime?       @db.Timestamptz(3)
+  // Medição de anúncios do organizador (carregada só com o consentimento do comprador).
+  // CHECKs de formato na migração: Meta Pixel (dígitos), GA4 (G-…), Google Ads (AW-…[/rótulo]).
+  metaPixelId                String?
+  ga4MeasurementId           String?
+  googleAdsTag               String?
   // Marcador do cron: o início (startsAt) para o qual o lembrete por e-mail já foi
   // enfileirado. Se a data do evento muda, o lembrete sai de novo para a nova data.
   reminderQueuedFor          DateTime?       @db.Timestamptz(3)

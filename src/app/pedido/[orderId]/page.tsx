@@ -15,6 +15,7 @@ import { describeChangeValue, isRelevantField, RELEVANT_FIELD_LABELS, type Chang
 import { db } from "@/server/db";
 import { requireUser } from "@/server/auth/current";
 import { getOrderForBuyer } from "@/server/services/orders";
+import { AdTracking } from "@/features/tracking/ad-tracking";
 import { walletAvailability } from "@/server/tickets/wallet";
 import { WalletLinks } from "@/features/wallet/wallet-links";
 import { ARREPENDIMENTO_DAYS, openChangeRefundWindow, refundEligibility, retainedFixedFeeCents, type RefundEligibility } from "@/server/services/refunds";
@@ -87,6 +88,9 @@ async function OrderContent({ params, searchParams }: { params: Promise<{ orderI
 
   return (
     <>
+      {order.status === "PAID" && !order.isSimulated && (
+        <AdTracking ids={{ metaPixelId: order.event.metaPixelId, ga4MeasurementId: order.event.ga4MeasurementId, googleAdsTag: order.event.googleAdsTag }} stage={{ kind: "purchase", eventId: order.eventId, orderId: order.id, publicCode: order.publicCode, valueCents: order.totalCents }} />
+      )}
       {completedDraft && <ClearPurchasedCart eventId={order.eventId} idempotencyKey={completedDraft.idempotencyKey} />}
       <div className="flex items-start gap-4">
         <Icon className={`size-10 shrink-0 ${order.status === "PAID" ? "text-success" : order.status === "PENDING_PAYMENT" || order.status === "REFUND_PENDING" ? "text-warning" : "text-muted-foreground"}`} aria-hidden />
