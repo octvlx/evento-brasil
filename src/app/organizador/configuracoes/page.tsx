@@ -11,7 +11,9 @@ import {
 import { db } from "@/server/db";
 import { getPaymentAdapter } from "@/server/payments";
 import { checkoutMaxInstallments, sellerCheckoutReadiness } from "@/server/payments/mercadopago";
-import { sandboxTokens } from "@/server/payments/mercadopago-oauth";
+import { mercadoPagoDisconnectBlockers, sandboxTokens } from "@/server/payments/mercadopago-oauth";
+import { MercadoPagoDisconnectPanel } from "@/features/organizer/mercadopago-disconnect";
+import { MP_DISCONNECT_BLOCKER_TEXT } from "@/lib/mercadopago-disconnect";
 import { requireOrganizer } from "@/server/auth/organizer-context";
 import { OrganizationDeletionPanel } from "@/features/organizer/organization-deletion";
 import { latestOrganizationDeletionRequest, organizationDeletionBlockers } from "@/server/services/organization-deletion";
@@ -68,6 +70,10 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
         db.user.findUnique({ where: { id: user.id }, select: { googleSubject: true } }),
       ])
     : [null, [], null];
+  const mpConnected = !!org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt;
+  const [mpBlockers, mpUser] = mpConnected
+    ? await Promise.all([mercadoPagoDisconnectBlockers(db, org.id), me ?? db.user.findUnique({ where: { id: user.id }, select: { googleSubject: true } })])
+    : [[], null];
   const adapter = getPaymentAdapter();
   const v = org.verifications[0];
   // Mercado Pago ativo com credenciais de produção: a autorização OAuth habilita a venda.
@@ -84,6 +90,11 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
         )}
         {mp === "denied" && <Alert variant="warning">Autorização cancelada. Você pode tentar novamente.</Alert>}
         {mp === "error" && <Alert variant="danger">Não foi possível concluir a conexão. Confira a configuração ou inicie uma nova autorização.</Alert>}
+        {!mpConnected && org.mercadoPagoAccount?.revokedAt && (
+          <Alert variant="warning" data-testid="mp-disconnected">
+            Conta Mercado Pago desconectada: a venda de ingressos pagos está pausada. Reembolsos de vendas antigas exigem reconectar a mesma conta.
+          </Alert>
+        )}
         <Card className="space-y-3 p-6">
           <h2 className="font-display text-lg font-bold">Conta de recebimento</h2>
           <p className="text-sm">
@@ -109,21 +120,24 @@ async function Content({ searchParams }: { searchParams: Promise<{ mp?: string }
             <Alert>O provedor de pagamentos está indisponível nesta configuração.</Alert>
           )}
           {adapter.id !== "mercadopago" && org.status === "APPROVED" && org.paymentAccountStatus === "NOT_CONNECTED" && <ConnectPaymentButton simulated={adapter.isSimulated} />}
-          <p className="text-sm">Mercado Pago OAuth: {org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt ? "Autorizado" : "Não conectado ou requer nova autorização"}.{realCharges ? "" : " Esta autorização não habilita cobranças reais."}</p>
-          {org.status === "APPROVED" && org.mercadoPagoAccount && !org.mercadoPagoAccount.revokedAt && (
+          <p className="text-sm">Mercado Pago OAuth: {mpConnected ? "Autorizado" : "Não conectado ou requer nova autorização"}.{realCharges ? "" : " Esta autorização não habilita cobranças reais."}</p>
+          {org.status === "APPROVED" && mpConnected && (
             <Suspense fallback={<p className="text-sm text-muted-foreground">Verificando PIX na conta Mercado Pago…</p>}>
               <PixAvailability organizationId={org.id} />
             </Suspense>
           )}
           {org.status === "APPROVED" && (
             <form action="/api/mercadopago/connect" method="post">
-              <button className="underline" type="submit">{org.mercadoPagoAccount ? "Autorizar novamente Mercado Pago" : "Conectar Mercado Pago"}</button>
+              <button className="underline" type="submit">{mpConnected ? "Autorizar novamente Mercado Pago" : org.mercadoPagoAccount ? "Conectar Mercado Pago novamente" : "Conectar Mercado Pago"}</button>
             </form>
           )}
           {org.status === "APPROVED" && sandboxTokens() && (
             <p className="text-xs text-warning" data-testid="mp-oauth-sandbox">
               Modo sandbox: a autorização pede ao Mercado Pago credenciais de teste do vendedor. Depois de mudar essa configuração, autorize novamente.
             </p>
+          )}
+          {mpConnected && (
+            <MercadoPagoDisconnectPanel blockers={mpBlockers.map((b) => MP_DISCONNECT_BLOCKER_TEXT[b])} needsPassword={!mpUser?.googleSubject} />
           )}
           {v && (
             <p className="text-xs text-muted-foreground">

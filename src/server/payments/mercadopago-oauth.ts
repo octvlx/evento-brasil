@@ -6,7 +6,10 @@ import type { Actor } from "../auth/permissions";
 import { assertOrgPermission } from "../auth/permissions";
 import { hashToken, randomToken, safeEqual } from "../crypto";
 import { env, isLiveProduction } from "../env";
-import { AppError } from "../errors";
+import { AppError, invalidState } from "../errors";
+import { audit } from "../audit";
+import { confirmPassword } from "../services/organization-deletion";
+import { mpDisconnectBlockedMessage, type MpDisconnectBlocker } from "@/lib/mercadopago-disconnect";
 
 export const MP_COOKIE = "eb_mp_oauth";
 export const MP_TTL = 600;
@@ -133,6 +136,61 @@ export async function getMercadoPagoAccessToken(db: Db, organizationId: string) 
   }, { maxWait: 15000, timeout: 20000 });
   if (!outcome.token) throw new AppError("INVALID_STATE", "Conecte novamente sua conta Mercado Pago.");
   return outcome.token;
+}
+
+/** O que impede desconectar agora (lista vazia = pode). Regras em lib/mercadopago-disconnect.ts. */
+export async function mercadoPagoDisconnectBlockers(client: Db | Tx, organizationId: string, now = new Date()): Promise<MpDisconnectBlocker[]> {
+  const [pending, upcomingPaid, refunds, disputes, cancellations] = await Promise.all([
+    client.order.count({ where: { organizationId, status: "PENDING_PAYMENT", totalCents: { gt: 0 } } }),
+    client.order.count({ where: { organizationId, status: "PAID", totalCents: { gt: 0 }, event: { endsAt: { gt: now } } } }),
+    client.refund.count({ where: { order: { organizationId }, status: { in: ["AWAITING_APPROVAL", "REQUESTED", "PROCESSING", "FAILED"] } } }),
+    client.order.count({ where: { organizationId, status: { in: ["REFUND_PENDING", "DISPUTED"] } } }),
+    client.cancellationRequest.count({ where: { organizationId, status: "OPEN" } }),
+  ]);
+  const blockers: MpDisconnectBlocker[] = [];
+  if (pending) blockers.push("PENDING_PAYMENTS");
+  if (upcomingPaid) blockers.push("UPCOMING_PAID_ORDERS");
+  if (refunds) blockers.push("OPEN_REFUNDS");
+  if (disputes) blockers.push("OPEN_DISPUTES");
+  if (cancellations) blockers.push("OPEN_CANCELLATIONS");
+  return blockers;
+}
+
+/**
+ * Desconecta a conta Mercado Pago da organização (OWNER/ADMIN, `org:manage`; o dono passa
+ * pela exigência de 2FA de assertOrgPermission; senha confirmada).
+ *
+ * Os tokens guardados são apagados e a autorização fica revogada (revokedAt): a partir daí
+ * getMercadoPagoAccessToken recusa, então nenhuma cobrança, consulta ou reembolso usa a conta.
+ * O mercadoPagoUserId fica: identifica avisos tardios e estornos das vendas antigas.
+ *
+ * O Mercado Pago não documenta revogação do token pela aplicação (só o vendedor remove a
+ * permissão na conta dele); por isso a revogação é local e a tela orienta o vendedor.
+ *
+ * Mesma trava da conexão e da renovação: um checkout que pede o token depois daqui recusa.
+ */
+export async function disconnectMercadoPago(db: Db, actor: Actor, organizationId: string, input: { password?: string }, now = new Date()) {
+  await assertOrgPermission(db, actor, organizationId, "org:manage");
+  await confirmPassword(db, actor.id, input.password);
+  await db.$transaction(async (tx) => {
+    await lock(tx, organizationId);
+    // De novo sob a trava: o papel pode ter mudado entre a tela e o envio.
+    await assertOrgPermission(tx, actor, organizationId, "org:manage");
+    const account = await tx.mercadoPagoAccount.findUnique({ where: { organizationId }, select: { id: true, mercadoPagoUserId: true, revokedAt: true } });
+    if (!account || account.revokedAt) throw invalidState("Não há conta Mercado Pago conectada a esta organização.");
+    const blockers = await mercadoPagoDisconnectBlockers(tx, organizationId, now);
+    if (blockers.length) throw invalidState(mpDisconnectBlockedMessage(blockers));
+    await tx.mercadoPagoAccount.update({ where: { organizationId }, data: { revokedAt: now, accessTokenEncrypted: "", refreshTokenEncrypted: "", tokenExpiresAt: now } });
+    await syncAccountStatus(tx, organizationId, null);
+    await audit(tx, {
+      actorUserId: actor.id,
+      organizationId,
+      action: "mercadopago.disconnected",
+      entityType: "MercadoPagoAccount",
+      entityId: account.id,
+      metadata: { mercadoPagoUserId: account.mercadoPagoUserId, providerRevocation: "not_supported" },
+    });
+  }, { maxWait: 15000, timeout: 20000 });
 }
 
 export async function getMercadoPagoAccessTokenForUser(db: Db, mercadoPagoUserId: string) {
