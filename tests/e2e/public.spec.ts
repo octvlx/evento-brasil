@@ -172,6 +172,13 @@ test("robots.txt e sitemap.xml públicos", async ({ request }) => {
   // Páginas que definem openGraph próprio mantêm a imagem de compartilhamento padrão.
   const eventos = await (await request.get("/eventos")).text();
   expect(eventos).toMatch(/<meta property="og:image" content="[^"]*\/opengraph-image/);
+  // Evento: imagem própria (título, data, local e preço), gerada em PNG 1200×630.
+  const evento = await (await request.get("/eventos/noite-de-samba-no-terraco-sao-paulo")).text();
+  const og = evento.match(/<meta property="og:image" content="([^"]*\/eventos\/noite-de-samba-no-terraco-sao-paulo\/opengraph-image[^"]*)"/)?.[1];
+  expect(og).toBeTruthy();
+  const img = await request.get(new URL(og!.replace(/&amp;/g, "&")).pathname);
+  expect(img.status()).toBe(200);
+  expect(img.headers()["content-type"]).toBe("image/png");
 });
 
 test.describe("preço total com taxa (Decreto 13.108/2026)", () => {
