@@ -81,7 +81,7 @@ async function assertOwner(client: Db | Tx, actor: Actor, organizationId: string
 }
 
 /** Confirma a senha de quem pede (conta só com login do Google não tem senha própria). */
-async function confirmPassword(db: Db, userId: string, password: string | undefined) {
+export async function confirmPassword(db: Db, userId: string, password: string | undefined) {
   const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { passwordHash: true, googleSubject: true } });
   if (user.googleSubject && !password) return;
   if (!password || !(await verifyPassword(password, user.passwordHash))) throw new AppError("FORBIDDEN", "Senha incorreta.");

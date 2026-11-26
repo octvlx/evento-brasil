@@ -17,6 +17,7 @@ import { dispatchEmailOutbox } from "@/server/email/outbox";
 import { storeEventImage } from "@/server/storage";
 import { cancelEvent } from "@/server/services/cancellation";
 import { cancelOrganizationDeletionRequest, requestOrganizationDeletion } from "@/server/services/organization-deletion";
+import { disconnectMercadoPago } from "@/server/payments/mercadopago-oauth";
 import { createCoupon, createOrganizationCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { setEventAdTracking } from "@/server/services/ad-tracking";
@@ -522,6 +523,20 @@ export async function requestOrganizationDeletionAction(password: string, reason
   const res = await toActionResult(async () => {
     await rateLimit(`org-deletion-request:${user.id}`, 10, 60 * 60_000);
     await requestOrganizationDeletion(db, user, await activeOrgId(user.id), { password: String(password ?? "") || undefined, reason: String(reason ?? "") });
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+// ───────────────────────────── Mercado Pago ─────────────────────────────
+
+/** Desconecta a conta Mercado Pago da organização ativa (confirmando a senha). */
+export async function disconnectMercadoPagoAction(password: string): Promise<ActionResult> {
+  const user = await requireUser("/organizador/configuracoes");
+  const res = await toActionResult(async () => {
+    await rateLimit(`mp-disconnect:${user.id}`, 10, 60 * 60_000);
+    await disconnectMercadoPago(db, user, await activeOrgId(user.id), { password: String(password ?? "") || undefined });
     return undefined;
   });
   if (res.ok) refresh();
