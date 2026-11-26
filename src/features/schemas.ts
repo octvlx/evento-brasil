@@ -310,6 +310,8 @@ export const createOrderSchema = z.object({
         ticketTypeId: z.string().min(1),
         quantity: z.number().int().min(1).max(50),
         attendees: z.array(attendeeSchema).optional(),
+        // Lugar marcado: um assento por ingresso, na ordem dos ingressos.
+        seatIds: z.array(z.string().min(1).max(64)).max(50).optional(),
       }),
     )
     .min(1, "Selecione ao menos um ingresso")

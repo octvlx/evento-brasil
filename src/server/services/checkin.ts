@@ -1,4 +1,5 @@
 import "server-only";
+import { seatLabelsFor } from "./seat-holds";
 import type { CheckinResult, EventStatus, OfflineDivergence, TicketKind } from "@/generated/prisma/client";
 import { CHECKIN_GRACE_MS, checkinNotYetOpen, checkinOpensAt, checkinWindowOpen, MAX_CHECKIN_OPENS_MINUTES } from "@/lib/event-lifecycle";
 import { formatDateTimeShort } from "@/lib/datetime";
@@ -22,7 +23,7 @@ export interface CheckinResponse {
   // o titular atual. qrReplaced: o QR lido é o anterior a uma transferência (resultado
   // INVALID) — só informado para a mesma organização do evento.
   // simulated: ingresso de pedido com pagamento simulado (provedor de testes) — a portaria vê "TESTE".
-  ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null; transferred: boolean; qrReplaced?: true; simulated?: boolean };
+  ticket?: { code: string; holderName: string | null; ticketTypeName: string; ticketKind: TicketKind; checkedInAt: Date | null; transferred: boolean; qrReplaced?: true; simulated?: boolean; seat?: string | null };
   counters: { admitted: number; total: number };
   /** Portaria ainda fechada: quando abre (ISO). */
   opensAt?: string;
@@ -253,7 +254,9 @@ export async function checkInTicket(
       }
       // Só consultado quando o ingresso vai aparecer na tela (mesma organização).
       const transferred = ticket.event.organizationId === event.organizationId ? await wasTransferred(tx, ticket.id) : false;
-      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, ticketKind: ticket.ticketType.kind, checkedInAt, transferred, simulated: ticket.order.isSimulated });
+      // Lugar marcado: o assento aparece para a portaria (só do ingresso deste evento).
+      const seat = ticket.eventId === eventId ? ((await seatLabelsFor(tx, [ticket])).get(`${ticket.orderItemId}:${ticket.sequence}`) ?? null) : null;
+      const view = (checkedInAt: Date | null) => ({ code: ticket.code, holderName: ticket.holderName, ticketTypeName: ticket.ticketType.name, ticketKind: ticket.ticketType.kind, checkedInAt, transferred, simulated: ticket.order.isSimulated, seat });
 
       if (ticket.eventId !== eventId) {
         // Ingresso de outra organização: a leitura não é vinculada ao ingresso nem revela

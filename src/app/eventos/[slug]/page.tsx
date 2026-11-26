@@ -115,6 +115,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
     unavailableReason: t.unavailableReason,
     onSale: now >= event.salesStartAt && now < event.salesEndAt && (!t.salesStartAt || now >= t.salesStartAt) && (!t.salesEndAt || now < t.salesEndAt),
     requiresAttendeeInfo: t.requiresAttendeeInfo,
+    seated: t.seated,
   }));
 
   // Preço total por ingresso (com a taxa do comprador), o mesmo exibido e cobrado.

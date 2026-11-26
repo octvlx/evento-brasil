@@ -1,4 +1,5 @@
 import "server-only";
+import { SEAT_OF_TICKET } from "@/lib/seat-label";
 import type { Prisma } from "@/generated/prisma/client";
 import { ordersPagination } from "@/features/orders/pagination";
 import type { Db } from "../db";
@@ -18,6 +19,7 @@ export async function loadMyTickets(db: Db, holderUserId: string, rawPage: strin
       where: { ...where, holderUserId },
       include: {
         ticketType: { select: { name: true } },
+        orderItem: SEAT_OF_TICKET,
         order: { select: { status: true } },
         event: { select: { id: true, title: true, slug: true, startsAt: true, endsAt: true, timezone: true, coverImageUrl: true, status: true, transferDeadlineHours: true, transferMaxTransfers: true, transferAllowReturn: true } },
       },

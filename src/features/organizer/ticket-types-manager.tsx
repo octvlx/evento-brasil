@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Copy, Pencil, Trash2 } from "lucide-react";
+import { Armchair, Copy, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, Input, Label, Select } from "@/components/ui/primitives";
 import { TICKET_KINDS, type TicketTypeInput } from "@/features/schemas";
 import { TICKET_KIND } from "@/lib/labels";
 import { centsToInput, formatBRL, parseBRLToCents } from "@/lib/money";
 import { deleteTicketTypeAction, saveTicketTypeAction } from "./actions";
+import { SeatGridEditor } from "@/features/seats/seat-grid-editor";
 
 export interface ManagedTicketType {
   id: string;
@@ -26,6 +27,8 @@ export interface ManagedTicketType {
   salesEndLocal: string;
   requiresAttendeeInfo: boolean;
   isHidden: boolean;
+  /** Lugar marcado: estoque vem da grade de assentos. */
+  seated?: boolean;
 }
 
 const empty = { name: "", description: "", sector: "", kind: "GENERAL", price: "", quantityTotal: "100", minPerOrder: "1", maxPerOrder: "10", salesStartLocal: "", salesEndLocal: "", requiresAttendeeInfo: false, isHidden: false };
@@ -51,6 +54,7 @@ export function TicketTypesManager({
   allowDuplicate?: boolean;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [seatsFor, setSeatsFor] = useState<string | null>(null);
   const [f, setF] = useState(empty);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -114,7 +118,8 @@ export function TicketTypesManager({
           <li key={t.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border p-4">
             <div>
               <p className="font-semibold">
-                {t.name} {t.sector && <span className="text-xs font-normal text-muted-foreground">· {t.sector}</span>} {t.isHidden && <span className="text-xs text-muted-foreground">(oculto)</span>}
+                {t.name} {t.sector && <span className="text-xs font-normal text-muted-foreground">· {t.sector}</span>} {t.isHidden && <span className="text-xs text-muted-foreground">(oculto)</span>}{" "}
+                {t.seated && <span className="text-xs font-normal text-secondary">· lugar marcado</span>}
               </p>
               <p className="text-xs text-muted-foreground">
                 {TICKET_KIND[t.kind]} · {t.priceCents ? formatBRL(t.priceCents) : "Gratuito"} · vendidos {t.quantitySold} · reservados {t.quantityReserved} · reembolsados {t.quantityRefunded} · total {t.quantityTotal}
@@ -131,6 +136,9 @@ export function TicketTypesManager({
                 <Button variant="ghost" size="sm" onClick={() => edit(t)}>
                   <Pencil aria-hidden /> Editar
                 </Button>
+                <Button variant="ghost" size="sm" onClick={() => setSeatsFor(seatsFor === t.id ? null : t.id)} aria-expanded={seatsFor === t.id}>
+                  <Armchair aria-hidden /> Assentos
+                </Button>
                 {allowDuplicate && (
                   <Button variant="ghost" size="sm" onClick={() => edit(t, true)} aria-label={`Duplicar ${t.name}`}>
                     <Copy aria-hidden /> Duplicar
@@ -141,6 +149,11 @@ export function TicketTypesManager({
                     <Trash2 aria-hidden /> Excluir
                   </Button>
                 )}
+              </div>
+            )}
+            {!locked && seatsFor === t.id && (
+              <div className="w-full">
+                <SeatGridEditor ticketTypeId={t.id} onClose={() => setSeatsFor(null)} />
               </div>
             )}
           </li>
@@ -170,7 +183,8 @@ export function TicketTypesManager({
             </div>
             <div>
               <Label htmlFor="tt-qty">Quantidade</Label>
-              <Input id="tt-qty" type="number" min={1} className="mt-1.5" value={f.quantityTotal} onChange={(e) => setF({ ...f, quantityTotal: e.target.value })} />
+              <Input id="tt-qty" type="number" min={1} className="mt-1.5" value={f.quantityTotal} disabled={!!items.find((t) => t.id === editing)?.seated} onChange={(e) => setF({ ...f, quantityTotal: e.target.value })} />
+              {items.find((t) => t.id === editing)?.seated && <p className="mt-1 text-xs text-muted-foreground">Lugar marcado: a quantidade vem dos assentos à venda.</p>}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>

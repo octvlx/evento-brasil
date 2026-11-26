@@ -104,6 +104,7 @@ export async function wizardPageData(db: Db, organizationId: string, event: Wiza
     salesStartLocal: t.salesStartAt ? local(t.salesStartAt) : "",
     salesEndLocal: t.salesEndAt ? local(t.salesEndAt) : "",
     requiresAttendeeInfo: t.requiresAttendeeInfo,
+    seated: t.seated,
     isHidden: t.isHidden,
   }));
 

@@ -158,6 +158,7 @@ async function Content({ params }: { params: Promise<{ id: string }> }) {
             salesStartLocal: t.salesStartAt ? utcToZonedLocalInput(t.salesStartAt, tz) : "",
             salesEndLocal: t.salesEndAt ? utcToZonedLocalInput(t.salesEndAt, tz) : "",
             requiresAttendeeInfo: t.requiresAttendeeInfo,
+            seated: t.seated,
             isHidden: t.isHidden,
           }))}
         />

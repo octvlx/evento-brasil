@@ -3,6 +3,8 @@ import { z } from "zod";
 const fields = {
   quantities: z.record(z.string().max(128), z.number().int().min(0).max(50)).refine((value) => Object.keys(value).length <= 10),
   attendees: z.record(z.string().max(128), z.array(z.string().max(120)).max(50)).refine((value) => Object.keys(value).length <= 10),
+  // Lugar marcado: assentos escolhidos por tipo (o servidor confere de novo ao reservar).
+  seats: z.record(z.string().max(128), z.array(z.object({ id: z.string().max(64), label: z.string().max(8) })).max(50)).refine((value) => Object.keys(value).length <= 10),
   halfPrice: z.boolean(), coupon: z.string().max(64), idempotencyKey: z.union([z.literal(""), z.string().uuid()]),
 };
 export function decodeCartField<T>(field: string, raw: string | null, initial: T): T {
@@ -21,6 +23,8 @@ export function acceptedCartEntries(selection: CreateOrderInput): [string, strin
   const snapshot = {
     quantities: Object.fromEntries(selection.items.map((item) => [item.ticketTypeId, item.quantity])),
     attendees: Object.fromEntries(selection.items.filter((item) => item.attendees).map((item) => [item.ticketTypeId, item.attendees!.map((person) => person.name)])),
+    // O rascunho guarda só os ids; o rótulo volta quando o mapa é aberto.
+    seats: Object.fromEntries(selection.items.filter((item) => item.seatIds?.length).map((item) => [item.ticketTypeId, item.seatIds!.map((id) => ({ id, label: "" }))])),
     halfPrice: selection.halfPriceDeclaration ?? false, coupon: selection.couponCode ?? "", idempotencyKey: selection.idempotencyKey,
   };
   const entries: [string, string][] = [];
