@@ -106,6 +106,9 @@ export async function cancelQueuedEmails(client: Db | Tx, keys: { prefix: string
   return count;
 }
 
+// A reserva é curta, mas o banco pode estar acordando (Neon): folga acima dos 5 s padrão.
+const CLAIM_TX_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const;
+
 export async function dispatchEmailOutbox(
   db: Db,
   opts: { limit?: number; ids?: string[]; adapter?: EmailAdapter } = {},
@@ -116,25 +119,20 @@ export async function dispatchEmailOutbox(
   for (let i = 0; i < Math.min(opts.limit ?? 20, 100); i++) {
     const now = new Date();
     const job = await db.$transaction(async (tx) => {
-      const where = {
-        ...(opts.ids ? { id: { in: opts.ids } } : {}),
-        OR: [
-          { status: "QUEUED" as const, nextAttemptAt: { lte: now } },
-          { status: "PROCESSING" as const, lockedUntil: { lt: now } },
-        ],
-      };
-      const candidate = await tx.emailOutbox.findFirst({
-        where,
-        orderBy: { createdAt: "asc" },
-      });
-      if (!candidate) return null;
-      await tx.$queryRawUnsafe(
-        'SELECT id FROM "EmailOutbox" WHERE id=$1 FOR UPDATE',
-        candidate.id,
-      );
-      const current = await tx.emailOutbox.findFirst({
-        where: { ...where, id: candidate.id },
-      });
+      // Escolhe e trava a mensagem numa consulta só. SKIP LOCKED: outra rodada (cron
+      // repetido, worker) que já segura uma linha não faz esta esperar; ela pega a
+      // próxima. Esperar a trava estourava o tempo da transação e derrubava o lote.
+      const ids = opts.ids ?? null;
+      const [locked] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "EmailOutbox"
+        WHERE (${ids}::text[] IS NULL OR id = ANY(${ids}::text[]))
+          AND ((status = 'QUEUED' AND "nextAttemptAt" <= ${now})
+            OR (status = 'PROCESSING' AND "lockedUntil" < ${now}))
+        ORDER BY "createdAt" ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED`;
+      if (!locked) return null;
+      const current = await tx.emailOutbox.findUnique({ where: { id: locked.id } });
       if (!current) return { skipped: true as const };
       if (current.expiresAt && current.expiresAt <= now) {
         await tx.emailOutbox.update({
@@ -177,7 +175,7 @@ export async function dispatchEmailOutbox(
           leaseToken: randomUUID(),
         },
       });
-    });
+    }, CLAIM_TX_OPTIONS);
     if (!job) break;
     if ("skipped" in job) continue;
     try {

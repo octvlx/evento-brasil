@@ -140,6 +140,39 @@ it("does not starve valid messages behind expired or ambiguous old leases", asyn
     await db.emailOutbox.findUniqueOrThrow({ where: { id: healthy.id } }),
   ).toMatchObject({ status: "SENT" });
 });
+it("skips a row another transaction holds instead of waiting on its lock", async () => {
+  const held = await add("held");
+  await db.emailOutbox.update({ where: { id: held.id }, data: { createdAt: new Date(1) } });
+  const free = await add("free");
+  const transport = fake();
+  let release!: () => void;
+  const released = new Promise<void>((r) => (release = r));
+  let locked!: () => void;
+  const isLocked = new Promise<void>((r) => (locked = r));
+  const holder = db.$transaction(
+    async (tx) => {
+      await tx.$queryRawUnsafe('SELECT id FROM "EmailOutbox" WHERE id=$1 FOR UPDATE', held.id);
+      locked();
+      await released;
+    },
+    { timeout: 30_000 },
+  );
+  await isLocked;
+  try {
+    const started = Date.now();
+    expect(await dispatchEmailOutbox(db, { adapter: transport })).toEqual({ sent: 1, failed: 0 });
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(transport.send).toHaveBeenCalledTimes(1);
+    expect(await db.emailOutbox.findUniqueOrThrow({ where: { id: free.id } })).toMatchObject({ status: "SENT" });
+    expect(await db.emailOutbox.findUniqueOrThrow({ where: { id: held.id } })).toMatchObject({ status: "QUEUED" });
+  } finally {
+    release();
+    await holder;
+  }
+  // Livre de novo, sai na rodada seguinte; o filtro por ids continua valendo.
+  expect(await dispatchEmailOutbox(db, { adapter: transport, ids: [free.id] })).toEqual({ sent: 0, failed: 0 });
+  expect(await dispatchEmailOutbox(db, { adapter: transport, ids: [held.id] })).toEqual({ sent: 1, failed: 0 });
+});
 it("recovers a crashed worker lease and treats permanent refusal without automatic retries", async () => {
   const job = await add();
   await db.emailOutbox.update({
