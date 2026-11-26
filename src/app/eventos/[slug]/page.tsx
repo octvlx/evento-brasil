@@ -17,6 +17,7 @@ import { ATTR_COOKIE, decodeAttribution } from "@/features/orders/attribution";
 import { getPaymentAdapter } from "@/server/payments";
 import { db } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/current";
+import { AdTracking } from "@/features/tracking/ad-tracking";
 import { getPublicEvent, relatedEvents, trackingLinkCouponCode } from "@/server/services/catalog";
 import { EventGrid } from "@/components/site/event-card";
 import { eventJsonLd, jsonLdHtml } from "@/lib/structured-data";
@@ -368,6 +369,7 @@ async function EventContent({ params }: { params: Promise<{ slug: string }> }) {
             />
             )}
             <UtmCapture />
+            {!ended && <AdTracking ids={{ metaPixelId: event.metaPixelId, ga4MeasurementId: event.ga4MeasurementId, googleAdsTag: event.googleAdsTag }} stage={{ kind: "view", eventId: event.id, valueCents: minTotal }} />}
             </div>
           </Card>
         </aside>

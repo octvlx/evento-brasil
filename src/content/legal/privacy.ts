@@ -48,9 +48,10 @@ export const PRIVACY_POLICY: LegalDocument = {
             "Enviar mensagens sobre seus pedidos e ingressos: execução do contrato.",
             "Medir audiência e desempenho do site (páginas mais vistas, origem das visitas, velocidade de carregamento), de forma agregada e sem cookies: legítimo interesse (art. 7º, IX).",
             "Mostrar eventos perto de você a partir da localização aproximada: consentimento (art. 7º, I), dado pela permissão do navegador. Você pode negar ou retirar a permissão a qualquer momento nas configurações do navegador e escolher a cidade na busca.",
+            "Permitir que o organizador meça os anúncios do evento dele (Meta e Google), nas páginas do evento, do pagamento e do pedido: consentimento (art. 7º, I), pedido no aviso de cookies. Você pode recusar ou mudar a escolha em \"Preferências de cookies\", no rodapé do site.",
           ],
         },
-        "Não vendemos seus dados e não usamos cookies de publicidade.",
+        "Não vendemos seus dados.",
       ],
     },
     {
@@ -61,6 +62,7 @@ export const PRIVACY_POLICY: LegalDocument = {
             "Organizador do evento: nome e e-mail do titular, tipo e status do ingresso, registros de entrada e, na meia-entrada, a indicação do benefício. O organizador só pode usar esses dados para realizar o evento e cumprir a lei.",
             "Mercado Pago: dados do pedido necessários ao pagamento e ao reembolso. O Mercado Pago trata os dados de pagamento sob a política de privacidade dele.",
             "Google: quando você escolhe entrar com Google, e Apple ou Google, quando você adiciona o ingresso à carteira digital.",
+            "Meta (Facebook e Instagram) e Google (Analytics e Ads), só se você aceitar os cookies de medição num evento cujo organizador os configurou: recebem os cookies e identificadores do navegador deles, a página visitada, o evento, o valor e o código do pedido. Não enviamos seu nome, e-mail, telefone ou CPF. Meta e Google tratam esses dados sob as políticas de privacidade deles, e o organizador vê os resultados nas contas de anúncio dele.",
             "ViaCEP: somente o CEP digitado, para sugerir o endereço.",
             "Fornecedores de infraestrutura: hospedagem do site, banco de dados, armazenamento de arquivos e envio de e-mails, que tratam os dados por nossa conta e sob nossas instruções.",
             "Autoridades: quando a lei ou uma ordem judicial exigir.",
@@ -104,7 +106,8 @@ export const PRIVACY_POLICY: LegalDocument = {
     {
       title: "8. Cookies",
       blocks: [
-        "Usamos apenas cookies essenciais: o de sessão, que mantém você conectado, e os de preferência, como a cidade escolhida na busca ou encontrada pela sua localização (guardados por até 1 ano). Sem eles o site não funciona corretamente, por isso não pedimos consentimento para eles. Não usamos cookies de publicidade nem de rastreamento entre sites.",
+        "Usamos apenas cookies essenciais: o de sessão, que mantém você conectado, e os de preferência, como a cidade escolhida na busca ou encontrada pela sua localização (guardados por até 1 ano). Sem eles o site não funciona corretamente, por isso não pedimos consentimento para eles.",
+        "Cookies de medição de anúncios: quando o organizador de um evento configura o Meta Pixel, o Google Analytics ou o Google Ads, as páginas desse evento mostram um aviso. Esses cookies só são gravados se você clicar em \"Aceitar\"; se recusar, nada é carregado. A escolha vale por 6 meses e pode ser mudada a qualquer momento em \"Preferências de cookies\", no rodapé. Os cookies já gravados podem ser apagados nas configurações do navegador.",
         "Para medir audiência e desempenho usamos o Vercel Web Analytics e o Speed Insights, que não usam cookies nem identificam você. Antes de sair do seu navegador, o endereço da página é limpo: códigos de pedido, ingresso, convite e transferência, tokens e outros parâmetros são removidos, e só ficam os de campanha (utm_*). Os números são vistos apenas de forma agregada.",
       ],
     },

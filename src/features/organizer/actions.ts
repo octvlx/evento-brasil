@@ -19,6 +19,8 @@ import { cancelEvent } from "@/server/services/cancellation";
 import { cancelOrganizationDeletionRequest, requestOrganizationDeletion } from "@/server/services/organization-deletion";
 import { createCoupon, createOrganizationCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
+import { setEventAdTracking } from "@/server/services/ad-tracking";
+import type { AdTrackingInput } from "@/lib/ad-tracking";
 import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, duplicateEvent, submitEventForPublication, unpublishEvent, updateEvent, upsertTicketType } from "@/server/services/events";
 import { extendEventChangeWindow } from "@/server/services/event-changes";
@@ -529,6 +531,16 @@ export async function cancelOrganizationDeletionAction(): Promise<ActionResult> 
   const user = await requireUser("/organizador/configuracoes");
   const res = await toActionResult(async () => {
     await cancelOrganizationDeletionRequest(db, user, await activeOrgId(user.id));
+    return undefined;
+  });
+  if (res.ok) refresh();
+  return res;
+}
+
+export async function setEventAdTrackingAction(eventId: string, input: AdTrackingInput): Promise<ActionResult> {
+  const user = await requireUser("/organizador/eventos");
+  const res = await toActionResult(async () => {
+    await setEventAdTracking(db, user, String(eventId), input);
     return undefined;
   });
   if (res.ok) refresh();

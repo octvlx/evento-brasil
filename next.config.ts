@@ -5,16 +5,24 @@ const isDev = process.env.NODE_ENV === "development";
 // Cabeçalhos de segurança (docs/production-readiness.md). A CSP é sem nonce: nonce
 // exigiria renderização dinâmica em todas as páginas e é incompatível com o
 // pré-render parcial (cacheComponents/partialPrefetching) — ver o guia de CSP do
-// Next 16. O site não carrega script de terceiros; 'unsafe-inline' cobre os scripts
-// inline do próprio Next. 'unsafe-eval' só no dev (React Refresh).
+// Next 16. 'unsafe-inline' cobre os scripts inline do próprio Next; 'unsafe-eval' só no
+// dev (React Refresh). Terceiros: só a medição de anúncios do organizador (Meta Pixel,
+// Google Analytics/Ads), carregada pelo navegador apenas com o aceite do comprador
+// (src/features/tracking/ad-tracking.tsx).
+const AD_SCRIPTS = "https://connect.facebook.net https://www.googletagmanager.com";
+const AD_CONNECT =
+  "https://www.facebook.com https://connect.facebook.net https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://*.g.doubleclick.net";
+const AD_FRAMES = "https://www.googletagmanager.com https://td.doubleclick.net";
 export const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""} ${AD_SCRIPTS}`,
   "style-src 'self' 'unsafe-inline'",
   // Imagens de evento podem vir do armazenamento de objetos (https); QR do PIX é data:.
   "img-src 'self' data: blob: https:",
   "font-src 'self'",
-  "connect-src 'self'",
+  `connect-src 'self' ${AD_CONNECT}`,
+  // Google Ads usa um iframe de medição; nenhum outro iframe é permitido.
+  `frame-src ${AD_FRAMES}`,
   "media-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
