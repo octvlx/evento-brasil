@@ -6,11 +6,11 @@ import { ARREPENDIMENTO_DAYS, retainedFixedFeeCents } from "@/server/services/re
 const rule = { policyVersion: "t", percentBps: 1000, fixedCentsPerTicket: 300, bearer: "BUYER" as const };
 
 describe("parte fixa por unidade", () => {
-  it("inteira, meia (metade) e gratuito/cupom de 100% (zero)", () => {
+  it("inteira e meia (fixo inteiro, D4) e gratuito/cupom de 100% (zero)", () => {
     const { lines } = computeFees(
       [
         { ticketTypeId: "a", unitPriceCents: 10_000, quantity: 1 },
-        { ticketTypeId: "b", unitPriceCents: 5_000, quantity: 1, halfPrice: true },
+        { ticketTypeId: "b", unitPriceCents: 5_000, quantity: 1 },
         { ticketTypeId: "c", unitPriceCents: 0, quantity: 1 },
         { ticketTypeId: "d", unitPriceCents: 4_000, quantity: 1, discountPerUnitCents: 4_000 },
       ],
@@ -18,7 +18,7 @@ describe("parte fixa por unidade", () => {
     );
     expect(lines.map((l) => [l.fixedFeePerUnitCents, l.commissionPerUnitCents])).toEqual([
       [300, 1300],
-      [150, 650],
+      [300, 800],
       [0, 0],
       [0, 0],
     ]);

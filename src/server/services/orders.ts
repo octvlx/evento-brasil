@@ -446,7 +446,6 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
           unitPriceCents: byId.get(i.ticketTypeId)!.priceCents,
           quantity: i.quantity,
           discountPerUnitCents: discounts.get(i.ticketTypeId) ?? 0,
-          halfPrice: byId.get(i.ticketTypeId)!.kind === "HALF_PRICE",
         })),
         rule,
       );

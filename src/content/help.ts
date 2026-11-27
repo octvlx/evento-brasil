@@ -283,7 +283,7 @@ export function helpTopics(): HelpTopic[] {
           id: "taxa-meia-e-gratuito",
           question: "Meia-entrada e ingresso gratuito pagam taxa?",
           answer: [
-            "Ingressos gratuitos e cortesias não têm taxa. Na meia-entrada, a taxa acompanha o preço: a parte percentual incide sobre o valor da meia, e a parte fixa cai à metade.",
+            "Ingressos gratuitos e cortesias não têm taxa. Na meia-entrada, a parte percentual incide sobre o valor da meia, e a parte fixa é cobrada inteira.",
           ],
         },
       ],

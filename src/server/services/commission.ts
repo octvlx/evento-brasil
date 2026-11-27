@@ -66,9 +66,8 @@ export interface BuyerPricePreview {
 export function buyerPricePreview(
   rule: Pick<CommissionRule, "percentBps" | "fixedCentsPerTicket" | "bearer">,
   priceCents: number,
-  halfPrice = false,
 ): BuyerPricePreview {
-  const [line] = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1, halfPrice }], { ...rule, policyVersion: "preview" }).lines;
+  const [line] = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1 }], { ...rule, policyVersion: "preview" }).lines;
   return { priceCents, serviceFeeCents: line.serviceFeePerUnitCents, totalCents: priceCents + line.serviceFeePerUnitCents };
 }
 

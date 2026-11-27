@@ -71,16 +71,15 @@ export type { PriceQuote };
 export function quoteUnitPrice(
   priceCents: number,
   rule: Pick<CommissionRule, "policyVersion" | "percentBps" | "fixedCentsPerTicket" | "bearer">,
-  halfPrice = false,
 ): PriceQuote {
-  const fees = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1, halfPrice }], rule);
+  const fees = computeFees([{ ticketTypeId: "preview", unitPriceCents: priceCents, quantity: 1 }], rule);
   return { priceCents, serviceFeeCents: fees.serviceFeeCents, totalCents: fees.totalCents };
 }
 
 /** Menor total por ingresso entre os tipos visíveis (null sem ingressos). */
 export function minPriceQuote(types: { priceCents: number; kind: string }[], rule: Parameters<typeof quoteUnitPrice>[1]): PriceQuote | null {
   if (!types.length) return null;
-  return types.map((t) => quoteUnitPrice(t.priceCents, rule, t.kind === "HALF_PRICE")).reduce((min, q) => (q.totalCents < min.totalCents ? q : min));
+  return types.map((t) => quoteUnitPrice(t.priceCents, rule)).reduce((min, q) => (q.totalCents < min.totalCents ? q : min));
 }
 
 /** Regra de comissão vigente, sem consultas repetidas por evento. */
@@ -432,7 +431,7 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
     /** Identificação do organizador responsável (L10b); null sem verificação aprovada. */
     organizer,
     /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
-    prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule, t.kind === "HALF_PRICE")])) as Record<string, PriceQuote>,
+    prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule)])) as Record<string, PriceQuote>,
     buyerPaysFee: rule.bearer === "BUYER" || rule.fixedCentsPerTicket > 0,
     // Valor fixo da regra vigente e se volta no reembolso (a página decide com o provedor).
     fixedFee: { cents: rule.fixedCentsPerTicket, refundable: rule.fixedFeeRefundable },

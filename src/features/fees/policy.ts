@@ -2,9 +2,8 @@
 //
 // - Comissão por unidade = round_half_up(preço × bps / 10000) + fixo.
 // - Ingressos gratuitos (preço 0) nunca geram comissão.
-// - Meia-entrada (decisão D4): a taxa é proporcional ao valor da meia. A parte
-//   percentual já acompanha o preço; a parte fixa cai à metade, como o preço
-//   (meia = 50% da inteira, Lei 12.933/2013).
+// - Meia-entrada (decisão D4, revista em 2026-11-27): a parte percentual
+//   acompanha o preço da meia; o valor fixo por ingresso é cobrado inteiro.
 // - Cupom (ADR 0002): "preço" acima é o preço LÍQUIDO (tabela − desconto);
 //   um cupom de 100% gera ingresso gratuito, sem comissão.
 // - Valor fixo por ingresso: SEMPRE pago pelo comprador, como "taxa de
@@ -34,8 +33,6 @@ export interface FeeLineInput {
   quantity: number;
   /** Desconto de cupom por unidade (ADR 0002), 0 ≤ desconto ≤ preço. */
   discountPerUnitCents?: number;
-  /** Tipo HALF_PRICE: parte fixa da comissão proporcional (D4). */
-  halfPrice?: boolean;
 }
 
 export interface FeeLine {
@@ -73,18 +70,14 @@ export function commissionHeadline(rule: Pick<FeeRule, "percentBps" | "fixedCent
   return rule.fixedCentsPerTicket > 0 ? `${percent}% + ${formatBRL(rule.fixedCentsPerTicket)} por ingresso` : `${percent}% por ingresso`;
 }
 
-/** Fração da parte fixa da comissão cobrada na meia-entrada (D4): a mesma do preço. */
-export const HALF_PRICE_FIXED_FEE_BPS = 5_000;
-
-/** Parte fixa da comissão por unidade: 0 em ingresso gratuito, proporcional na meia (D4). */
-export function fixedFeePerUnit(unitPriceCents: number, rule: Pick<FeeRule, "fixedCentsPerTicket">, halfPrice = false): number {
-  if (unitPriceCents === 0) return 0;
-  return halfPrice ? applyBps(rule.fixedCentsPerTicket, HALF_PRICE_FIXED_FEE_BPS) : rule.fixedCentsPerTicket;
+/** Parte fixa da comissão por unidade: 0 em ingresso gratuito; inteira nos demais, meia-entrada inclusive (D4). */
+export function fixedFeePerUnit(unitPriceCents: number, rule: Pick<FeeRule, "fixedCentsPerTicket">): number {
+  return unitPriceCents === 0 ? 0 : rule.fixedCentsPerTicket;
 }
 
-export function commissionPerUnit(unitPriceCents: number, rule: Pick<FeeRule, "percentBps" | "fixedCentsPerTicket">, halfPrice = false): number {
+export function commissionPerUnit(unitPriceCents: number, rule: Pick<FeeRule, "percentBps" | "fixedCentsPerTicket">): number {
   if (unitPriceCents === 0) return 0;
-  return applyBps(unitPriceCents, rule.percentBps) + fixedFeePerUnit(unitPriceCents, rule, halfPrice);
+  return applyBps(unitPriceCents, rule.percentBps) + fixedFeePerUnit(unitPriceCents, rule);
 }
 
 /** Parte da comissão por unidade descontada do repasse: o percentual, só com bearer ORGANIZER. */
@@ -109,7 +102,7 @@ export function computeFees(lines: FeeLineInput[], rule: FeeRule): FeeBreakdown 
     const discount = l.discountPerUnitCents ?? 0;
     if (!Number.isSafeInteger(discount) || discount < 0 || discount > l.unitPriceCents) throw new RangeError("Desconto inválido");
     const net = l.unitPriceCents - discount;
-    const commission = commissionPerUnit(net, rule, l.halfPrice);
+    const commission = commissionPerUnit(net, rule);
     // O comprador paga sempre o fixo; o percentual também, se bearer BUYER.
     const serviceFee = commission - organizerFeePerUnit(net, rule);
     return {
@@ -120,7 +113,7 @@ export function computeFees(lines: FeeLineInput[], rule: FeeRule): FeeBreakdown 
       unitPriceCents: net,
       lineDiscountCents: discount * l.quantity,
       commissionPerUnitCents: commission,
-      fixedFeePerUnitCents: fixedFeePerUnit(net, rule, l.halfPrice),
+      fixedFeePerUnitCents: fixedFeePerUnit(net, rule),
       serviceFeePerUnitCents: serviceFee,
       lineSubtotalCents: net * l.quantity,
       lineCommissionCents: commission * l.quantity,
