@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/primitives";
-import { commissionPerUnit } from "@/features/fees/policy";
+import { commissionHeadline, commissionPerUnit } from "@/features/fees/policy";
 import { PayoutSimulator } from "@/features/fees/payout-simulator";
 import { BRAND } from "@/lib/brand";
 import { START_PUBLISHING_HREF } from "@/lib/help-links";
@@ -270,7 +270,7 @@ async function Fees() {
   const commission = commissionPerUnit(example, rule);
   const half = 5_000;
   const halfCommission = commissionPerUnit(half, rule, true);
-  const what = fixed > 0 ? `${percent}% + ${formatBRL(fixed)} por ingresso` : `${percent}% por ingresso`;
+  const what = commissionHeadline(rule);
   // Valor fixo não reembolsável (regra do admin): só na desistência do comprador depois do
   // prazo de arrependimento; o mesmo critério de retainedFixedFeeCents (refunds.ts).
   const fixedRetained = fixed > 0 && !rule.fixedFeeRefundable;
