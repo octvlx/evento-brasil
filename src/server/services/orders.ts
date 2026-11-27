@@ -451,7 +451,7 @@ export async function createOrder(db: Db, actor: Actor, raw: CreateOrderInput, o
         rule,
       );
       // Guarda B1 (ADR 0002): repasse negativo quebraria o razão na confirmação do pagamento.
-      const negative = lineWithNegativePayout(fees, rule.bearer);
+      const negative = lineWithNegativePayout(fees);
       if (negative?.discountPerUnitCents)
         throw new AppError("VALIDATION", "Desconto alto demais para este ingresso: o preço com desconto fica menor que a taxa da plataforma.");
       if (negative) throw new AppError("VALIDATION", "O preço deste ingresso é menor que a taxa da plataforma.");

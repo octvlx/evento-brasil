@@ -7,10 +7,11 @@
 //   (meia = 50% da inteira, Lei 12.933/2013).
 // - Cupom (ADR 0002): "preço" acima é o preço LÍQUIDO (tabela − desconto);
 //   um cupom de 100% gera ingresso gratuito, sem comissão.
-// - bearer ORGANIZER: comprador paga o valor de face; comissão é descontada
-//   do repasse do organizador.
-// - bearer BUYER: comissão é cobrada do comprador como "taxa de serviço",
-//   exibida de forma destacada antes do pagamento.
+// - Valor fixo por ingresso: SEMPRE pago pelo comprador, como "taxa de
+//   serviço" destacada antes do pagamento (reembolsável ou não, conforme a regra).
+// - `bearer` decide só quem paga a parte PERCENTUAL:
+//   - ORGANIZER: descontada do repasse do organizador;
+//   - BUYER: somada à taxa de serviço do comprador.
 // - Custos do processador de pagamento são registrados à parte quando o
 //   provedor os informa (processingFeeBearer).
 
@@ -22,6 +23,7 @@ export interface FeeRule {
   policyVersion: string;
   percentBps: number;
   fixedCentsPerTicket: number;
+  /** Quem paga a parte percentual. O valor fixo é sempre do comprador. */
   bearer: FeeBearer;
 }
 
@@ -65,13 +67,13 @@ export interface FeeBreakdown {
   organizerShareCents: number;
 }
 
-/** Fração da parte fixa da comissão cobrada na meia-entrada (D4): a mesma do preço. */
 /** Regra em texto curto ("5% + R$ 2,50 por ingresso"), igual na home e em /publique-seu-evento. */
 export function commissionHeadline(rule: Pick<FeeRule, "percentBps" | "fixedCentsPerTicket">): string {
   const percent = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(rule.percentBps / 100);
   return rule.fixedCentsPerTicket > 0 ? `${percent}% + ${formatBRL(rule.fixedCentsPerTicket)} por ingresso` : `${percent}% por ingresso`;
 }
 
+/** Fração da parte fixa da comissão cobrada na meia-entrada (D4): a mesma do preço. */
 export const HALF_PRICE_FIXED_FEE_BPS = 5_000;
 
 /** Parte fixa da comissão por unidade: 0 em ingresso gratuito, proporcional na meia (D4). */
@@ -85,16 +87,19 @@ export function commissionPerUnit(unitPriceCents: number, rule: Pick<FeeRule, "p
   return applyBps(unitPriceCents, rule.percentBps) + fixedFeePerUnit(unitPriceCents, rule, halfPrice);
 }
 
+/** Parte da comissão por unidade descontada do repasse: o percentual, só com bearer ORGANIZER. */
+export function organizerFeePerUnit(unitPriceCents: number, rule: Pick<FeeRule, "percentBps" | "bearer">): number {
+  return rule.bearer === "ORGANIZER" ? applyBps(unitPriceCents, rule.percentBps) : 0;
+}
+
 /**
- * Com bearer ORGANIZER a comissão sai do repasse; se a comissão por unidade
- * passar do preço (taxa fixa maior que o ingresso), o repasse fica negativo e
- * o razão não fecha. Devolve a primeira linha nessa situação, se houver.
- * Preço 0 nunca entra (comissão 0); bearer BUYER nunca entra (comissão é paga
- * à parte pelo comprador).
+ * Se a parte da comissão descontada do repasse passar do preço, o repasse fica
+ * negativo e o razão não fecha. Devolve a primeira linha nessa situação, se houver.
+ * Como só o percentual sai do repasse (o fixo é do comprador) e `applyBps` recusa
+ * mais de 100%, hoje isso não acontece; fica como trava do razão.
  */
-export function lineWithNegativePayout(breakdown: Pick<FeeBreakdown, "lines">, bearer: FeeBearer): FeeLine | undefined {
-  if (bearer !== "ORGANIZER") return undefined;
-  return breakdown.lines.find((l) => l.commissionPerUnitCents > l.unitPriceCents);
+export function lineWithNegativePayout(breakdown: Pick<FeeBreakdown, "lines">): FeeLine | undefined {
+  return breakdown.lines.find((l) => l.commissionPerUnitCents - l.serviceFeePerUnitCents > l.unitPriceCents);
 }
 
 export function computeFees(lines: FeeLineInput[], rule: FeeRule): FeeBreakdown {
@@ -105,7 +110,8 @@ export function computeFees(lines: FeeLineInput[], rule: FeeRule): FeeBreakdown 
     if (!Number.isSafeInteger(discount) || discount < 0 || discount > l.unitPriceCents) throw new RangeError("Desconto inválido");
     const net = l.unitPriceCents - discount;
     const commission = commissionPerUnit(net, rule, l.halfPrice);
-    const serviceFee = rule.bearer === "BUYER" ? commission : 0;
+    // O comprador paga sempre o fixo; o percentual também, se bearer BUYER.
+    const serviceFee = commission - organizerFeePerUnit(net, rule);
     return {
       ticketTypeId: l.ticketTypeId,
       quantity: l.quantity,

@@ -62,15 +62,14 @@ describe("T — cupons do organizador", () => {
     expect(await db.coupon.count()).toBe(0);
   });
 
-  it("avisa quando o desconto deixa o ingresso abaixo da taxa da plataforma ou mais barato que a meia", async () => {
+  it("avisa quando o desconto deixa o ingresso mais barato que a meia; fixo acima do líquido não gera aviso", async () => {
     const { owner, event } = await setup();
-    // Taxa: 7% + R$ 1,00 por ingresso, descontada do organizador.
+    // Taxa: 7% descontado do organizador + R$ 1,00 por ingresso pago pelo comprador.
     await db.commissionRule.updateMany({ where: { scope: "PLATFORM" }, data: { fixedCentsPerTicket: 100, bearer: "ORGANIZER" } });
-    // 95%: VIP (R$ 10) cai para R$ 0,50 < taxa; Inteira (R$ 50) cai para R$ 2,50 < meia (R$ 25).
+    // 95%: VIP (R$ 10) cai para R$ 0,50, abaixo do fixo, mas o fixo é do comprador: sem aviso.
+    // Inteira (R$ 50) cai para R$ 2,50 < meia (R$ 25). VIP já custa menos que a meia: sem aviso de meia.
     const { warnings } = await createCoupon(db, owner, event.id, percent("QUASE", 9500));
-    // VIP já custa menos que a meia sem cupom: não recebe o aviso de meia.
-    expect(warnings).toHaveLength(2);
-    expect(warnings.join("\n")).toMatch(/"VIP": .*abaixo da taxa/);
+    expect(warnings).toHaveLength(1);
     expect(warnings.join("\n")).toMatch(/"Inteira": .*mais barato que a meia-entrada/);
     // 10%: nenhum aviso. Cupom de 100% zera o preço (gratuito), sem aviso de taxa.
     expect((await createCoupon(db, owner, event.id, percent("LEVE", 1000))).warnings).toEqual([]);

@@ -7,9 +7,9 @@ import type { LegalDocument } from "./types";
 export const ORGANIZER_TERMS: LegalDocument = {
   kind: "ORGANIZER",
   title: "Termos para organizadores",
-  version: "1.0",
+  version: "1.1",
   path: "/termos-organizador",
-  updatedAt: "2026-11-23",
+  updatedAt: "2026-11-27",
   sections: [
     {
       title: "1. Partes e objeto",
@@ -47,7 +47,8 @@ export const ORGANIZER_TERMS: LegalDocument = {
     {
       title: "5. Taxa de serviço",
       blocks: [
-        "A TICKET24 é remunerada pela taxa de serviço definida na regra de comissão aplicável à organização ou ao evento, com parte percentual, parte fixa por ingresso ou ambas. A regra também define quem paga a taxa (o comprador, somada ao preço, ou o organizador, descontada do valor da venda), quem arca com as tarifas do meio de pagamento, se a taxa é devolvida nos reembolsos e se a parte fixa é reembolsável.",
+        "A TICKET24 é remunerada pela taxa de serviço definida na regra de comissão aplicável à organização ou ao evento, com parte percentual, parte fixa por ingresso ou ambas.",
+        "A parte fixa por ingresso é sempre paga pelo comprador, somada ao preço e mostrada antes do pagamento. A regra define quem paga a parte percentual: o comprador, somada ao preço, ou o organizador, descontada do valor da venda. A regra também define quem arca com as tarifas do meio de pagamento, se a taxa é devolvida nos reembolsos e se a parte fixa é reembolsável.",
         "A regra vigente é informada ao organizador antes da publicação do evento e vale para as vendas feitas enquanto estiver vigente. Mudanças valem só para vendas futuras.",
         "Ingressos gratuitos e cortesias não têm taxa. Na meia-entrada, a parte fixa cai à metade.",
       ],

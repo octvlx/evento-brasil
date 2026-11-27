@@ -72,7 +72,7 @@ describe("valor fixo não reembolsável", () => {
     expect(refund).toMatchObject({ amountCents: 11_300, retainedFeeCents: 0 });
   });
 
-  it("regra com fixo reembolsável não retém; organizador pagando a comissão também fecha o razão", async () => {
+  it("regra com fixo reembolsável não retém; organizador pagando o percentual também fecha o razão", async () => {
     const refundable = await setup({ fixedFeeRefundable: true });
     const b1 = await makeUser();
     const o1 = (await buyAndPay(b1, refundable.event.id, [{ ticketTypeId: refundable.types[0].id, quantity: 1 }])).order;
@@ -84,9 +84,13 @@ describe("valor fixo não reembolsável", () => {
     const o2 = (await buyAndPay(b2, organizerPays.event.id, [{ ticketTypeId: organizerPays.types[0].id, quantity: 1 }])).order;
     const p2 = (await db.order.findUniqueOrThrow({ where: { id: o2.id } })).paidAt!;
     const r2 = await requestCustomerRefund(db, adapter, b2, o2.id, new Date(p2.getTime() + 8 * DAY));
-    expect(r2).toMatchObject({ amountCents: 9_700, retainedFeeCents: 300 });
+    // O comprador pagou R$ 100 + R$ 3 de fixo (o percentual sai do repasse); fica sem o fixo.
+    expect(o2).toMatchObject({ totalCents: 10_300, serviceFeeCents: 300, commissionCents: 1_300 });
+    expect(r2).toMatchObject({ amountCents: 10_000, retainedFeeCents: 300 });
     const { net } = await ledgerFor(o2.id);
-    expect(net("PLATFORM_COMMISSION")).toBe(300);
+    expect(net("PLATFORM_SERVICE_FEE")).toBe(300);
+    expect(net("PLATFORM_COMMISSION")).toBe(0);
+    expect(net("ORGANIZER_PAYABLE")).toBe(0);
     expect(await checkFinancialInvariants(db)).toEqual([]);
   });
 

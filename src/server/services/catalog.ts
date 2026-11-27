@@ -433,7 +433,7 @@ export async function getPublicEvent(db: Db, slug: string, now = new Date()) {
     organizer,
     /** Preço por tipo de ingresso como será cobrado (valor de face + taxa do comprador). */
     prices: Object.fromEntries(event.ticketTypes.filter((t) => !t.isHidden).map((t) => [t.id, quoteUnitPrice(t.priceCents, rule, t.kind === "HALF_PRICE")])) as Record<string, PriceQuote>,
-    buyerPaysFee: rule.bearer === "BUYER",
+    buyerPaysFee: rule.bearer === "BUYER" || rule.fixedCentsPerTicket > 0,
     // Valor fixo da regra vigente e se volta no reembolso (a página decide com o provedor).
     fixedFee: { cents: rule.fixedCentsPerTicket, refundable: rule.fixedFeeRefundable },
     /** Término passado (pelo relógio, mesmo com o status ainda PUBLISHED): sem venda. */

@@ -436,18 +436,30 @@ export function CommissionRuleForm({
         </div>
       )}
       <div>
-        <Label htmlFor="percent">Comissão (%)</Label>
+        <Label htmlFor="percent">Comissão percentual (%)</Label>
         <Input id="percent" name="percent" type="number" step="0.01" min={0} max={100} value={percent} onChange={(e) => setPercent(e.target.value)} className="mt-1.5" />
       </div>
       <div>
         <Label htmlFor="fixedCentsPerTicket">Valor fixo por ingresso (centavos)</Label>
-        <Input id="fixedCentsPerTicket" name="fixedCentsPerTicket" type="number" min={0} value={fixed} onChange={(e) => setFixed(e.target.value)} className="mt-1.5" />
+        <Input
+          id="fixedCentsPerTicket"
+          name="fixedCentsPerTicket"
+          type="number"
+          min={0}
+          value={fixed}
+          onChange={(e) => setFixed(e.target.value)}
+          aria-describedby="fixed-payer-note"
+          className="mt-1.5"
+        />
+        <p id="fixed-payer-note" className="mt-1 text-xs text-muted-foreground">
+          Sempre pago pelo comprador, como taxa de serviço.
+        </p>
       </div>
       <div>
-        <Label htmlFor="bearer">Quem paga a comissão</Label>
+        <Label htmlFor="bearer">Quem paga a comissão percentual</Label>
         <Select id="bearer" name="bearer" value={bearer} onChange={(e) => setBearer(e.target.value as FeeBearer)} className="mt-1.5">
           <option value="ORGANIZER">Organizador (descontada do repasse)</option>
-          <option value="BUYER">Comprador (taxa de serviço destacada)</option>
+          <option value="BUYER">Comprador (somada à taxa de serviço)</option>
         </Select>
       </div>
       <div>
@@ -522,7 +534,7 @@ export function CommissionRuleForm({
           <p className="mt-3 text-sm text-muted-foreground">Informe percentual, valor fixo e um preço de exemplo válidos para ver a prévia.</p>
         )}
         {preview?.some((r) => r.negativePayout) && (
-          <p className="mt-2 text-sm text-destructive">Com estes valores a comissão passa do preço: ingressos assim não poderão ser vendidos com o organizador pagando a comissão.</p>
+          <p className="mt-2 text-sm text-destructive">Com estes valores o percentual passa do preço: ingressos assim não poderão ser vendidos com o organizador pagando a comissão.</p>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
           Mesma conta usada nos pedidos. Não inclui o custo de processamento do meio de pagamento. Pedidos já feitos mantêm a regra da época.
@@ -668,7 +680,7 @@ function EditCommissionRuleForm({
           />
         </div>
         <div>
-          <Label htmlFor={`bearer-${rule.id}`}>Quem paga</Label>
+          <Label htmlFor={`bearer-${rule.id}`}>Quem paga o %</Label>
           <Select
             id={`bearer-${rule.id}`}
             name="bearer"

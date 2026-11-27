@@ -2,7 +2,7 @@ import "server-only";
 import type { EventStatus } from "@/generated/prisma/client";
 import { eventInputSchema, ticketTypeInputSchema, type EventInput, type TicketTypeInput } from "@/features/schemas";
 import { onlyDigits } from "@/lib/br";
-import { commissionPerUnit } from "@/features/fees/policy";
+import { organizerFeePerUnit } from "@/features/fees/policy";
 import { computeHalfPriceState, stockChangeError, type HalfPriceEventInput, type HalfPriceState, type HalfPriceTypeInput } from "@/features/half-price/quota";
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { effectiveEventStatus } from "@/lib/event-lifecycle";
@@ -276,15 +276,14 @@ export async function updateEvent(db: Db, actor: Actor, eventId: string, raw: Ev
 }
 
 /**
- * Com a comissão descontada do repasse (bearer ORGANIZER), um preço menor que a
- * comissão por unidade daria repasse negativo e o ingresso nunca poderia ser
- * vendido (createOrder recusa). Avisa já no cadastro. Gratuito (0) é sempre válido.
+ * Com o percentual descontado do repasse (bearer ORGANIZER), um preço menor que essa
+ * parte daria repasse negativo e o ingresso nunca poderia ser vendido (createOrder
+ * recusa). O valor fixo é sempre do comprador e não entra. Gratuito (0) é sempre válido.
  */
-async function assertPriceCoversCommission(tx: Tx, organizationId: string, eventId: string, priceCents: number, halfPrice: boolean) {
+async function assertPriceCoversCommission(tx: Tx, organizationId: string, eventId: string, priceCents: number) {
   if (priceCents === 0) return;
   const rule = await resolveCommissionRule(tx, organizationId, eventId);
-  if (rule.bearer !== "ORGANIZER") return;
-  const commission = commissionPerUnit(priceCents, rule, halfPrice);
+  const commission = organizerFeePerUnit(priceCents, rule);
   if (commission > priceCents) {
     throw new AppError(
       "VALIDATION",
@@ -326,7 +325,7 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
       const tt = await tx.ticketType.findFirst({ where: { id: input.id, eventId } });
       if (!tt) throw notFound("Tipo de ingresso não encontrado.");
       if (tt.priceCents !== input.priceCents || tt.kind !== input.kind)
-        await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents, input.kind === "HALF_PRICE");
+        await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
       // Lugar marcado: o estoque é o número de assentos à venda (editado na grade).
       if (tt.seated) data.quantityTotal = tt.quantityTotal;
       if (data.quantityTotal < tt.quantitySold + tt.quantityReserved)
@@ -338,7 +337,7 @@ export async function upsertTicketType(db: Db, actor: Actor, eventId: string, ra
       halfBefore = guardStockChange(half, afterTypes, half.input.capacity, now);
       result = await tx.ticketType.update({ where: { id: tt.id }, data });
     } else {
-      await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents, input.kind === "HALF_PRICE");
+      await assertPriceCoversCommission(tx, organizationId, eventId, input.priceCents);
       afterTypes = [...half.types, { id: "novo", kind: data.kind, priceCents: data.priceCents, isHidden: data.isHidden, quantityTotal: data.quantityTotal, quantityReserved: 0, quantitySold: 0 }];
       halfChanged = true;
       halfBefore = guardStockChange(half, afterTypes, half.input.capacity, now);

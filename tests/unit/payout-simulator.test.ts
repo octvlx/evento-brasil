@@ -6,10 +6,10 @@ const org = { percentBps: 1000, fixedCentsPerTicket: 200, bearer: "ORGANIZER" as
 const buyer = { ...org, bearer: "BUYER" as const };
 
 describe("simulador de repasse", () => {
-  it("comissão do organizador: comprador paga o preço, organizador recebe o preço menos a comissão", () => {
+  it("percentual do organizador: comprador paga o preço + o fixo, organizador recebe o preço menos o percentual", () => {
     expect(simulatePayout(5000, 100, org)).toEqual({
-      buyerPaysPerTicket: 5000, commissionPerTicket: 700, percentPartPerTicket: 500, fixedPartPerTicket: 200, organizerPerTicket: 4300,
-      buyersTotal: 500000, commissionTotal: 70000, organizerTotal: 430000, negativePayout: false,
+      buyerPaysPerTicket: 5200, serviceFeePerTicket: 200, commissionPerTicket: 700, percentPartPerTicket: 500, fixedPartPerTicket: 200, organizerPerTicket: 4500,
+      buyersTotal: 520000, commissionTotal: 70000, organizerTotal: 450000, negativePayout: false,
     });
   });
 
@@ -25,9 +25,9 @@ describe("simulador de repasse", () => {
     expect(sim.commissionPerTicket).toBe(350); // 10% de 25,00 + metade do fixo
   });
 
-  it("gratuito sem comissão; comissão maior que o preço é sinalizada; entrada inválida é recusada", () => {
+  it("gratuito sem comissão; fixo maior que o preço não zera o repasse; entrada inválida é recusada", () => {
     expect(simulatePayout(0, 10, org)).toMatchObject({ commissionTotal: 0, organizerTotal: 0, negativePayout: false });
-    expect(simulatePayout(100, 1, org)?.negativePayout).toBe(true);
+    expect(simulatePayout(100, 1, org)).toMatchObject({ buyerPaysPerTicket: 300, organizerPerTicket: 90, negativePayout: false });
     for (const [p, q] of [[-1, 1], [5000, 0], [5000, 1.5], [10_000_001, 1], [5000, 100_001]]) expect(simulatePayout(p, q, org)).toBeNull();
   });
 

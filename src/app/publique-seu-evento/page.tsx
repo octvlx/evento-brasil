@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/primitives";
-import { commissionHeadline, commissionPerUnit } from "@/features/fees/policy";
+import { commissionHeadline, commissionPerUnit, computeFees } from "@/features/fees/policy";
 import { PayoutSimulator } from "@/features/fees/payout-simulator";
 import { BRAND } from "@/lib/brand";
 import { START_PUBLISHING_HREF } from "@/lib/help-links";
@@ -267,9 +267,7 @@ async function Fees() {
   const fixed = rule.fixedCentsPerTicket;
   const buyerPays = rule.bearer === "BUYER";
   const example = 10_000;
-  const commission = commissionPerUnit(example, rule);
   const half = 5_000;
-  const halfCommission = commissionPerUnit(half, rule, true);
   const what = commissionHeadline(rule);
   // Valor fixo não reembolsável (regra do admin): só na desistência do comprador depois do
   // prazo de arrependimento; o mesmo critério de retainedFixedFeeCents (refunds.ts).
@@ -306,7 +304,9 @@ async function Fees() {
             <Check />
             {buyerPays
               ? "Quem paga é o comprador, como taxa de serviço. Ela aparece separada no preço do ingresso, no card do evento e no checkout, antes do pagamento."
-              : "Quem paga é a organização: o comprador paga o valor do ingresso e a comissão é descontada do valor que você recebe."}
+              : fixed > 0
+                ? `O percentual de ${percent}% é pago pela organização, descontado do valor que você recebe. O valor fixo de ${formatBRL(fixed)} por ingresso é sempre pago pelo comprador, como taxa de serviço, que aparece separada no preço do ingresso, no card do evento e no checkout, antes do pagamento.`
+                : "Quem paga é a organização: o comprador paga o valor do ingresso e a comissão é descontada do valor que você recebe."}
           </li>
           <li className="flex gap-2">
             <Check />
@@ -338,40 +338,12 @@ async function Fees() {
       <div className="rounded-2xl bg-night p-6 text-white shadow-card">
         <p className="text-sm font-semibold uppercase tracking-wide text-lime">Exemplos com a regra atual</p>
         <dl className="mt-4 space-y-4">
-          <Example
-            title={`Ingresso de ${formatBRL(example)}`}
-            rows={
-              buyerPays
-                ? [
-                    ["O comprador paga", formatBRL(example + commission)],
-                    [`Taxa de serviço (${what})`, formatBRL(commission)],
-                    ["Valor do ingresso para você", formatBRL(example)],
-                  ]
-                : [
-                    ["O comprador paga", formatBRL(example)],
-                    [`Comissão (${what})`, `− ${formatBRL(commission)}`],
-                    ["Valor para você", formatBRL(example - commission)],
-                  ]
-            }
-          />
-          <Example
-            title={`Meia-entrada de ${formatBRL(half)}`}
-            rows={
-              buyerPays
-                ? [
-                    ["O comprador paga", formatBRL(half + halfCommission)],
-                    ["Taxa de serviço", formatBRL(halfCommission)],
-                  ]
-                : [
-                    ["Comissão", `− ${formatBRL(halfCommission)}`],
-                    ["Valor para você", formatBRL(half - halfCommission)],
-                  ]
-            }
-          />
+          <Example title={`Ingresso de ${formatBRL(example)}`} rows={exampleRows(rule, example, false, buyerPays ? what : `${formatBRL(fixed)} por ingresso`, percent)} />
+          <Example title={`Meia-entrada de ${formatBRL(half)}`} rows={exampleRows(rule, half, true)} />
           <Example title="Ingresso gratuito" rows={[["Comissão", formatBRL(0)]]} />
         </dl>
         <p className="mt-5 text-xs text-white/70">
-          {buyerPays ? "Valores antes da tarifa do Mercado Pago." : "“Valor para você” é antes da tarifa do Mercado Pago pelo processamento."} A comissão de cada pedido fica registrada no relatório de vendas.
+          “Valor para você” é antes da tarifa do Mercado Pago pelo processamento. A comissão de cada pedido fica registrada no relatório de vendas.
         </p>
       </div>
       <div className="lg:col-span-2">
@@ -383,6 +355,27 @@ async function Fees() {
       </div>
     </div>
   );
+}
+
+/**
+ * Linhas do exemplo com a mesma conta do checkout (computeFees): o comprador paga o
+ * ingresso mais a taxa de serviço (fixo e, com bearer BUYER, o percentual); o repasse
+ * perde só o percentual quando a organização o paga.
+ */
+function exampleRows(
+  rule: Parameters<typeof computeFees>[1],
+  priceCents: number,
+  halfPrice: boolean,
+  feeLabel?: string,
+  percentLabel?: string,
+): [string, string][] {
+  const [line] = computeFees([{ ticketTypeId: "exemplo", unitPriceCents: priceCents, quantity: 1, halfPrice }], rule).lines;
+  const fromPayout = line.commissionPerUnitCents - line.serviceFeePerUnitCents;
+  const rows: [string, string][] = [["O comprador paga", formatBRL(priceCents + line.serviceFeePerUnitCents)]];
+  if (line.serviceFeePerUnitCents > 0) rows.push([feeLabel ? `Taxa de serviço (${feeLabel})` : "Taxa de serviço", formatBRL(line.serviceFeePerUnitCents)]);
+  if (fromPayout > 0) rows.push([percentLabel ? `Comissão (${percentLabel}%)` : "Comissão", `− ${formatBRL(fromPayout)}`]);
+  rows.push(["Valor para você", formatBRL(priceCents - fromPayout)]);
+  return rows;
 }
 
 function Example({ title, rows }: { title: string; rows: [string, string][] }) {

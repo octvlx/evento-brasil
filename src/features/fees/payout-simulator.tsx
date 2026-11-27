@@ -20,15 +20,17 @@ export function simulatePayout(priceCents: number, quantity: number, rule: Simul
   const line = fees.lines[0];
   return {
     buyerPaysPerTicket: line.unitPriceCents + line.serviceFeePerUnitCents,
+    /** Taxa de serviço paga pelo comprador: o fixo sempre e, com bearer BUYER, o percentual. */
+    serviceFeePerTicket: line.serviceFeePerUnitCents,
     commissionPerTicket: line.commissionPerUnitCents,
     /** Partes da comissão: percentual sobre o preço e valor fixo (meia: proporcional). */
     percentPartPerTicket: line.commissionPerUnitCents - line.fixedFeePerUnitCents,
     fixedPartPerTicket: line.fixedFeePerUnitCents,
-    organizerPerTicket: line.unitPriceCents - (rule.bearer === "ORGANIZER" ? line.commissionPerUnitCents : 0),
+    organizerPerTicket: line.unitPriceCents - (line.commissionPerUnitCents - line.serviceFeePerUnitCents),
     buyersTotal: fees.totalCents,
     commissionTotal: fees.commissionCents,
     organizerTotal: fees.organizerShareCents,
-    negativePayout: !!lineWithNegativePayout(fees, rule.bearer),
+    negativePayout: !!lineWithNegativePayout(fees),
   };
 }
 
@@ -101,11 +103,11 @@ export function PayoutSimulator({
             <p className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">Digite um preço (até R$ 100.000,00) e uma quantidade entre 1 e 100.000.</p>
           ) : (
             <dl className="grid gap-3 sm:grid-cols-3">
-              <Stat label="O comprador paga" value={formatBRL(result.buyerPaysPerTicket)} hint={buyerPays && result.commissionPerTicket ? `ingresso + ${formatBRL(result.commissionPerTicket)} de taxa` : "por ingresso"} />
+              <Stat label="O comprador paga" value={formatBRL(result.buyerPaysPerTicket)} hint={result.serviceFeePerTicket ? `ingresso + ${formatBRL(result.serviceFeePerTicket)} de taxa` : "por ingresso"} />
               <Stat
                 label={buyerPays ? "Taxa de serviço" : "Comissão"}
                 value={formatBRL(result.commissionPerTicket)}
-                hint={`${result.commissionPerTicket ? `${commissionParts(rule.percentBps, result.percentPartPerTicket, result.fixedPartPerTicket)} · ` : ""}${buyerPays ? "paga pelo comprador" : "descontada do repasse"}`}
+                hint={`${result.commissionPerTicket ? `${commissionParts(rule.percentBps, result.percentPartPerTicket, result.fixedPartPerTicket)} · ` : ""}${buyerPays ? "paga pelo comprador" : result.fixedPartPerTicket ? "% descontado do repasse, fixo pago pelo comprador" : "descontada do repasse"}`}
               />
               <Stat label="Você recebe" value={formatBRL(result.organizerPerTicket)} hint="por ingresso" strong />
               <div className="rounded-xl bg-night p-4 text-white sm:col-span-3" data-testid="simulator-total">

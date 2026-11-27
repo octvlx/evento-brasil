@@ -64,10 +64,11 @@ describe("computeFees com desconto", () => {
     expect(f).toMatchObject({ subtotalCents: 6000, discountCents: 5000, commissionCents: 600 });
   });
 
-  it("guarda B1: desconto que deixa o líquido abaixo da taxa fixa é detectado", () => {
-    const f = computeFees([{ ticketTypeId: "a", unitPriceCents: 1000, quantity: 1, discountPerUnitCents: 950 }], { ...rule, fixedCentsPerTicket: 100 });
-    expect(lineWithNegativePayout(f, "ORGANIZER")).toMatchObject({ unitPriceCents: 50, discountPerUnitCents: 950 });
-    expect(lineWithNegativePayout(f, "BUYER")).toBeUndefined();
+  it("desconto que deixa o líquido abaixo da taxa fixa não zera o repasse: o fixo é do comprador", () => {
+    const f = computeFees([{ ticketTypeId: "a", unitPriceCents: 1000, quantity: 1, discountPerUnitCents: 950 }], { ...rule, fixedCentsPerTicket: 100, bearer: "ORGANIZER" });
+    expect(f.lines[0]).toMatchObject({ unitPriceCents: 50, serviceFeePerUnitCents: 100 });
+    expect(f.organizerShareCents).toBeGreaterThan(0);
+    expect(lineWithNegativePayout(f)).toBeUndefined();
   });
 
   it("recusa desconto negativo ou maior que o preço", () => {

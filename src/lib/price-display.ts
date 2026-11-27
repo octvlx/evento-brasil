@@ -3,7 +3,7 @@
 // (`quoteUnitPrice` no catálogo); aqui só se formata.
 import { formatBRL } from "./money";
 
-/** Preço por ingresso: valor de face + taxa de serviço do comprador (0 se o organizador assume). */
+/** Preço por ingresso: valor de face + taxa de serviço do comprador (o fixo sempre; o percentual se a regra o cobrar do comprador). */
 export interface PriceQuote {
   priceCents: number;
   serviceFeeCents: number;

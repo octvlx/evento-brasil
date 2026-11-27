@@ -51,7 +51,7 @@ export async function currentPlatformCommissionRule(client: Db | Tx, at = new Da
 
 export interface BuyerPricePreview {
   priceCents: number;
-  /** Taxa de serviço por ingresso (0 quando a comissão sai do repasse do organizador). */
+  /** Taxa de serviço por ingresso: o valor fixo sempre e, com bearer BUYER, também o percentual. */
   serviceFeeCents: number;
   /** O que o comprador paga por ingresso: preço + taxa de serviço. */
   totalCents: number;

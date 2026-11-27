@@ -74,9 +74,10 @@ describe("S — preço congelado durante a reserva", () => {
     await expectFrozen();
     expect(await checkFinancialInvariants(db)).toEqual([]);
 
-    // Um pedido novo já usa o preço e a regra novos (regra do evento: comissão do organizador).
+    // Um pedido novo já usa o preço e a regra novos (regra do evento: percentual do organizador,
+    // fixo de R$ 3,00 do comprador).
     const next = await buy(await makeUser(), event.id, [{ ticketTypeId: tt.id, quantity: 1 }]);
-    expect(next).toMatchObject({ subtotalCents: 15000, serviceFeeCents: 0, totalCents: 15000, commissionCents: 2550 });
+    expect(next).toMatchObject({ subtotalCents: 15000, serviceFeeCents: 300, totalCents: 15300, commissionCents: 2550 });
   });
 
   it("mudança depois do PIX gerado: o mesmo QR é reaproveitado e o pagamento confirma o valor congelado", async () => {

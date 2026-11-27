@@ -2,7 +2,7 @@
 // catálogo (preço + taxa de serviço) é exatamente o que o createOrder cobra e
 // o que vai ao provedor de pagamento.
 import { beforeEach, describe, expect, it } from "vitest";
-import { commissionPerUnit } from "@/features/fees/policy";
+import { commissionPerUnit, fixedFeePerUnit } from "@/features/fees/policy";
 import { buyerPricePreview, currentPlatformCommissionRule, resolveCommissionRule, setCommissionRule, type NewRuleInput } from "@/server/services/commission";
 import { startPayment } from "@/server/services/payments";
 import { createOrder } from "@/server/services/orders";
@@ -24,8 +24,8 @@ async function previewFor(event: { id: string; organizationId: string; ticketTyp
     event.ticketTypes.map((t) => {
       const half = t.kind === "HALF_PRICE";
       const p = buyerPricePreview(rule, t.priceCents, half);
-      // Mesma conta feita direto com commissionPerUnit (fórmula usada nas páginas públicas).
-      const direct = rule.bearer === "BUYER" ? commissionPerUnit(t.priceCents, rule, half) : 0;
+      // Mesma conta feita direto: o comprador paga o fixo sempre e o percentual só com bearer BUYER.
+      const direct = rule.bearer === "BUYER" ? commissionPerUnit(t.priceCents, rule, half) : fixedFeePerUnit(t.priceCents, rule, half);
       expect(p.serviceFeeCents).toBe(direct);
       return [t.id, p];
     }),
@@ -81,8 +81,17 @@ describe("R — prévia de preço ao comprador = valor cobrado", () => {
     expect(preview.get(event.ticketTypes[2].id)).toEqual({ priceCents: 0, serviceFeeCents: 0, totalCents: 0 });
   });
 
-  it("bearer ORGANIZER: comprador paga o valor de face, sem taxa", async () => {
+  it("bearer ORGANIZER: comprador paga o valor de face + só o valor fixo", async () => {
     await setRule({ scope: "PLATFORM", percentBps: 1000, fixedCentsPerTicket: 150, bearer: "ORGANIZER" });
+    const { event } = await setup();
+    const { preview, order } = await expectChargedEqualsPreview(event);
+    expect(preview.get(event.ticketTypes[0].id)).toEqual({ priceCents: 10000, serviceFeeCents: 150, totalCents: 10150 });
+    expect(preview.get(event.ticketTypes[2].id)).toEqual({ priceCents: 0, serviceFeeCents: 0, totalCents: 0 });
+    expect(order.commissionCents).toBeGreaterThan(order.serviceFeeCents); // o percentual sai do repasse
+  });
+
+  it("bearer ORGANIZER sem valor fixo: comprador paga o valor de face, sem taxa", async () => {
+    await setRule({ scope: "PLATFORM", percentBps: 1000, fixedCentsPerTicket: 0, bearer: "ORGANIZER" });
     const { event } = await setup();
     const { preview, order } = await expectChargedEqualsPreview(event);
     for (const t of event.ticketTypes) expect(preview.get(t.id)).toEqual({ priceCents: t.priceCents, serviceFeeCents: 0, totalCents: t.priceCents });

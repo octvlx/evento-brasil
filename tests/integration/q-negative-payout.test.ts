@@ -1,6 +1,7 @@
-// Guarda B1 (ADR 0002): taxa fixa maior que o preço do ingresso, com bearer
-// ORGANIZER, deixaria o repasse negativo e o webhook falharia para sempre
-// (dinheiro recebido, nenhum ingresso). O pedido é recusado na criação.
+// Guarda B1 (ADR 0002): repasse negativo faria o webhook falhar para sempre
+// (dinheiro recebido, nenhum ingresso). Como o valor fixo é sempre pago pelo
+// comprador e só o percentual sai do repasse, taxa fixa maior que o preço não
+// deixa mais o repasse negativo: o pedido é criado e o razão fecha.
 import { beforeEach, describe, expect, it } from "vitest";
 import { checkFinancialInvariants } from "@/server/services/reconciliation";
 import { buy, buyAndPay, db, makeEvent, makeOrg, makeUser, resetDb, ticketType } from "../support/fixtures";
@@ -16,16 +17,15 @@ async function setup(bearer: "ORGANIZER" | "BUYER") {
 }
 
 describe("Q — guarda contra repasse negativo", () => {
-  it("bearer ORGANIZER: ingresso de R$ 0,50 com taxa fixa de R$ 1 é recusado sem reservar nada", async () => {
+  it("bearer ORGANIZER: ingresso de R$ 0,50 com taxa fixa de R$ 1 cobra o fixo do comprador e o razão fecha", async () => {
     const { event, customer } = await setup("ORGANIZER");
     const [cheap] = event.ticketTypes;
-    await expect(buy(customer, event.id, [{ ticketTypeId: cheap.id, quantity: 2 }])).rejects.toMatchObject({
-      code: "VALIDATION",
-      message: "O preço deste ingresso é menor que a taxa da plataforma.",
-    });
-    expect(await db.order.count()).toBe(0);
-    expect(await db.ticketInventoryReservation.count()).toBe(0);
-    expect(await ticketType(cheap.id)).toMatchObject({ quantityReserved: 0, quantitySold: 0 });
+    const { order } = await buyAndPay(customer, event.id, [{ ticketTypeId: cheap.id, quantity: 2 }]);
+    // Comissão por ingresso: 7% de 0,50 (0,04, do repasse) + 1,00 fixo (do comprador).
+    expect(order).toMatchObject({ subtotalCents: 100, serviceFeeCents: 200, totalCents: 300, commissionCents: 208 });
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("PAID");
+    expect(await ticketType(cheap.id)).toMatchObject({ quantitySold: 2 });
+    expect(await checkFinancialInvariants(db)).toEqual([]);
   });
 
   it("bearer ORGANIZER: ingresso gratuito continua sendo emitido", async () => {

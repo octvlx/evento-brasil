@@ -13,6 +13,7 @@ import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
 import { commissionHeadline } from "@/features/fees/policy";
 import { PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
+import { formatBRL } from "@/lib/money";
 import { CITY_COOKIE, CITY_SOURCE_COOKIE } from "@/lib/city-preference";
 import { UseLocationButton } from "@/components/site/use-location-button";
 import { jsonLdHtml, siteJsonLd } from "@/lib/structured-data";
@@ -251,12 +252,14 @@ async function CommissionSummary() {
   await connection();
   const rule = await currentPlatformCommissionRule(db);
   if (!rule) return null;
-  const who = rule.bearer === "BUYER" ? "paga pelo comprador como taxa de serviço" : "descontada do seu repasse";
-  return (
-    <>
-      Comissão padrão de {commissionHeadline(rule)}, {who} — ingressos gratuitos não pagam comissão.
-    </>
-  );
+  // O valor fixo é sempre do comprador; o percentual, de quem a regra disser.
+  const how =
+    rule.bearer === "BUYER"
+      ? `${commissionHeadline(rule)}, paga pelo comprador como taxa de serviço`
+      : rule.fixedCentsPerTicket > 0
+        ? `${commissionHeadline({ ...rule, fixedCentsPerTicket: 0 }).replace(" por ingresso", "")} descontada do seu repasse, mais ${formatBRL(rule.fixedCentsPerTicket)} por ingresso pagos pelo comprador como taxa de serviço`
+        : `${commissionHeadline(rule)}, descontada do seu repasse`;
+  return <>Comissão padrão de {how} — ingressos gratuitos não pagam comissão.</>;
 }
 
 async function FeaturedOrganizers() {
