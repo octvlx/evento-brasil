@@ -11,6 +11,7 @@ import { featuredExternalEvents, listPublicExternalEvents } from "@/server/servi
 import { CategoryChips } from "@/components/site/category-chips";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
+import { commissionHeadline } from "@/features/fees/policy";
 import { PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
 import { CITY_COOKIE, CITY_SOURCE_COOKIE } from "@/lib/city-preference";
 import { UseLocationButton } from "@/components/site/use-location-button";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { db } from "@/server/db";
 import { eventsInCity, featuredEvents, featuredOrganizers, getPublicCity, listCategories, recommendedEvents, weekendEvents } from "@/server/services/catalog";
 import { getCurrentUser } from "@/server/auth/current";
+import { currentPlatformCommissionRule } from "@/server/services/commission";
 
 // Título e descrição vêm do layout; aqui só o endereço canônico (sem ?cidade etc.).
 export const metadata: Metadata = { alternates: { canonical: "/" } };
@@ -121,7 +123,10 @@ export default function HomePage() {
             </p>
             <h2 className="font-display text-2xl font-extrabold leading-tight sm:text-4xl">Venda ingressos com repasse transparente</h2>
             <p className="mt-3 text-white/80">
-              Publique seu evento, receba via PIX e cartão, acompanhe vendas em tempo real e faça o check-in pelo celular. Comissão padrão de 7% sobre o valor de face — eventos gratuitos não pagam comissão.
+              Publique seu evento, receba via PIX e cartão, acompanhe vendas em tempo real e faça o check-in pelo celular.{" "}
+              <Suspense fallback={null}>
+                <CommissionSummary />
+              </Suspense>
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Link href="/organizador/cadastro" className={buttonVariants({ variant: "accent", size: "lg" })}>
@@ -241,6 +246,19 @@ async function Recommended() {
 }
 
 /** Organizadores com mais eventos no ar, com link para o perfil público. */
+/** Mesma regra de plataforma vigente que /publique-seu-evento#taxas mostra (o admin pode alterá-la). */
+async function CommissionSummary() {
+  await connection();
+  const rule = await currentPlatformCommissionRule(db);
+  if (!rule) return null;
+  const who = rule.bearer === "BUYER" ? "paga pelo comprador como taxa de serviço" : "descontada do seu repasse";
+  return (
+    <>
+      Comissão padrão de {commissionHeadline(rule)}, {who} — ingressos gratuitos não pagam comissão.
+    </>
+  );
+}
+
 async function FeaturedOrganizers() {
   await connection();
   const orgs = await featuredOrganizers(db);

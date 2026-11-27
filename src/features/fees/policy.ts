@@ -14,7 +14,7 @@
 // - Custos do processador de pagamento são registrados à parte quando o
 //   provedor os informa (processingFeeBearer).
 
-import { applyBps } from "@/lib/money";
+import { applyBps, formatBRL } from "@/lib/money";
 
 export type FeeBearer = "ORGANIZER" | "BUYER";
 
@@ -66,6 +66,12 @@ export interface FeeBreakdown {
 }
 
 /** Fração da parte fixa da comissão cobrada na meia-entrada (D4): a mesma do preço. */
+/** Regra em texto curto ("5% + R$ 2,50 por ingresso"), igual na home e em /publique-seu-evento. */
+export function commissionHeadline(rule: Pick<FeeRule, "percentBps" | "fixedCentsPerTicket">): string {
+  const percent = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(rule.percentBps / 100);
+  return rule.fixedCentsPerTicket > 0 ? `${percent}% + ${formatBRL(rule.fixedCentsPerTicket)} por ingresso` : `${percent}% por ingresso`;
+}
+
 export const HALF_PRICE_FIXED_FEE_BPS = 5_000;
 
 /** Parte fixa da comissão por unidade: 0 em ingresso gratuito, proporcional na meia (D4). */
