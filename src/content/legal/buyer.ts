@@ -7,9 +7,9 @@ import type { LegalDocument } from "./types";
 export const BUYER_TERMS: LegalDocument = {
   kind: "BUYER",
   title: "Termos de uso",
-  version: "1.0",
+  version: "1.1",
   path: "/termos",
-  updatedAt: "2026-11-23",
+  updatedAt: "2026-11-27",
   sections: [
     {
       title: "1. Quem somos e o que estes termos regulam",
@@ -48,7 +48,7 @@ export const BUYER_TERMS: LegalDocument = {
       title: "4. Preço, taxa de serviço e reserva",
       blocks: [
         "Desde o anúncio, mostramos o valor total de cada ingresso com a taxa de serviço discriminada. O valor cobrado é o calculado por nossos servidores no momento da compra, com o detalhamento no resumo do pedido antes do pagamento.",
-        "A taxa de serviço remunera a intermediação da TICKET24. Ela pode ter uma parte percentual e uma parte fixa por ingresso. Na meia-entrada, a taxa acompanha o preço: a parte percentual incide sobre o valor da meia e a parte fixa cai à metade. Ingressos gratuitos e cortesias não têm taxa.",
+        "A taxa de serviço remunera a intermediação da TICKET24. Ela pode ter uma parte percentual e uma parte fixa por ingresso. Na meia-entrada, a parte percentual incide sobre o valor da meia e a parte fixa é cobrada inteira. Ingressos gratuitos e cortesias não têm taxa.",
         "Ao iniciar o pagamento, os ingressos ficam reservados por tempo limitado, indicado na tela com uma contagem regressiva, e o preço fica congelado nesse período. Se o pagamento não for confirmado até o fim da reserva, o pedido expira e os ingressos voltam a ficar disponíveis.",
         "Pode haver limite de ingressos por pedido e por conta em cada evento, informado na página do evento.",
       ],

@@ -34,21 +34,20 @@ describe("política de taxas", () => {
     const f = computeFees([{ ticketTypeId: "a", unitPriceCents: 10000, quantity: 2 }], { ...rule, bearer: "BUYER" });
     expect(f).toMatchObject({ subtotalCents: 20000, serviceFeeCents: 1400, totalCents: 21400, commissionCents: 1400, organizerShareCents: 20000 });
   });
-  it("meia-entrada (D4): parte fixa proporcional, metade da inteira", () => {
+  it("meia-entrada (D4, revista): percentual sobre a meia e valor fixo inteiro", () => {
     const rule = { percentBps: 700, fixedCentsPerTicket: 200 };
     expect(commissionPerUnit(10000, rule)).toBe(900);
-    expect(commissionPerUnit(5000, rule, true)).toBe(450);
-    expect(commissionPerUnit(5000, { percentBps: 0, fixedCentsPerTicket: 99 }, true)).toBe(50); // half-up
-    expect(commissionPerUnit(0, rule, true)).toBe(0);
+    expect(commissionPerUnit(5000, rule)).toBe(550);
+    expect(commissionPerUnit(0, rule)).toBe(0);
     const fees = computeFees(
       [
         { ticketTypeId: "inteira", unitPriceCents: 10000, quantity: 1 },
-        { ticketTypeId: "meia", unitPriceCents: 5000, quantity: 2, halfPrice: true },
+        { ticketTypeId: "meia", unitPriceCents: 5000, quantity: 2 },
       ],
       { policyVersion: "t", bearer: "BUYER", ...rule },
     );
-    expect(fees.lines.map((l) => l.serviceFeePerUnitCents)).toEqual([900, 450]);
-    expect(fees.serviceFeeCents).toBe(900 + 2 * 450);
+    expect(fees.lines.map((l) => l.serviceFeePerUnitCents)).toEqual([900, 550]);
+    expect(fees.serviceFeeCents).toBe(900 + 2 * 550);
   });
 
   it("ingresso gratuito não gera comissão, mesmo com taxa fixa", () => {

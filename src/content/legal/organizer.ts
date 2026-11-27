@@ -50,7 +50,7 @@ export const ORGANIZER_TERMS: LegalDocument = {
         "A TICKET24 é remunerada pela taxa de serviço definida na regra de comissão aplicável à organização ou ao evento, com parte percentual, parte fixa por ingresso ou ambas.",
         "A parte fixa por ingresso é sempre paga pelo comprador, somada ao preço e mostrada antes do pagamento. A regra define quem paga a parte percentual: o comprador, somada ao preço, ou o organizador, descontada do valor da venda. A regra também define quem arca com as tarifas do meio de pagamento, se a taxa é devolvida nos reembolsos e se a parte fixa é reembolsável.",
         "A regra vigente é informada ao organizador antes da publicação do evento e vale para as vendas feitas enquanto estiver vigente. Mudanças valem só para vendas futuras.",
-        "Ingressos gratuitos e cortesias não têm taxa. Na meia-entrada, a parte fixa cai à metade.",
+        "Ingressos gratuitos e cortesias não têm taxa. Na meia-entrada, a parte percentual incide sobre o valor da meia e a parte fixa é cobrada inteira.",
       ],
     },
     {

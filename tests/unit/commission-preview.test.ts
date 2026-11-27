@@ -5,8 +5,8 @@ describe("prévia da comissão (admin)", () => {
   it("organizador paga o percentual: o fixo é cobrado do comprador e só o percentual sai do repasse", () => {
     const [full, half] = commissionPreview({ percent: 7, fixedCents: 200, bearer: "ORGANIZER", priceCents: 10_000 })!;
     expect(full).toMatchObject({ priceCents: 10_000, commissionCents: 900, buyerPaysCents: 10_200, organizerGetsCents: 9_300, negativePayout: false });
-    // Meia: metade do preço e metade da parte fixa (D4).
-    expect(half).toMatchObject({ priceCents: 5_000, commissionCents: 450, buyerPaysCents: 5_100, organizerGetsCents: 4_650 });
+    // Meia: metade do preço; a parte fixa é cobrada inteira (D4).
+    expect(half).toMatchObject({ priceCents: 5_000, commissionCents: 550, buyerPaysCents: 5_200, organizerGetsCents: 4_650 });
   });
 
   it("comprador paga: a comissão vira taxa de serviço e o organizador recebe o preço cheio", () => {

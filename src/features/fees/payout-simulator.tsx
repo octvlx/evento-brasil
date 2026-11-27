@@ -13,17 +13,17 @@ const MAX_QTY = 100_000;
 export type SimulatorRule = Pick<FeeRule, "percentBps" | "fixedCentsPerTicket" | "bearer">;
 
 /** Cálculo do simulador (puro, testável). null para entrada inválida. */
-export function simulatePayout(priceCents: number, quantity: number, rule: SimulatorRule, halfPrice = false) {
+export function simulatePayout(priceCents: number, quantity: number, rule: SimulatorRule) {
   if (!Number.isSafeInteger(priceCents) || priceCents < 0 || priceCents > MAX_PRICE_CENTS) return null;
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_QTY) return null;
-  const fees = computeFees([{ ticketTypeId: "simulador", unitPriceCents: priceCents, quantity, halfPrice }], { ...rule, policyVersion: "simulador" });
+  const fees = computeFees([{ ticketTypeId: "simulador", unitPriceCents: priceCents, quantity }], { ...rule, policyVersion: "simulador" });
   const line = fees.lines[0];
   return {
     buyerPaysPerTicket: line.unitPriceCents + line.serviceFeePerUnitCents,
     /** Taxa de serviço paga pelo comprador: o fixo sempre e, com bearer BUYER, o percentual. */
     serviceFeePerTicket: line.serviceFeePerUnitCents,
     commissionPerTicket: line.commissionPerUnitCents,
-    /** Partes da comissão: percentual sobre o preço e valor fixo (meia: proporcional). */
+    /** Partes da comissão: percentual sobre o preço e valor fixo (inteiro também na meia). */
     percentPartPerTicket: line.commissionPerUnitCents - line.fixedFeePerUnitCents,
     fixedPartPerTicket: line.fixedFeePerUnitCents,
     organizerPerTicket: line.unitPriceCents - (line.commissionPerUnitCents - line.serviceFeePerUnitCents),
@@ -54,10 +54,9 @@ export function PayoutSimulator({
   const id = useId();
   const [price, setPrice] = useState("50,00");
   const [qty, setQty] = useState("100");
-  const [half, setHalf] = useState(false);
   const priceCents = parseBRLToCents(price);
   const quantity = Number(qty.replace(/\D/g, ""));
-  const result = priceCents == null ? null : simulatePayout(priceCents, quantity, rule, half);
+  const result = priceCents == null ? null : simulatePayout(priceCents, quantity, rule);
   const buyerPays = rule.bearer === "BUYER";
 
   return (
@@ -92,10 +91,6 @@ export function PayoutSimulator({
               aria-invalid={!result}
             />
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={half} onChange={(e) => setHalf(e.target.checked)} className="size-4" />
-            É meia-entrada (comissão proporcional)
-          </label>
         </div>
 
         <div aria-live="polite">

@@ -29,10 +29,10 @@ describe("preço total por ingresso (Decreto 13.108/2026, R1)", () => {
     expect(minPriceQuote([], buyerRule)).toBeNull();
   });
 
-  it("meia-entrada: a parte fixa da taxa também cai à metade (D4)", () => {
+  it("meia-entrada: o percentual acompanha o preço e a parte fixa é cobrada inteira (D4)", () => {
     const rule = { ...buyerRule, fixedCentsPerTicket: 200 };
     expect(quoteUnitPrice(10000, rule)).toEqual({ priceCents: 10000, serviceFeeCents: 1200, totalCents: 11200 });
-    expect(quoteUnitPrice(5000, rule, true)).toEqual({ priceCents: 5000, serviceFeeCents: 600, totalCents: 5600 });
-    expect(minPriceQuote([{ priceCents: 10000, kind: "GENERAL" }, { priceCents: 5000, kind: "HALF_PRICE" }], rule)?.serviceFeeCents).toBe(600);
+    expect(quoteUnitPrice(5000, rule)).toEqual({ priceCents: 5000, serviceFeeCents: 700, totalCents: 5700 });
+    expect(minPriceQuote([{ priceCents: 10000, kind: "GENERAL" }, { priceCents: 5000, kind: "HALF_PRICE" }], rule)?.serviceFeeCents).toBe(700);
   });
 });

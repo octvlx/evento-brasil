@@ -20,8 +20,8 @@ export function commissionPreview(input: { percent: number; fixedCents: number; 
   if (!Number.isSafeInteger(fixedCents) || fixedCents < 0) return null;
   if (!Number.isSafeInteger(priceCents) || priceCents <= 0) return null;
   const rule = { policyVersion: "preview", percentBps: Math.round(percent * 100), fixedCentsPerTicket: fixedCents, bearer };
-  const row = (label: string, unitPriceCents: number, halfPrice: boolean): CommissionPreviewRow => {
-    const f = computeFees([{ ticketTypeId: label, unitPriceCents, quantity: 1, halfPrice }], rule);
+  const row = (label: string, unitPriceCents: number): CommissionPreviewRow => {
+    const f = computeFees([{ ticketTypeId: label, unitPriceCents, quantity: 1 }], rule);
     return {
       label,
       priceCents: unitPriceCents,
@@ -31,6 +31,6 @@ export function commissionPreview(input: { percent: number; fixedCents: number; 
       negativePayout: f.organizerShareCents < 0,
     };
   };
-  // Meia-entrada: metade do preço (arredondada para cima) e parte fixa proporcional (D4).
-  return [row("Inteira", priceCents, false), row("Meia-entrada", Math.ceil(priceCents / 2), true)];
+  // Meia-entrada: metade do preço (arredondada para cima); o valor fixo é cobrado inteiro (D4).
+  return [row("Inteira", priceCents), row("Meia-entrada", Math.ceil(priceCents / 2))];
 }

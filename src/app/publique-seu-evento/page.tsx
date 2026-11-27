@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/primitives";
-import { commissionHeadline, commissionPerUnit, computeFees } from "@/features/fees/policy";
+import { commissionHeadline, computeFees } from "@/features/fees/policy";
 import { PayoutSimulator } from "@/features/fees/payout-simulator";
 import { BRAND } from "@/lib/brand";
 import { START_PUBLISHING_HREF } from "@/lib/help-links";
@@ -314,7 +314,7 @@ async function Fees() {
           </li>
           <li className="flex gap-2">
             <Check />
-            {fixed > 0 ? `Na meia-entrada, a comissão é proporcional ao valor da meia: o percentual incide sobre a meia e o valor fixo cai à metade (${formatBRL(commissionPerUnit(half, { percentBps: 0, fixedCentsPerTicket: fixed }, true))}).` : "Na meia-entrada, a comissão é proporcional ao valor da meia."}
+            {fixed > 0 ? `Na meia-entrada, o percentual incide sobre o valor da meia e o valor fixo é cobrado inteiro (${formatBRL(fixed)}).` : "Na meia-entrada, a comissão é proporcional ao valor da meia."}
           </li>
           <li className="flex gap-2">
             <Check />
@@ -338,8 +338,8 @@ async function Fees() {
       <div className="rounded-2xl bg-night p-6 text-white shadow-card">
         <p className="text-sm font-semibold uppercase tracking-wide text-lime">Exemplos com a regra atual</p>
         <dl className="mt-4 space-y-4">
-          <Example title={`Ingresso de ${formatBRL(example)}`} rows={exampleRows(rule, example, false, buyerPays ? what : `${formatBRL(fixed)} por ingresso`, percent)} />
-          <Example title={`Meia-entrada de ${formatBRL(half)}`} rows={exampleRows(rule, half, true)} />
+          <Example title={`Ingresso de ${formatBRL(example)}`} rows={exampleRows(rule, example, buyerPays ? what : `${formatBRL(fixed)} por ingresso`, percent)} />
+          <Example title={`Meia-entrada de ${formatBRL(half)}`} rows={exampleRows(rule, half)} />
           <Example title="Ingresso gratuito" rows={[["Comissão", formatBRL(0)]]} />
         </dl>
         <p className="mt-5 text-xs text-white/70">
@@ -365,11 +365,10 @@ async function Fees() {
 function exampleRows(
   rule: Parameters<typeof computeFees>[1],
   priceCents: number,
-  halfPrice: boolean,
   feeLabel?: string,
   percentLabel?: string,
 ): [string, string][] {
-  const [line] = computeFees([{ ticketTypeId: "exemplo", unitPriceCents: priceCents, quantity: 1, halfPrice }], rule).lines;
+  const [line] = computeFees([{ ticketTypeId: "exemplo", unitPriceCents: priceCents, quantity: 1 }], rule).lines;
   const fromPayout = line.commissionPerUnitCents - line.serviceFeePerUnitCents;
   const rows: [string, string][] = [["O comprador paga", formatBRL(priceCents + line.serviceFeePerUnitCents)]];
   if (line.serviceFeePerUnitCents > 0) rows.push([feeLabel ? `Taxa de serviço (${feeLabel})` : "Taxa de serviço", formatBRL(line.serviceFeePerUnitCents)]);

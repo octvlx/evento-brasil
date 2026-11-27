@@ -83,7 +83,7 @@ export async function wizardPageData(db: Db, organizationId: string, event: Wiza
   if (rule) {
     for (const t of event.ticketTypes) {
       if (t.priceCents === 0) continue;
-      const f = computeFees([{ ticketTypeId: t.id, unitPriceCents: t.priceCents, quantity: 1, halfPrice: t.kind === "HALF_PRICE" }], rule);
+      const f = computeFees([{ ticketTypeId: t.id, unitPriceCents: t.priceCents, quantity: 1 }], rule);
       estimates[t.id] = { buyerPaysCents: f.totalCents, organizerGetsCents: f.organizerShareCents, bearer: rule.bearer };
     }
   }

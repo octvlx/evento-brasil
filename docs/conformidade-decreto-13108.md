@@ -23,7 +23,7 @@ exclusão de conta no #88). A análise original de 2026-10-27 está no históric
 | # | Requisito | Situação em `main` | O que falta | Gravidade do que falta |
 | --- | --- | --- | --- | --- |
 | R1 | **Preço total e taxas discriminadas desde a oferta** | Feito (L1a, L1b): cards, busca, cidade e página do evento mostram o total por ingresso com a taxa discriminada, pela mesma regra que o servidor cobra. | — | — |
-| R2 | Taxa só com ciência prévia; nada embutido; sem cobrança duplicada ou sem serviço | Feito: taxa calculada no servidor, ingresso gratuito sem taxa, nenhum serviço adicional. **D4 decidido (2026-11-04): a taxa da meia-entrada é proporcional ao valor da meia** — o percentual já acompanha o preço e a parte fixa (`fixedCentsPerTicket`) cai à metade (`HALF_PRICE_FIXED_FEE_BPS`, `commissionPerUnit`, `src/features/fees/policy.ts`), na prévia, no pedido e no assistente do organizador. | — | Feito |
+| R2 | Taxa só com ciência prévia; nada embutido; sem cobrança duplicada ou sem serviço | Feito: taxa calculada no servidor, ingresso gratuito sem taxa, nenhum serviço adicional. **D4 decidido (2026-11-04), revisto em 2026-11-27: na meia-entrada o percentual acompanha o preço da meia e o valor fixo por ingresso (`fixedCentsPerTicket`, sempre pago pelo comprador) é cobrado inteiro** (`commissionPerUnit`, `src/features/fees/policy.ts`), na prévia, no pedido e no assistente do organizador. Até 2026-11-27 a parte fixa caía à metade; pedidos anteriores mantêm os valores gravados. | — | Feito |
 | R3 | **Reserva temporária** e preço congelado durante a compra (art. 13) | Feito: reserva com trava e CHECK no banco, 15 min com contagem regressiva, preço gravado no pedido; teste de congelamento (L3). | Confirmar se 15 min é "tempo necessário" para cartão (Checkout Pro). | Baixa |
 | R4 | Proteção contra compras abusivas (robôs/cambismo) | Feito: limite por pedido, **limite por conta por evento** (`Event.maxTicketsPerAccount`, L4b, vale também na transferência) e limite de frequência na criação de pedido e de pagamento (L4a). | **Verificação anti-robô** (fornecedor a escolher, ex.: Cloudflare Turnstile) no cadastro e no checkout. | Média |
 | R5 | **Canal acessível de cancelamento e arrependimento** | Feito: link "Cancelar compra / arrependimento" no rodapé, Meus pedidos, Meus ingressos, pedido e `/ajuda` (L5a); pedido de cancelamento com **protocolo** e prazo de resposta mesmo fora da elegibilidade automática (L5b); fila no admin (A1). Prazo de reembolso automático por evento (`refundWindowDays`/`refundMinHoursBeforeEvent`, padrão 7 dias e 48 h). | Regra das 48 h × arrependimento do CDC (**D3**) e prazo de resposta definitivo — provisórios. | Média |
@@ -41,8 +41,8 @@ pagamento confirmado só pelo provedor, auditoria somente inserção.
 
 1. **Jurídico (bloqueia a homologação comercial — V2):** ler e conferir o texto
    oficial do decreto (as regras vieram de fontes secundárias) e decidir D1–D8.
-   D2, D3, D6 e D7 já têm padrão provisório em produção; D4 foi decidido (taxa
-   proporcional na meia, já aplicada) e D5 também (48 h / 72 h, L7c feita);
+   D2, D3, D6 e D7 já têm padrão provisório em produção; D4 foi decidido (percentual
+   proporcional e fixo inteiro na meia, revisto em 2026-11-27, já aplicado) e D5 também (48 h / 72 h, L7c feita);
    D8 bloqueia trabalho técnico.
 2. **Técnico:** verificação anti-robô; sobras de R9; tela do admin para o
    regime de meia-entrada de um evento (L7c, hoje só pelo serviço).
@@ -110,7 +110,7 @@ mantém a regra do teto anterior. Estoques pequenos: 1 ou 2 → cota 0; 3 ou 4 �
   `reservation_released`, `late_payment_blocked`, `quota_released`,
   `stock_changed` e `regime_changed`, todas com o snapshot do cálculo. Nenhum
   histórico financeiro ou de check-in é apagado.
-- **Taxas:** a taxa da meia continua proporcional (D4). As comissões não mudaram.
+- **Taxas:** na meia, o percentual acompanha o preço e o valor fixo é cobrado inteiro (D4, revisto em 2026-11-27).
 
 **Pendências jurídicas (configuráveis; não endurecemos o que é incerto):**
 
@@ -141,7 +141,7 @@ migrações concorrentes.
 ### Fase 0 — Decisões jurídicas (usuário + assessoria) — bloqueia o que está marcado (confirmar)
 
 D1 aplicabilidade ao nosso modelo · D2 definição de "alteração relevante" e prazo
-da janela de reembolso · D3 arrependimento × regra de 48 h · D4 taxa sobre meia (**decidido: proporcional**) ·
+da janela de reembolso · D3 arrependimento × regra de 48 h · D4 taxa sobre meia (**decidido: percentual proporcional, fixo inteiro — revisto em 2026-11-27**) ·
 D5 reserva da cota de meia (**decidido: 48 h; 72 h acima de 10.000 lugares**) · D6 prazos de retenção por tipo de dado ·
 D7 quem recebe o reembolso de ingresso transferido (pagador original?) e se há
 prazo-limite para transferir · D8 textos de termos, privacidade e contrato do organizador.
