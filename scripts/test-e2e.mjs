@@ -45,6 +45,9 @@ try {
     ...process.env,
     NODE_ENV: "development",
     DATABASE_URL: databaseUrl,
+    // prisma.config.ts prefere DATABASE_URL_UNPOOLED (Neon) e carrega o .env (dotenv não
+    // sobrescreve o que já está definido): sem fixá-la aqui, o migrate iria para o banco do .env.
+    DATABASE_URL_UNPOOLED: databaseUrl,
     APP_URL: `http://localhost:${appPort}`,
     APP_BASE_URL: `http://localhost:${appPort}`,
     E2E_BASE_URL: `http://localhost:${appPort}`,
@@ -67,6 +70,13 @@ try {
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`E2E subprocess failed (${result.status ?? result.signal}).`);
   };
+  // Trava: migrate/seed só em Postgres local (o descartável daqui ou o serviço do CI).
+  for (const name of ["DATABASE_URL", "DATABASE_URL_UNPOOLED"]) {
+    const host = new URL(env[name]).hostname;
+    if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(host)) {
+      throw new Error(`Refusing to migrate/seed: ${name} points to a non-local host.`);
+    }
+  }
   run(["node_modules/prisma/build/index.js", "migrate", "deploy"]);
   run(["--conditions=react-server", "--import", "tsx", "prisma/seed.ts"]);
   run(["node_modules/@playwright/test/cli.js", "test", ...process.argv.slice(2)]);
