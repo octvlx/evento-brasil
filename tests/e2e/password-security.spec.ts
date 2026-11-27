@@ -8,7 +8,7 @@ test("cadastro: confirmação de e-mail e senha, requisitos; troca em Minha cont
   const email = `senha-e2e+${Date.now()}@test.local`;
   await page.goto("/registrar");
   await page.getByLabel("Nome", { exact: true }).fill("Pessoa");
-  await page.getByLabel("Sobrenome", { exact: true }).fill("Senha E2E");
+  await page.getByLabel("Sobrenome", { exact: true }).fill("Senha Teste");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
   // E-mail redigitado com erro de digitação: o cadastro não envia.
   await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email.replace("@test.local", "@test.locla"));

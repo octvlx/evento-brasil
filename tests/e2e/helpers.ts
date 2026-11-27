@@ -43,7 +43,7 @@ export async function acceptSignupTerms(page: Page) {
 }
 
 /** Cria uma conta nova, confirma o e-mail e abre o cadastro de organizador. */
-export async function signUpForOrganizer(page: Page, email: string, name = "Pessoa Teste E2E") {
+export async function signUpForOrganizer(page: Page, email: string, name = "Pessoa Teste") {
   await page.goto("/registrar?next=/organizador/cadastro");
   const [firstName, ...lastName] = name.split(" ");
   await page.getByLabel("Nome", { exact: true }).fill(firstName);
