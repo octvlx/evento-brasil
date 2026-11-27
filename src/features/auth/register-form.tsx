@@ -6,14 +6,15 @@ import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Alert, FieldError, Input, Label } from "@/components/ui/primitives";
-import { registerSchema, type RegisterInput } from "@/features/schemas";
+import { FIRST_NAME_MAX, LAST_NAME_MAX, registerSchema, type RegisterInput } from "@/features/schemas";
 import { registerAction } from "./actions";
 import { PasswordChecklist, PasswordInput } from "./password-fields";
 
 export function RegisterForm({ next }: { next?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const form = useForm<RegisterInput>({ resolver: zodResolver(registerSchema), defaultValues: { name: "", email: "", confirmEmail: "", password: "", confirmPassword: "", phone: "" } });
+  // raw: o servidor recebe Nome e Sobrenome como digitados e refaz a validação.
+  const form = useForm<RegisterInput>({ resolver: zodResolver(registerSchema, undefined, { raw: true }), defaultValues: { firstName: "", lastName: "", email: "", confirmEmail: "", password: "", confirmPassword: "", phone: "" } });
   const password = useWatch({ control: form.control, name: "password" }) ?? "";
   const { errors } = form.formState;
 
@@ -29,10 +30,17 @@ export function RegisterForm({ next }: { next?: string }) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-4" noValidate>
-      <div>
-        <Label htmlFor="name">Nome completo</Label>
-        <Input id="name" autoComplete="name" className="mt-1.5" aria-invalid={!!errors.name} {...form.register("name")} />
-        <FieldError message={errors.name?.message} />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <Label htmlFor="firstName">Nome</Label>
+          <Input id="firstName" autoComplete="given-name" autoCapitalize="words" maxLength={FIRST_NAME_MAX} className="mt-1.5" aria-invalid={!!errors.firstName} aria-describedby="first-name-error" {...form.register("firstName")} />
+          <FieldError id="first-name-error" message={errors.firstName?.message} />
+        </div>
+        <div>
+          <Label htmlFor="lastName">Sobrenome</Label>
+          <Input id="lastName" autoComplete="family-name" autoCapitalize="words" maxLength={LAST_NAME_MAX} className="mt-1.5" aria-invalid={!!errors.lastName} aria-describedby="last-name-error" {...form.register("lastName")} />
+          <FieldError id="last-name-error" message={errors.lastName?.message} />
+        </div>
       </div>
       <div>
         <Label htmlFor="email">E-mail</Label>

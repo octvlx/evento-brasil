@@ -6,7 +6,7 @@ test("organizador cria uma segunda organização e alterna entre elas", async ({
   const first = `Primeira Org ${stamp}`;
   const second = `Segunda Org ${stamp}`;
 
-  await signUpForOrganizer(page, `org-e2e+${stamp}@test.local`, "Organizadora E2E");
+  await signUpForOrganizer(page, `org-e2e+${stamp}@test.local`, "Organizadora Teste");
 
   const fill = (name: string) => submitOrganizerApplication(page, { name });
   await fill(first);

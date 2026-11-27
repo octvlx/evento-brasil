@@ -91,7 +91,7 @@ describe("redefinição: não reutiliza a senha anterior", () => {
 });
 
 describe("cadastro valida a senha no servidor", () => {
-  const base = { name: "Bia", email: "bia@test.local", confirmEmail: "bia@test.local", acceptTerms: true as const, acceptPrivacy: true as const };
+  const base = { firstName: "Bia", lastName: "Souza", email: "bia@test.local", confirmEmail: "bia@test.local", acceptTerms: true as const, acceptPrivacy: true as const };
   it("recusa senha fraca, comum, confirmação diferente ou e-mail redigitado diferente, mesmo sem passar pelo formulário", async () => {
     await expect(registerUser(db, { ...base, password: "12345678", confirmPassword: "12345678" })).rejects.toMatchObject({ code: "VALIDATION" });
     await expect(registerUser(db, { ...base, password: "Senha@123", confirmPassword: "Senha@123" })).rejects.toThrow(PASSWORD_MESSAGES.common);

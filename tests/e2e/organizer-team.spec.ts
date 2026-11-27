@@ -27,7 +27,8 @@ test("organizador reenvia, revoga e altera papel; convidado aceita e recusa", as
   const memberCtx = await browser.newContext();
   const member = await memberCtx.newPage();
   await member.goto("/registrar?next=/");
-  await member.getByLabel("Nome completo").fill("Membro E2E");
+  await member.getByLabel("Nome", { exact: true }).fill("Membro");
+  await member.getByLabel("Sobrenome", { exact: true }).fill("Equipe");
   await member.getByLabel("E-mail", { exact: true }).fill(memberEmail);
   await member.getByLabel("Confirmar e-mail", { exact: true }).fill(memberEmail);
   await member.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");

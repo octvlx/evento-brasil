@@ -22,9 +22,29 @@ const emptyToUndefined = <T extends z.ZodType>(schema: T) => z.preprocess((v) =>
 const localDateTime = z.string().refine(isValidLocalDateTime, "Data/hora inválida");
 
 // ── Contas ──
+// Nome e sobrenome: sem espaços nas pontas nem repetidos no meio. Juntos cabem nos
+// 120 caracteres de User.name (e do perfil), que continua sendo a única coluna.
+// Letras de qualquer idioma (com acento), espaço, hífen, ponto e apóstrofo (reto ou o
+// curvo que o teclado do celular coloca). Começa sempre por letra.
+const NAME_PART = /^[\p{L}\p{M}][\p{L}\p{M}'’ .-]*$/u;
+const namePart = (max: number, required: string, label: string) =>
+  z
+    .string()
+    .transform((v) => v.replace(/\s+/g, " ").trim())
+    .pipe(
+      z
+        .string()
+        .min(1, required)
+        .max(max, `${label} pode ter no máximo ${max} caracteres`)
+        .regex(NAME_PART, `${label} deve ter só letras, espaço, hífen ou apóstrofo`),
+    );
+export const FIRST_NAME_MAX = 50;
+export const LAST_NAME_MAX = 69;
+
 export const registerSchema = z
   .object({
-    name: trimmed(2, 120, "Informe seu nome"),
+    firstName: namePart(FIRST_NAME_MAX, "Informe seu nome", "O nome"),
+    lastName: namePart(LAST_NAME_MAX, "Informe seu sobrenome", "O sobrenome"),
     email,
     // Só confere a digitação do e-mail; nunca é gravado.
     confirmEmail: z.string().trim().toLowerCase().min(1, "Confirme o e-mail"),
@@ -36,7 +56,9 @@ export const registerSchema = z
     acceptPrivacy: z.literal(true, { error: "É preciso aceitar a política de privacidade" }),
   })
   .refine((v) => v.email === v.confirmEmail, { path: ["confirmEmail"], message: "Os e-mails não coincidem." })
-  .refine((v) => v.password === v.confirmPassword, { path: ["confirmPassword"], message: PASSWORD_MESSAGES.mismatch });
+  .refine((v) => v.password === v.confirmPassword, { path: ["confirmPassword"], message: PASSWORD_MESSAGES.mismatch })
+  // O banco guarda um nome só: "Nome Sobrenome".
+  .transform(({ firstName, lastName, ...rest }) => ({ ...rest, name: `${firstName} ${lastName}` }));
 export type RegisterInput = z.input<typeof registerSchema>;
 
 export const loginSchema = z.object({ email, password: z.string().min(1, "Informe a senha").max(200) });

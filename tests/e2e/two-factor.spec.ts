@@ -7,7 +7,8 @@ test("2FA: ativar com o aplicativo, entrar com o código e com um código de rec
   test.skip(process.env.E2E_ISOLATED !== "1", "Cria conta nova: só no banco descartável do E2E isolado.");
   const email = `dois-fatores+${Date.now()}@test.local`;
   await page.goto("/registrar");
-  await page.getByLabel("Nome completo", { exact: true }).fill("Pessoa Duas Etapas");
+  await page.getByLabel("Nome", { exact: true }).fill("Pessoa");
+  await page.getByLabel("Sobrenome", { exact: true }).fill("Duas Etapas");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
   await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email);
   await page.getByLabel("Senha", { exact: true }).fill(PASSWORD);
