@@ -21,6 +21,9 @@ export function simulatePayout(priceCents: number, quantity: number, rule: Simul
   return {
     buyerPaysPerTicket: line.unitPriceCents + line.serviceFeePerUnitCents,
     commissionPerTicket: line.commissionPerUnitCents,
+    /** Partes da comissão: percentual sobre o preço e valor fixo (meia: proporcional). */
+    percentPartPerTicket: line.commissionPerUnitCents - line.fixedFeePerUnitCents,
+    fixedPartPerTicket: line.fixedFeePerUnitCents,
     organizerPerTicket: line.unitPriceCents - (rule.bearer === "ORGANIZER" ? line.commissionPerUnitCents : 0),
     buyersTotal: fees.totalCents,
     commissionTotal: fees.commissionCents,
@@ -29,7 +32,23 @@ export function simulatePayout(priceCents: number, quantity: number, rule: Simul
   };
 }
 
-export function PayoutSimulator({ rule, processingByOrganizer }: { rule: SimulatorRule; processingByOrganizer: boolean }) {
+/** Texto da composição da comissão por ingresso: "7% (R$ 3,50) + R$ 2,00 fixo". */
+export function commissionParts(percentBps: number, percentPart: number, fixedPart: number) {
+  const percent = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(percentBps / 100);
+  const pct = `${percent}% (${formatBRL(percentPart)})`;
+  return fixedPart > 0 ? `${pct} + ${formatBRL(fixedPart)} fixo` : pct;
+}
+
+export function PayoutSimulator({
+  rule,
+  processingByOrganizer,
+  fixedFeeRetainedNote,
+}: {
+  rule: SimulatorRule;
+  processingByOrganizer: boolean;
+  /** Regra com valor fixo não reembolsável: aviso de quando ele não volta ao comprador. */
+  fixedFeeRetainedNote?: string;
+}) {
   const id = useId();
   const [price, setPrice] = useState("50,00");
   const [qty, setQty] = useState("100");
@@ -83,7 +102,11 @@ export function PayoutSimulator({ rule, processingByOrganizer }: { rule: Simulat
           ) : (
             <dl className="grid gap-3 sm:grid-cols-3">
               <Stat label="O comprador paga" value={formatBRL(result.buyerPaysPerTicket)} hint={buyerPays && result.commissionPerTicket ? `ingresso + ${formatBRL(result.commissionPerTicket)} de taxa` : "por ingresso"} />
-              <Stat label={buyerPays ? "Taxa de serviço" : "Comissão"} value={formatBRL(result.commissionPerTicket)} hint={buyerPays ? "paga pelo comprador" : "descontada do repasse"} />
+              <Stat
+                label={buyerPays ? "Taxa de serviço" : "Comissão"}
+                value={formatBRL(result.commissionPerTicket)}
+                hint={`${result.commissionPerTicket ? `${commissionParts(rule.percentBps, result.percentPartPerTicket, result.fixedPartPerTicket)} · ` : ""}${buyerPays ? "paga pelo comprador" : "descontada do repasse"}`}
+              />
               <Stat label="Você recebe" value={formatBRL(result.organizerPerTicket)} hint="por ingresso" strong />
               <div className="rounded-xl bg-night p-4 text-white sm:col-span-3" data-testid="simulator-total">
                 <dt className="text-sm text-white/75">
@@ -102,7 +125,7 @@ export function PayoutSimulator({ rule, processingByOrganizer }: { rule: Simulat
             </dl>
           )}
           <p className="mt-3 text-xs text-muted-foreground">
-            Simulação com a regra padrão. {processingByOrganizer ? "“Você recebe” é antes da tarifa do Mercado Pago pelo processamento do pagamento." : "A tarifa do Mercado Pago é absorvida pela plataforma."} Condições combinadas para a sua organização aparecem na criação do evento.
+            Simulação com a regra padrão. {fixedFeeRetainedNote ? `${fixedFeeRetainedNote} ` : ""}{processingByOrganizer ? "“Você recebe” é antes da tarifa do Mercado Pago pelo processamento do pagamento." : "A tarifa do Mercado Pago é absorvida pela plataforma."} Condições combinadas para a sua organização aparecem na criação do evento.
           </p>
         </div>
       </div>

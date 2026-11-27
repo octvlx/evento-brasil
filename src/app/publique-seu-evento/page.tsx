@@ -26,6 +26,7 @@ import { formatBRL } from "@/lib/money";
 import { db } from "@/server/db";
 import { getPaymentAdapter } from "@/server/payments";
 import { commissionReturnedOnRefund, currentPlatformCommissionRule } from "@/server/services/commission";
+import { ARREPENDIMENTO_DAYS } from "@/server/services/refunds";
 
 export const metadata: Metadata = {
   title: "Publique seu evento",
@@ -270,11 +271,32 @@ async function Fees() {
   const half = 5_000;
   const halfCommission = commissionPerUnit(half, rule, true);
   const what = fixed > 0 ? `${percent}% + ${formatBRL(fixed)} por ingresso` : `${percent}% por ingresso`;
+  // Valor fixo não reembolsável (regra do admin): só na desistência do comprador depois do
+  // prazo de arrependimento; o mesmo critério de retainedFixedFeeCents (refunds.ts).
+  const fixedRetained = fixed > 0 && !rule.fixedFeeRefundable;
+  const fixedRetainedNote = fixedRetained
+    ? `O valor fixo de ${formatBRL(fixed)} por ingresso não é devolvido quando o comprador desiste depois de ${ARREPENDIMENTO_DAYS} dias da compra; no arrependimento (até ${ARREPENDIMENTO_DAYS} dias) e em alteração ou cancelamento do evento, tudo é devolvido.`
+    : undefined;
+  const refundReturned = commissionReturnedOnRefund(rule, getPaymentAdapter().isSimulated);
   return (
     <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_1.1fr]">
       <div className="rounded-2xl border border-border bg-card p-6 shadow-card">
         <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Comissão padrão da plataforma</p>
         <p className="mt-1 font-display text-4xl font-extrabold">{what}</p>
+        {fixed > 0 && (
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-sm" data-testid="commission-parts">
+            <div className="rounded-xl bg-muted px-3 py-2">
+              <dt className="text-xs text-muted-foreground">Percentual</dt>
+              <dd className="font-bold tabular-nums">{percent}% do valor do ingresso</dd>
+            </div>
+            <div className="rounded-xl bg-muted px-3 py-2">
+              <dt className="text-xs text-muted-foreground">Valor fixo</dt>
+              <dd className="font-bold tabular-nums">
+                {formatBRL(fixed)} por ingresso{fixedRetained ? " · não reembolsável" : ""}
+              </dd>
+            </div>
+          </dl>
+        )}
         <ul className="mt-4 space-y-2 text-sm text-foreground/90">
           <li className="flex gap-2">
             <Check />
@@ -292,7 +314,7 @@ async function Fees() {
           </li>
           <li className="flex gap-2">
             <Check />
-            Na meia-entrada, a comissão é proporcional ao valor da meia.
+            {fixed > 0 ? `Na meia-entrada, a comissão é proporcional ao valor da meia: o percentual incide sobre a meia e o valor fixo cai à metade (${formatBRL(commissionPerUnit(half, { percentBps: 0, fixedCentsPerTicket: fixed }, true))}).` : "Na meia-entrada, a comissão é proporcional ao valor da meia."}
           </li>
           <li className="flex gap-2">
             <Check />
@@ -302,8 +324,10 @@ async function Fees() {
           </li>
           <li className="flex gap-2">
             <Check />
-            {commissionReturnedOnRefund(rule, getPaymentAdapter().isSimulated)
-              ? "Em reembolso, a comissão daquele ingresso também é devolvida."
+            {refundReturned
+              ? fixedRetained
+                ? `Em reembolso, a comissão daquele ingresso também é devolvida, exceto o valor fixo de ${formatBRL(fixed)} quando o comprador desiste depois de ${ARREPENDIMENTO_DAYS} dias da compra. No arrependimento (até ${ARREPENDIMENTO_DAYS} dias) e em alteração ou cancelamento do evento, tudo é devolvido.`
+                : "Em reembolso, a comissão daquele ingresso também é devolvida."
               : "Em reembolso, a comissão daquele ingresso não é devolvida."}
           </li>
         </ul>
@@ -354,6 +378,7 @@ async function Fees() {
         <PayoutSimulator
           rule={{ percentBps: rule.percentBps, fixedCentsPerTicket: rule.fixedCentsPerTicket, bearer: rule.bearer }}
           processingByOrganizer={rule.processingFeeBearer !== "PLATFORM"}
+          fixedFeeRetainedNote={fixedRetainedNote}
         />
       </div>
     </div>
