@@ -1,12 +1,63 @@
 import type { CreateOrderInput } from "@/features/schemas";
-import { z } from "zod";
-const fields = {
-  quantities: z.record(z.string().max(128), z.number().int().min(0).max(50)).refine((value) => Object.keys(value).length <= 10),
-  attendees: z.record(z.string().max(128), z.array(z.string().max(120)).max(50)).refine((value) => Object.keys(value).length <= 10),
-  // Lugar marcado: assentos escolhidos por tipo (o servidor confere de novo ao reservar).
-  seats: z.record(z.string().max(128), z.array(z.object({ id: z.string().max(64), label: z.string().max(8) })).max(50)).refine((value) => Object.keys(value).length <= 10),
-  halfPrice: z.boolean(), coupon: z.string().max(64), idempotencyKey: z.union([z.literal(""), z.string().uuid()]),
+
+// Validação do que fica no localStorage (entrada não confiável; o servidor confere tudo
+// de novo ao reservar). Sem zod de propósito: este arquivo vai para a página do evento,
+// e o zod pesava ~34 KB comprimidos no navegador. Mesmas regras do esquema antigo
+// (tests/unit/cart-storage-validators.test.ts compara os dois).
+type Check = { safeParse(v: unknown): { success: true; data: unknown } | { success: false } };
+const ok = (data: unknown) => ({ success: true as const, data });
+const no = { success: false as const };
+const check = (test: (v: unknown) => unknown): Check => ({
+  safeParse(v) {
+    const data = test(v);
+    return data === undefined ? no : ok(data);
+  },
+});
+const isStr = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
+const isPlainObject = (v: unknown): v is Record<string, unknown> => {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 };
+/** Objeto simples, até 10 chaves de até 128 caracteres; cada valor passa por `value` (undefined = inválido). */
+const record = (value: (v: unknown) => unknown) =>
+  check((v) => {
+    if (!isPlainObject(v)) return undefined;
+    const keys = Object.keys(v);
+    if (keys.length > 10) return undefined;
+    const out: Record<string, unknown> = {};
+    for (const k of keys) {
+      // Como o zod: "__proto__" é ignorada (nem validada nem copiada; sem prototype pollution).
+      if (k === "__proto__") continue;
+      if (k.length > 128) return undefined;
+      const parsed = value(v[k]);
+      if (parsed === undefined) return undefined;
+      out[k] = parsed;
+    }
+    return out;
+  });
+const list = (max: number, item: (v: unknown) => unknown) => (v: unknown) => {
+  if (!Array.isArray(v) || v.length > max) return undefined;
+  const out: unknown[] = [];
+  for (const x of v) {
+    const parsed = item(x);
+    if (parsed === undefined) return undefined;
+    out.push(parsed);
+  }
+  return out;
+};
+// Versões 1 a 8, nil e max: o mesmo formato que o z.string().uuid() aceitava.
+const UUID = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
+const fields = {
+  quantities: record((n) => (typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= 50 ? n : undefined)),
+  attendees: record(list(50, (s) => (isStr(s, 120) ? s : undefined))),
+  // Lugar marcado: assentos escolhidos por tipo (o servidor confere de novo ao reservar).
+  // Só id e rótulo voltam (outras chaves do objeto são descartadas, como no z.object).
+  seats: record(list(50, (s) => (isPlainObject(s) && isStr(s.id, 64) && isStr(s.label, 8) ? { id: s.id, label: s.label } : undefined))),
+  halfPrice: check((v) => (typeof v === "boolean" ? v : undefined)),
+  coupon: check((v) => (isStr(v, 64) ? v : undefined)),
+  idempotencyKey: check((v) => (v === "" || (typeof v === "string" && UUID.test(v)) ? v : undefined)),
+} satisfies Record<string, Check>;
 export function decodeCartField<T>(field: string, raw: string | null, initial: T): T {
   if (!raw || !(field in fields)) return initial;
   try { const parsed = fields[field as keyof typeof fields].safeParse(JSON.parse(raw)); return parsed.success ? parsed.data as T : initial; } catch { return initial; }

@@ -4,7 +4,7 @@ import type { Db } from "../db";
 import { audit } from "../audit";
 import { AppError } from "../errors";
 import { assertEventPermission, type Actor } from "../auth/permissions";
-import { adTrackingSchema, type AdTrackingInput } from "@/lib/ad-tracking";
+import { adTrackingSchema, type AdTrackingInput } from "@/lib/ad-tracking-schema";
 
 /** Grava os IDs (vazio = remove). Exige event:write; auditado com os valores antes e depois. */
 export async function setEventAdTracking(db: Db, actor: Actor, eventId: string, input: AdTrackingInput) {

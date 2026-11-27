@@ -21,7 +21,7 @@ import { disconnectMercadoPago } from "@/server/payments/mercadopago-oauth";
 import { createCoupon, createOrganizationCoupon, deleteCoupon, setCouponDisabled, updateCoupon } from "@/server/services/coupons";
 import { createTrackingLink, setTrackingLinkArchived } from "@/server/services/tracking-links";
 import { setEventAdTracking } from "@/server/services/ad-tracking";
-import type { AdTrackingInput } from "@/lib/ad-tracking";
+import type { AdTrackingInput } from "@/lib/ad-tracking-schema";
 import { recordAcceptance } from "@/server/services/terms";
 import { createEvent, deleteTicketType, duplicateEvent, submitEventForPublication, unpublishEvent, updateEvent, upsertTicketType } from "@/server/services/events";
 import { extendEventChangeWindow } from "@/server/services/event-changes";
