@@ -889,7 +889,7 @@ function Preview({
                 <span>{t.name}</span>
                 <span className="font-semibold">
                   {t.priceCents ? formatBRL(estimates[t.id]?.buyerPaysCents ?? t.priceCents) : "Gratuito"}
-                  {estimates[t.id]?.bearer === "BUYER" && <span className="block text-right text-xs font-normal text-muted-foreground">com taxa de serviço</span>}
+                  {(estimates[t.id]?.buyerPaysCents ?? 0) > t.priceCents && <span className="block text-right text-xs font-normal text-muted-foreground">com taxa de serviço</span>}
                 </span>
               </li>
             ))}

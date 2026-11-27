@@ -127,7 +127,11 @@ export function TicketTypesManager({
               {estimates?.[t.id] && (
                 <p className="text-xs text-muted-foreground">
                   Comprador paga {formatBRL(estimates[t.id].buyerPaysCents)} · você recebe ≈ {formatBRL(estimates[t.id].organizerGetsCents)} por ingresso
-                  {estimates[t.id].bearer === "BUYER" ? " (taxa de serviço cobrada do comprador)" : " (taxa da plataforma descontada do repasse)"}
+                  {estimates[t.id].bearer === "BUYER"
+                    ? " (taxa de serviço cobrada do comprador)"
+                    : estimates[t.id].buyerPaysCents > t.priceCents
+                      ? " (percentual descontado do repasse; valor fixo cobrado do comprador)"
+                      : " (taxa da plataforma descontada do repasse)"}
                 </p>
               )}
             </div>

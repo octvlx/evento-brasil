@@ -47,7 +47,7 @@ async function Content() {
               <th className="p-3">Alvo</th>
               <th className="p-3 text-right">%</th>
               <th className="p-3 text-right">Fixo</th>
-              <th className="p-3">Paga</th>
+              <th className="p-3">Paga o %</th>
               <th className="p-3">Processamento</th>
               <th className="p-3">Fixo no reembolso</th>
               <th className="p-3">Vigência</th>

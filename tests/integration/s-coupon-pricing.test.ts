@@ -123,7 +123,7 @@ describe("S — preço com cupom", () => {
     expect(await order(await makeUser(), event.id, [{ ticketTypeId: general.id, quantity: 1 }], { couponCode: "CORTESIA" })).toMatchObject({ status: "PAID", totalCents: 0 });
   });
 
-  it("guarda B1 com cupom; cupom de 100% vira pedido gratuito resgatado uma única vez", async () => {
+  it("cupom que deixa o líquido abaixo do fixo é aceito (fixo do comprador); cupom de 100% vira pedido gratuito resgatado uma única vez", async () => {
     const { org, coupon } = await setup();
     // Evento sem meia-entrada: aqui só a guarda B1 deve atuar.
     const event = await makeEvent(org, { tickets: [{ priceCents: 10000, quantityTotal: 50 }] });
@@ -131,9 +131,12 @@ describe("S — preço com cupom", () => {
     await db.commissionRule.updateMany({ where: { scope: "PLATFORM" }, data: { fixedCentsPerTicket: 100, bearer: "ORGANIZER" } });
     await coupon({ code: "QUASETUDO", discountType: "FIXED_PER_TICKET", percentBps: null, amountCents: 9950 });
     const cortesia = await coupon({ code: "CORTESIA", percentBps: 10000 });
-    await expect(order(await makeUser(), event.id, [{ ticketTypeId: general.id, quantity: 1 }], { couponCode: "QUASETUDO" })).rejects.toThrow(
-      /Desconto alto demais/,
-    );
+    // Líquido de R$ 0,50: o percentual sai do repasse e o fixo de R$ 1,00 é cobrado do comprador.
+    expect(await order(await makeUser(), event.id, [{ ticketTypeId: general.id, quantity: 1 }], { couponCode: "QUASETUDO" })).toMatchObject({
+      subtotalCents: 50,
+      serviceFeeCents: 100,
+      totalCents: 150,
+    });
     const free = await order(await makeUser(), event.id, [{ ticketTypeId: general.id, quantity: 2 }], { couponCode: "CORTESIA" });
     expect(free).toMatchObject({ status: "PAID", totalCents: 0, commissionCents: 0, discountCents: 20000 });
     expect(await db.issuedTicket.count({ where: { orderId: free.id } })).toBe(2);

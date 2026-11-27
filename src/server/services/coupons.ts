@@ -7,7 +7,7 @@ import "server-only";
 import { Prisma, type EventStatus, type TicketType } from "@/generated/prisma/client";
 import { couponInputSchema, type CouponInput } from "@/features/schemas";
 import { discountPerUnit, undercutHalfPrice, type DiscountSpec } from "@/features/fees/discount";
-import { commissionPerUnit } from "@/features/fees/policy";
+import { organizerFeePerUnit } from "@/features/fees/policy";
 import { zonedLocalToUtc } from "@/lib/datetime";
 import { formatBRL } from "@/lib/money";
 import type { Db, Tx } from "../db";
@@ -43,7 +43,7 @@ async function couponWarnings(tx: Tx, organizationId: string, eventId: string, t
   const halfPrices = types.filter((t) => t.kind === "HALF_PRICE" && !t.isHidden).map((t) => t.priceCents);
   for (const t of eligibleTypes(types, ticketTypeIds)) {
     const net = t.priceCents - discountPerUnit(t.priceCents, spec);
-    if (rule.bearer === "ORGANIZER" && net > 0 && commissionPerUnit(net, rule) > net) {
+    if (net > 0 && organizerFeePerUnit(net, rule) > net) {
       warnings.push(`"${t.name}": com o desconto o preço (${formatBRL(net)}) fica abaixo da taxa da plataforma; o cupom será recusado nesse ingresso.`);
     }
     // Só quando é o cupom que leva abaixo da meia: um tipo que já custa menos que a meia não é afetado.
