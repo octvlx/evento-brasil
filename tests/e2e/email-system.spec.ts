@@ -9,7 +9,8 @@ test("email recovery: console verification, reset, session revocation and safe l
   );
   const email = "email-system+" + Date.now() + "@test.local";
   await page.goto("/registrar");
-  await page.getByLabel("Nome completo", { exact: true }).fill("Pessoa Email");
+  await page.getByLabel("Nome", { exact: true }).fill("Pessoa");
+  await page.getByLabel("Sobrenome", { exact: true }).fill("Email");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
   await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email);
   await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");

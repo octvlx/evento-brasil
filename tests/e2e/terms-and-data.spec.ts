@@ -22,7 +22,8 @@ test("cadastro exige termos e privacidade, grava o aceite e a conta baixa os pr√
     const email = `termos-e2e+${Date.now()}@test.local`;
 
     await page.goto("/registrar");
-    await page.getByLabel("Nome completo").fill("Pessoa Termos E2E");
+    await page.getByLabel("Nome", { exact: true }).fill("Pessoa");
+    await page.getByLabel("Sobrenome", { exact: true }).fill("Termos E2E");
     await page.getByLabel("E-mail", { exact: true }).fill(email);
     await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email);
     await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");

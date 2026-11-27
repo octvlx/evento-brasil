@@ -7,7 +7,8 @@ const SECOND = "Segunda#E2e1357";
 test("cadastro: confirmação de e-mail e senha, requisitos; troca em Minha conta troca em Minha conta com senha atual e login com a nova", async ({ page }) => {
   const email = `senha-e2e+${Date.now()}@test.local`;
   await page.goto("/registrar");
-  await page.getByLabel("Nome completo", { exact: true }).fill("Pessoa Senha E2E");
+  await page.getByLabel("Nome", { exact: true }).fill("Pessoa");
+  await page.getByLabel("Sobrenome", { exact: true }).fill("Senha E2E");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
   // E-mail redigitado com erro de digitação: o cadastro não envia.
   await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email.replace("@test.local", "@test.locla"));

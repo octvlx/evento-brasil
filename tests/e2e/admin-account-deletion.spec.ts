@@ -25,7 +25,8 @@ test.describe("exclusão definitiva pelo superadmin", () => {
     // Conta nova de cliente, sem pedidos.
     const email = `excluir+${Date.now()}@test.local`;
     await page.goto("/registrar");
-    await page.getByLabel("Nome completo", { exact: true }).fill("Pessoa Para Excluir");
+    await page.getByLabel("Nome", { exact: true }).fill("Pessoa");
+    await page.getByLabel("Sobrenome", { exact: true }).fill("Para Excluir");
     await page.getByLabel("E-mail", { exact: true }).fill(email);
     await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email);
     await page.getByLabel("Senha", { exact: true }).fill(PASSWORD);

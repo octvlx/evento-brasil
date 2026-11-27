@@ -45,7 +45,9 @@ export async function acceptSignupTerms(page: Page) {
 /** Cria uma conta nova, confirma o e-mail e abre o cadastro de organizador. */
 export async function signUpForOrganizer(page: Page, email: string, name = "Pessoa Teste E2E") {
   await page.goto("/registrar?next=/organizador/cadastro");
-  await page.getByLabel("Nome completo").fill(name);
+  const [firstName, ...lastName] = name.split(" ");
+  await page.getByLabel("Nome", { exact: true }).fill(firstName);
+  await page.getByLabel("Sobrenome", { exact: true }).fill(lastName.join(" ") || "Teste");
   await page.getByLabel("E-mail", { exact: true }).fill(email);
   await page.getByLabel("Confirmar e-mail", { exact: true }).fill(email);
   await page.getByLabel("Senha", { exact: true }).fill("Cadastro#E2e2468");

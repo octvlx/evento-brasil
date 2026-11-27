@@ -275,7 +275,8 @@ it("persists real refund, event cancellation and organizer invitation events", a
 it("queues a hashed verification proof atomically with minimal signup", async () => {
   const { registerUser } = await import("@/server/services/users");
   const user = await registerUser(db, {
-    name: "Pessoa Teste",
+    firstName: "Pessoa",
+    lastName: "Teste",
     email: "signup@test.local",
     confirmEmail: "signup@test.local", password: "Ingresso#Forte91", confirmPassword: "Ingresso#Forte91",
     acceptTerms: true,
