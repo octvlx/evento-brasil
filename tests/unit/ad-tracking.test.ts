@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adTrackingSchema, hasAdTracking } from "@/lib/ad-tracking";
+import { hasAdTracking } from "@/lib/ad-tracking";
+import { adTrackingSchema } from "@/lib/ad-tracking-schema";
 import { fireStage, readConsent } from "@/features/tracking/ad-tracking";
 
 describe("formato dos IDs de medição", () => {
