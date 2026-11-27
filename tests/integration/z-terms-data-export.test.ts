@@ -222,7 +222,7 @@ describe("baixar meus dados (R9)", () => {
     const text = await res.text();
     const data = JSON.parse(text);
 
-    expect(data.profile).toMatchObject({ id: me.id, email: "eu@test.local", name: "Comprador" });
+    expect(data.profile).toMatchObject({ id: me.id, email: "eu@test.local", name: "Comprador Teste" });
     expect(data.orders.map((o: { code: string }) => o.code)).toEqual([mine.publicCode]);
     expect(data.orders[0].items[0]).toMatchObject({ quantity: 2 });
     expect(data.orders[0].payments[0]).toMatchObject({ method: "PIX", status: "PAID" });
