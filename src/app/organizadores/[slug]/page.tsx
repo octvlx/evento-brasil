@@ -12,13 +12,15 @@ export async function generateMetadata({ params }: PageProps<"/organizadores/[sl
   const { slug } = await params;
   const org = await db.organization.findFirst({ where: { slug, status: "APPROVED" }, select: { name: true, description: true, coverUrl: true, logoUrl: true } });
   if (!org) return { title: "Organizador não encontrado", robots: { index: false } };
-  const description = org.description?.slice(0, 160) ?? `Eventos de ${org.name} na TICKET24. Compre ingressos com PIX ou cartão.`;
+  const description = org.description?.slice(0, 160) ?? `Próximos eventos de ${org.name} na TICKET24: agenda, datas e ingressos com PIX ou cartão.`;
+  // Quem busca o nome do produtor quer a agenda e os ingressos.
+  const title = `${org.name}: próximos eventos e ingressos`;
   return {
-    title: org.name,
+    title,
     description,
     alternates: { canonical: `/organizadores/${slug}` },
     // Capa (ou logo) do organizador; sem imagem própria, a padrão (um openGraph na página substitui o herdado).
-    openGraph: { type: "website", title: org.name, description, url: `/organizadores/${slug}`, images: [org.coverUrl ?? org.logoUrl ?? DEFAULT_OG_IMAGE] },
+    openGraph: { type: "website", title, description, url: `/organizadores/${slug}`, images: [org.coverUrl ?? org.logoUrl ?? DEFAULT_OG_IMAGE] },
   };
 }
 

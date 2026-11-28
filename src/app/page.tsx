@@ -12,6 +12,7 @@ import { CategoryChips } from "@/components/site/category-chips";
 import { SmartEventSearch } from "@/components/site/smart-event-search";
 import { EventCarousel } from "@/components/site/event-carousel";
 import { commissionHeadline } from "@/features/fees/policy";
+import { BRAND } from "@/lib/brand";
 import { PUBLISH_EVENT_INFO_HREF } from "@/lib/help-links";
 import { formatBRL } from "@/lib/money";
 import { CITY_COOKIE, CITY_SOURCE_COOKIE } from "@/lib/city-preference";
@@ -23,8 +24,16 @@ import { eventsInCity, featuredEvents, featuredOrganizers, getPublicCity, listCa
 import { getCurrentUser } from "@/server/auth/current";
 import { currentPlatformCommissionRule } from "@/server/services/commission";
 
-// Título e descrição vêm do layout; aqui só o endereço canônico (sem ?cidade etc.).
-export const metadata: Metadata = { alternates: { canonical: "/" } };
+// Título e descrição com o que as pessoas buscam ("ingressos", "shows", "festas", "o que
+// fazer hoje/no fim de semana"); o endereço canônico fica sem ?cidade etc.
+const HOME_TITLE = `Ingressos para shows, festas e eventos na sua cidade | ${BRAND.name}`;
+const HOME_DESCRIPTION = "Ingressos para shows, festas, teatro e stand-up na sua cidade. Veja o que fazer hoje e no fim de semana e pague com PIX ou cartão.";
+export const metadata: Metadata = {
+  title: { absolute: HOME_TITLE },
+  description: HOME_DESCRIPTION,
+  alternates: { canonical: "/" },
+  openGraph: { type: "website", locale: "pt_BR", siteName: BRAND.name, title: HOME_TITLE, description: HOME_DESCRIPTION, url: "/" },
+};
 
 export default function HomePage() {
   return (
@@ -35,8 +44,12 @@ export default function HomePage() {
       <section aria-labelledby="destaques-titulo" className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 sm:pt-8">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
           <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
-            <h1 className="font-display text-xl font-extrabold leading-tight sm:text-[2rem]">
-              Qual é o <span className="highlight-lime">rolê</span> de hoje?
+            {/* Um H1 só: a linha pequena diz o que o site é (palavras de busca); a grande é a chamada da marca. */}
+            <h1>
+              <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ingressos para shows, festas e eventos perto de você</span>
+              <span className="mt-1 block font-display text-xl font-extrabold leading-tight sm:text-[2rem]">
+                Qual é o <span className="highlight-lime">rolê</span> de hoje?
+              </span>
             </h1>
             <h2 id="destaques-titulo" className="mt-1.5 text-sm font-semibold text-muted-foreground">
               Em destaque <span className="font-normal">· seleção da TICKET24</span>

@@ -28,9 +28,11 @@ import { getPaymentAdapter } from "@/server/payments";
 import { commissionReturnedOnRefund, currentPlatformCommissionRule } from "@/server/services/commission";
 import { ARREPENDIMENTO_DAYS } from "@/server/services/refunds";
 
+// Buscas de organizador: "vender ingressos online", "plataforma para vender ingressos",
+// "venda de ingressos com PIX", "check-in com QR Code".
 export const metadata: Metadata = {
-  title: "Publique seu evento",
-  description: `Como publicar e vender ingressos na ${BRAND.name}: cadastro, aprovação, criação do evento, comissões e eventos gratuitos.`,
+  title: "Venda ingressos online com PIX e QR Code",
+  description: `Plataforma para vender ingressos online: crie o evento, receba com PIX ou cartão pelo Mercado Pago e faça o check-in com QR Code. Veja as taxas na ${BRAND.name}.`,
   alternates: { canonical: "/publique-seu-evento" },
 };
 
@@ -82,9 +84,10 @@ export default function PublishEventPage() {
           <div className="bg-dots pointer-events-none absolute inset-0" aria-hidden />
           <div className="relative max-w-2xl">
             <p className="mb-3 text-sm font-semibold text-lime">Para produtores, casas, artistas e coletivos</p>
-            <h1 className="font-display text-3xl font-extrabold leading-tight sm:text-5xl">Publique seu evento na {BRAND.name}</h1>
+            <h1 className="font-display text-3xl font-extrabold leading-tight sm:text-5xl">Venda ingressos online na {BRAND.name}</h1>
             <p className="mt-4 text-base text-white/85 sm:text-lg">
-              Cadastre sua organização, crie o evento e venda ou distribua ingressos com QR code. Veja abaixo como funciona, quanto custa e o que muda para eventos gratuitos.
+              Plataforma para vender ingressos de shows, festas, teatro e eventos: cadastre sua organização, crie o evento e venda com PIX ou cartão, ou distribua ingressos gratuitos com QR
+              Code. Veja abaixo como funciona, quanto custa e o que muda para eventos gratuitos.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link href={START_PUBLISHING_HREF} className={buttonVariants({ variant: "accent", size: "lg" })}>

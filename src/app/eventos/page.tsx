@@ -18,17 +18,18 @@ import { planSearch, type SearchPlan } from "@/server/services/search";
 import { DEFAULT_OG_IMAGE } from "@/lib/site";
 import { UFS } from "@/lib/br";
 
-const EVENTS_DESCRIPTION = "Busque eventos por cidade, categoria, data e preço em todo o Brasil.";
+const EVENTS_TITLE = "Eventos e ingressos em todo o Brasil";
+const EVENTS_DESCRIPTION = "Agenda de shows, festas, teatro e stand-up em todo o Brasil. Busque por cidade, categoria, data e preço e compre ingressos com PIX ou cartão.";
 
 // searchParams só é lido aqui (generateMetadata), nunca no nível da página.
 export async function generateMetadata({ searchParams }: PageProps<"/eventos">): Promise<Metadata> {
   const sp = await searchParams;
   const filtered = Object.keys(sp).length > 0;
   return {
-    title: "Explorar eventos",
+    title: EVENTS_TITLE,
     description: EVENTS_DESCRIPTION,
     alternates: { canonical: "/eventos" },
-    openGraph: { type: "website", title: "Explorar eventos", description: EVENTS_DESCRIPTION, url: "/eventos", images: [DEFAULT_OG_IMAGE] },
+    openGraph: { type: "website", title: EVENTS_TITLE, description: EVENTS_DESCRIPTION, url: "/eventos", images: [DEFAULT_OG_IMAGE] },
     ...(filtered ? { robots: { index: false, follow: true } } : {}),
   };
 }
@@ -60,7 +61,7 @@ export default function EventsPage({ searchParams }: PageProps<"/eventos">) {
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
       <BackButton className="-ml-2 mb-3" />
-      <h1 className="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Explorar eventos</h1>
+      <h1 className="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">Explorar eventos e ingressos</h1>
       {/* No desktop a busca fica no header; no celular, aqui (o header só tem a lupa). */}
       <Suspense fallback={<div className="mt-4 h-12 rounded-xl bg-muted md:hidden" />}>
         <SmartEventSearch variant="page" label="Buscar eventos, artistas, cidades ou locais" className="mt-4 md:hidden" />

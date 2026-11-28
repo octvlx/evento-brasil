@@ -28,9 +28,10 @@ export async function generateMetadata({ params }: PageProps<"/cidades/[slug]">)
   await connection();
   const city = await getPublicCity(db, slug);
   if (!city) return { title: "Cidade não encontrada" };
+  // Palavras que as pessoas buscam: "eventos em <cidade> hoje", "o que fazer no fim de semana".
   return {
-    title: `Eventos em ${city.name} – ${city.state}`,
-    description: `Shows, festas, teatro e mais em ${city.name} (${city.state}). Compre ingressos com PIX ou cartão.`,
+    title: `Eventos em ${city.name} – ${city.state} hoje e no fim de semana`,
+    description: `O que fazer em ${city.name} (${city.state}): shows, festas, teatro e stand-up hoje e no fim de semana. Agenda de eventos e ingressos com PIX ou cartão.`,
     alternates: { canonical: `/cidades/${city.slug}` },
   };
 }
@@ -68,6 +69,9 @@ async function CityContent({ params, searchParams }: { params: Promise<{ slug: s
         <div className="mx-auto max-w-7xl px-4 pb-8 pt-12 sm:px-6">
           <p className="text-sm font-semibold uppercase tracking-widest text-white/70">{city.state}</p>
           <h1 className="font-display text-4xl font-extrabold tracking-tight sm:text-5xl">Eventos em {city.name}</h1>
+          <p className="mt-2 max-w-2xl text-white/85">
+            O que fazer em {city.name} hoje, amanhã e no fim de semana: shows, festas, teatro e mais. Compre ingressos com PIX ou cartão e receba no celular.
+          </p>
           {/* Busca dentro da cidade: leva a /eventos já filtrado pela cidade. */}
           <form method="get" action="/eventos" role="search" aria-label={`Buscar eventos em ${city.name}`} className="mt-5 flex max-w-xl gap-2">
             <input type="hidden" name="cidade" value={slug} />
@@ -108,8 +112,34 @@ async function CityContent({ params, searchParams }: { params: Promise<{ slug: s
       </section>
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
         {filtered ? <FilteredResults slug={slug} cityName={city.name} categoria={categoria} data={data} /> : <Showcase slug={slug} cityName={city.name} />}
+        {!filtered && <CityAgenda slug={slug} cityName={city.name} state={city.state} categories={categories} />}
       </div>
     </>
+  );
+}
+
+/**
+ * Texto de apoio da cidade (SEO): o que a página oferece, em palavras que as pessoas
+ * buscam, e links para as páginas de cada categoria na cidade (/cidades/<cidade>/<categoria>).
+ */
+function CityAgenda({ slug, cityName, state, categories }: { slug: string; cityName: string; state: string; categories: { slug: string; name: string }[] }) {
+  return (
+    <section aria-labelledby="agenda-cidade" className="mt-14 border-t border-border pt-8">
+      <h2 id="agenda-cidade" className="font-display text-xl font-extrabold">
+        Agenda de eventos em {cityName} – {state}
+      </h2>
+      <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+        Veja o que está rolando em {cityName}: a agenda reúne os eventos com ingressos na TICKET24 e outros eventos da cidade, com data, local e preço. Filtre por hoje, amanhã ou
+        fim de semana e pague com PIX ou cartão; o ingresso chega no celular com QR Code para a entrada.
+      </p>
+      <nav aria-label={`Categorias em ${cityName}`} className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm">
+        {categories.map((c) => (
+          <Link key={c.slug} href={`/cidades/${slug}/${c.slug}`} className="font-semibold text-secondary hover:underline">
+            {c.name} em {cityName}
+          </Link>
+        ))}
+      </nav>
+    </section>
   );
 }
 

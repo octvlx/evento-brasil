@@ -29,7 +29,8 @@ export async function generateMetadata({ params }: PageProps<"/cidades/[slug]/[c
   if (!data) return { title: "Página não encontrada", robots: { index: false } };
   const { city, category, total, stats } = data;
   const path = `/cidades/${city.slug}/${category.slug}`;
-  const title = `${category.name} em ${city.name} – ${city.state}`;
+  // "agenda e ingressos": o que quem busca "shows em <cidade>" quer encontrar.
+  const title = `${category.name} em ${city.name} – ${city.state}: agenda e ingressos`;
   const summary = categorySummary({ total, categoryName: category.name, cityName: city.name, timezone: city.timezone, stats });
   const description = clip(`${categoryLead(category.slug, category.name, city.name)} ${summary}`, 160);
   return {
